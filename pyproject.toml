@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dlc-gait-assembler"
+version = "0.1.0"
+description = "PySide6 desktop GUI for bulk video crop and regional inversion processing."
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6",
+    "opencv-python",
+]
+
+[project.scripts]
+dlc-gait-assembler = "dlc_gait_assembly.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

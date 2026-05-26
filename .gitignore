@@ -1,0 +1,14 @@
+# macOS metadata
+.DS_Store
+
+# Python bytecode/cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Generated output files
+outputs/**
+!outputs/
+!outputs/**/
+!outputs/.gitkeep
+!outputs/**/.gitkeep
