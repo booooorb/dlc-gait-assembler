@@ -4,7 +4,24 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
+from dlc_gait_assembly.domain.enhancements import EnhancementSettings
 from dlc_gait_assembly.domain.regions import NormalizedRect
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+
+_REGION_BASE_Z = 5.0
+_REGION_ACTIVE_Z = 7.0
+_ENHANCEMENT_ZOOM_STEP = 2.0
+_MAX_ENHANCEMENT_ZOOM = 32.0
 
 
 class RegionRectItem(QGraphicsRectItem):
@@ -22,7 +39,7 @@ class RegionRectItem(QGraphicsRectItem):
         fill.setAlpha(fill_alpha)
         self.setPen(QPen(color, 3))
         self.setBrush(fill)
-        self.setZValue(5)
+        self.setZValue(_REGION_BASE_Z)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
         self.setAcceptHoverEvents(True)
@@ -31,6 +48,16 @@ class RegionRectItem(QGraphicsRectItem):
     def set_scene_rect(self, scene_rect: QRectF) -> None:
         self.setRect(0, 0, max(2.0, scene_rect.width()), max(2.0, scene_rect.height()))
         self.setPos(scene_rect.topLeft())
+
+    def hit_test_scene(self, scene_pos: QPointF) -> str:
+        return self._hit_test(self.mapFromScene(scene_pos))
+
+    def cursor_for_scene(self, scene_pos: QPointF):
+        return self._cursor_for_hit(self.hit_test_scene(scene_pos))
+
+    def scene_area(self) -> float:
+        rect = self.mapRectToScene(self.rect()).intersected(self._bounds)
+        return rect.width() * rect.height()
 
     def paint(self, painter, option, widget=None):
         super().paint(painter, option, widget)
@@ -195,6 +222,8 @@ class RegionPreviewView(QGraphicsView):
         self.setDragMode(QGraphicsView.NoDrag)
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(640, 420)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
 
         self._image_item = QGraphicsPixmapItem()
         self._image_item.setZValue(0)
@@ -211,6 +240,8 @@ class RegionPreviewView(QGraphicsView):
         self._crop_item: RegionRectItem | None = None
         self._invert_items: dict[int, RegionRectItem] = {}
         self._shade_items: list[QGraphicsRectItem] = []
+        self._enhancements = EnhancementSettings()
+        self._enhancement_zoom = 1.0
 
     def set_frame(self, image: QImage | None) -> None:
         self._source_image = image.copy() if image is not None else None
@@ -224,13 +255,66 @@ class RegionPreviewView(QGraphicsView):
         self._image_bounds = QRectF(0, 0, self._source_image.width(), self._source_image.height())
         self._scene.setSceneRect(self._image_bounds)
         self._render()
-        self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+        self.reset_enhancement_zoom()
         self._emit_regions()
 
     def set_mode(self, mode: str) -> None:
-        if mode not in {"crop", "invert"}:
+        if mode not in {"crop", "invert", "enhancements", "trim"}:
             raise ValueError(f"Unknown preview mode: {mode}")
         self._mode = mode
+        if mode != "enhancements":
+            self.reset_enhancement_zoom()
+        self._render()
+
+    def enhancement_settings(self) -> EnhancementSettings:
+        return self._enhancements
+
+    def set_enhancements(self, settings: EnhancementSettings) -> None:
+        if settings == self._enhancements:
+            return
+        self._enhancements = settings
+        self._render()
+
+    def reset_enhancements(self) -> None:
+        self._enhancements = EnhancementSettings()
+        self._render()
+
+    def reset_enhancement_zoom(self) -> None:
+        self._enhancement_zoom = 1.0
+        if not self._image_bounds.isNull():
+            self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+
+    def create_default_region(self, mode: str | None = None) -> None:
+        if self._image_bounds.isNull():
+            return
+
+        target_mode = mode or self._mode
+        if target_mode not in {"crop", "invert"}:
+            raise ValueError(f"Unknown preview mode: {target_mode}")
+
+        rect = self._default_region_rect(target_mode)
+        normalized = self._scene_rect_to_normalized(rect)
+        selected_item: RegionRectItem | None = None
+
+        if target_mode == "crop":
+            if self._crop_norm is not None and self._crop_norm.is_usable():
+                return
+            self._crop_norm = normalized
+        else:
+            region_id = self._next_invert_id
+            self._next_invert_id += 1
+            self._invert_norms[region_id] = normalized
+
+        self._render()
+        if target_mode == "crop":
+            selected_item = self._crop_item
+        else:
+            selected_item = self._invert_items.get(region_id)
+
+        if selected_item is not None:
+            self._scene.clearSelection()
+            selected_item.setSelected(True)
+        self._emit_regions()
 
     def delete_region(self, name: str) -> None:
         if name == "crop":
@@ -290,16 +374,28 @@ class RegionPreviewView(QGraphicsView):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if not self._image_bounds.isNull():
+        if (
+            not self._image_bounds.isNull()
+            and not (self._mode == "enhancements" and self._enhancement_zoom > 1.001)
+        ):
             self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
 
     def mousePressEvent(self, event):
         pos = _event_pos(event)
         scene_pos = self.mapToScene(pos)
-        clicked_item = self.itemAt(pos)
 
         if event.button() == Qt.LeftButton and self._image_bounds.contains(scene_pos):
-            if isinstance(clicked_item, RegionRectItem):
+            if self._mode == "enhancements":
+                self._zoom_at(pos, _ENHANCEMENT_ZOOM_STEP)
+                event.accept()
+                return
+            if self._mode == "trim":
+                super().mousePressEvent(event)
+                return
+
+            clicked_region = self._region_item_for_press(pos, scene_pos)
+            if clicked_region is not None:
+                self._raise_region_item(clicked_region)
                 super().mousePressEvent(event)
                 return
 
@@ -314,7 +410,65 @@ class RegionPreviewView(QGraphicsView):
             event.accept()
             return
 
+        if event.button() == Qt.RightButton and self._mode == "enhancements" and self._image_bounds.contains(scene_pos):
+            self._zoom_at(pos, 1 / _ENHANCEMENT_ZOOM_STEP)
+            event.accept()
+            return
+
         super().mousePressEvent(event)
+
+    def _zoom_at(self, view_pos: QPoint, factor: float) -> None:
+        if self._image_bounds.isNull():
+            return
+
+        if factor > 1.0:
+            factor = min(factor, _MAX_ENHANCEMENT_ZOOM / self._enhancement_zoom)
+        else:
+            factor = max(factor, 1.0 / self._enhancement_zoom)
+
+        if abs(factor - 1.0) < 0.001:
+            return
+
+        scene_pos = self.mapToScene(view_pos)
+        self.scale(factor, factor)
+        self._enhancement_zoom *= factor
+        if self._enhancement_zoom <= 1.001:
+            self.reset_enhancement_zoom()
+        else:
+            self.centerOn(scene_pos)
+
+    def _region_item_for_press(self, view_pos: QPoint, scene_pos: QPointF) -> RegionRectItem | None:
+        candidate = self._best_region_hit(view_pos, scene_pos)
+        return candidate[2] if candidate is not None else None
+
+    def _cursor_for_hover(self, view_pos: QPoint, scene_pos: QPointF):
+        candidate = self._best_region_hit(view_pos, scene_pos)
+        if candidate is None:
+            return Qt.ArrowCursor
+        return candidate[2].cursor_for_scene(scene_pos)
+
+    def _best_region_hit(self, view_pos: QPoint, scene_pos: QPointF) -> tuple[int, float, RegionRectItem] | None:
+        candidates = []
+        for order, item in enumerate(self.items(view_pos)):
+            if not isinstance(item, RegionRectItem):
+                continue
+
+            hit = item.hit_test_scene(scene_pos)
+            candidates.append((_hit_priority(hit), item.scene_area(), order, item))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda candidate: (candidate[0], candidate[1], candidate[2]))
+        priority, area, _order, item = candidates[0]
+        return priority, area, item
+
+    def _raise_region_item(self, selected_item: RegionRectItem) -> None:
+        for item in self._region_items():
+            item.setZValue(_REGION_ACTIVE_Z if item is selected_item else _REGION_BASE_Z)
+
+    def _region_items(self) -> list[RegionRectItem]:
+        return [item for item in [self._crop_item, *self._invert_items.values()] if item is not None]
 
     def mouseMoveEvent(self, event):
         if self._drag_start is not None:
@@ -323,7 +477,10 @@ class RegionPreviewView(QGraphicsView):
             event.accept()
             return
 
+        pos = _event_pos(event)
+        cursor = self._cursor_for_hover(pos, self.mapToScene(pos))
         super().mouseMoveEvent(event)
+        self.viewport().setCursor(Qt.CrossCursor if self._mode == "enhancements" else cursor)
 
     def mouseReleaseEvent(self, event):
         if self._drag_start is not None:
@@ -351,6 +508,23 @@ class RegionPreviewView(QGraphicsView):
         self._render()
         self._emit_regions()
 
+    def _default_region_rect(self, mode: str) -> QRectF:
+        bounds = self._image_bounds
+        scale = 0.62 if mode == "crop" else 0.26
+        width = min(bounds.width(), max(24.0, bounds.width() * scale))
+        height = min(bounds.height(), max(24.0, bounds.height() * scale))
+
+        offset_step = min(bounds.width(), bounds.height()) * 0.05
+        offset = 0.0
+        if mode == "invert":
+            offset = offset_step * (len(self._invert_norms) % 6)
+
+        left = bounds.center().x() - width / 2 + offset
+        top = bounds.center().y() - height / 2 + offset
+        left = _clamp_float(left, bounds.left(), bounds.right() - width)
+        top = _clamp_float(top, bounds.top(), bounds.bottom() - height)
+        return QRectF(left, top, width, height).intersected(bounds)
+
     def _on_item_changed(self, name: str, scene_rect: QRectF) -> None:
         normalized = self._scene_rect_to_normalized(scene_rect)
         if name == "crop":
@@ -365,6 +539,7 @@ class RegionPreviewView(QGraphicsView):
         self._refresh_pixmap()
         self._sync_region_items()
         self._update_crop_shade()
+        self._set_annotation_visibility(self._mode != "enhancements")
 
     def _refresh_pixmap(self) -> None:
         if self._source_image is None or self._source_image.isNull():
@@ -382,7 +557,52 @@ class RegionPreviewView(QGraphicsView):
                 painter.drawImage(rect.topLeft(), region)
                 painter.end()
 
+        display = self._apply_enhancements(display)
         self._image_item.setPixmap(QPixmap.fromImage(display))
+
+    def _apply_enhancements(self, image: QImage) -> QImage:
+        if not self._enhancements.is_enabled() or np is None:
+            return image
+
+        array = _qimage_to_rgb_array(image)
+        if array is None:
+            return image
+
+        settings = self._enhancements
+        frame = array.astype("float32") / 255.0
+
+        frame *= 2.0 ** settings.exposure
+        frame += settings.black_level
+
+        input_black = min(settings.input_black, settings.input_white - 0.01)
+        input_white = max(settings.input_white, input_black + 0.01)
+        frame = (frame - input_black) / (input_white - input_black)
+        output_black = min(settings.output_black, settings.output_white - 0.01)
+        output_white = max(settings.output_white, output_black + 0.01)
+        frame = output_black + frame * (output_white - output_black)
+
+        frame += settings.brightness
+        frame = (frame - 0.5) * settings.contrast + 0.5
+
+        if abs(settings.tone_scale - 1.0) > 0.001:
+            gamma = 1.0 / max(0.05, settings.tone_scale)
+            frame = np.power(np.clip(frame, 0.0, 1.0), gamma)
+
+        frame = np.clip(frame, 0.0, 1.0)
+
+        if cv2 is not None and settings.sharpening > 0.001:
+            blurred = cv2.GaussianBlur(frame, (0, 0), 1.0)
+            frame = np.clip(frame + (frame - blurred) * settings.sharpening, 0.0, 1.0)
+
+        if cv2 is not None and settings.cas > 0.001:
+            blurred = cv2.GaussianBlur(frame, (0, 0), 0.65)
+            detail = frame - blurred
+            adaptive_weight = 1.0 - np.abs(frame * 2.0 - 1.0)
+            frame = np.clip(frame + detail * adaptive_weight * settings.cas * 1.8, 0.0, 1.0)
+
+        output = np.ascontiguousarray((frame * 255.0).round().astype("uint8"))
+        height, width, _channels = output.shape
+        return QImage(output.data, width, height, width * 3, QImage.Format_RGB888).copy()
 
     def _sync_region_items(self) -> None:
         self._crop_item = self._sync_one_item(
@@ -412,6 +632,12 @@ class RegionPreviewView(QGraphicsView):
                 self._scene.addItem(item)
                 self._invert_items[region_id] = item
             item.set_scene_rect(self._normalized_to_scene_rect(region))
+
+    def _set_annotation_visibility(self, visible: bool) -> None:
+        for item in self._region_items():
+            item.setVisible(visible)
+        for item in self._shade_items:
+            item.setVisible(visible)
 
     def _sync_one_item(
         self,
@@ -536,6 +762,27 @@ def _clamp_point(point: QPointF, bounds: QRectF) -> QPointF:
         min(max(point.x(), bounds.left()), bounds.right()),
         min(max(point.y(), bounds.top()), bounds.bottom()),
     )
+
+
+def _hit_priority(hit: str) -> int:
+    if hit == "delete":
+        return 0
+    if hit == "move":
+        return 2
+    return 1
+
+
+def _qimage_to_rgb_array(image: QImage):
+    if np is None:
+        return None
+
+    converted = image.convertToFormat(QImage.Format_RGB888)
+    width = converted.width()
+    height = converted.height()
+    bytes_per_line = converted.bytesPerLine()
+    buffer = converted.constBits()
+    array = np.frombuffer(buffer, dtype=np.uint8).reshape((height, bytes_per_line))
+    return array[:, : width * 3].reshape((height, width, 3)).copy()
 
 
 def _clamp_float(value: float, minimum: float, maximum: float) -> float:

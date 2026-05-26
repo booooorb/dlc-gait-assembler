@@ -1,20 +1,60 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QGridLayout, QGroupBox, QLabel, QScrollArea, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
+from dlc_gait_assembly.domain.enhancements import EnhancementSettings
+from dlc_gait_assembly.domain.trimming import TrimRange
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 
 
+_ENHANCEMENT_SLIDERS = [
+    ("sharpening", "Sharpening", 0, 250, 100.0),
+    ("cas", "CAS", 0, 100, 100.0),
+    ("brightness", "Brightness", -100, 100, 100.0),
+    ("contrast", "Contrast", 25, 300, 100.0),
+    ("exposure", "Exposure", -300, 300, 100.0),
+    ("black_level", "Black Level", -100, 100, 100.0),
+    ("tone_scale", "Scaling/Tone", 50, 150, 100.0),
+    ("input_black", "Levels Input Black", 0, 100, 100.0),
+    ("input_white", "Levels Input White", 0, 100, 100.0),
+    ("output_black", "Levels Output Black", 0, 100, 100.0),
+    ("output_white", "Levels Output White", 0, 100, 100.0),
+]
+
+
 class OperationSettingsPanel(QGroupBox):
+    trim_active_range_changed = Signal(int)
+    trim_range_changed = Signal(int, int, int)
+    trim_range_added = Signal()
+    trim_range_deleted = Signal(int)
+    trim_ranges_reset = Signal()
+
     def __init__(self, preview: RegionPreviewView, parent=None):
         super().__init__("Operations Settings", parent)
         self._preview = preview
         self._building = False
         self._controls: dict[tuple[str, int | None], dict] = {}
+        self._enhancement_controls: dict[str, dict] = {}
         self._keys: list[tuple[str, int | None]] = []
         self._image_size = (0, 0)
         self._active_tool = "crop"
+        self._trim_video_name: str | None = None
+        self._trim_duration_ms = 0
+        self._trim_ranges: list[TrimRange] = []
+        self._active_trim_index = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 10, 8, 8)
@@ -35,14 +75,35 @@ class OperationSettingsPanel(QGroupBox):
         self.refresh()
 
     def set_active_tool(self, tool: str) -> None:
-        if tool not in {"crop", "invert"} or tool == self._active_tool:
+        if tool not in {"crop", "invert", "enhancements", "trim"} or tool == self._active_tool:
             return
 
         self._active_tool = tool
         self._keys = []
         self.refresh()
 
+    def set_trim_context(
+        self,
+        video_name: str | None,
+        duration_ms: int,
+        ranges: list[TrimRange],
+        active_index: int = 0,
+    ) -> None:
+        self._trim_video_name = video_name
+        self._trim_duration_ms = max(0, int(duration_ms))
+        self._trim_ranges = list(ranges)
+        self._active_trim_index = active_index
+        if self._active_tool == "trim":
+            self._rebuild_trim_settings()
+
     def refresh(self) -> None:
+        if self._active_tool == "enhancements":
+            self._rebuild_enhancement_settings()
+            return
+        if self._active_tool == "trim":
+            self._rebuild_trim_settings()
+            return
+
         snapshot = self._preview.region_snapshots()
         image_size = (snapshot["width"], snapshot["height"])
         regions = self._settings_regions(snapshot)
@@ -56,6 +117,7 @@ class OperationSettingsPanel(QGroupBox):
         self._keys = keys
         self._image_size = image_size
         self._controls = {}
+        self._enhancement_controls = {}
         self._clear_layout()
 
         if snapshot["width"] <= 0 or snapshot["height"] <= 0:
@@ -73,11 +135,17 @@ class OperationSettingsPanel(QGroupBox):
                     snapshot["height"],
                 )
 
+        if self._can_create_region(snapshot):
+            self._add_create_region_button()
+
         self._content_layout.addStretch(1)
         self._building = False
 
     def _settings_regions(self, snapshot: dict) -> list[dict]:
         regions = []
+        if self._active_tool in {"enhancements", "trim"}:
+            return regions
+
         if self._active_tool == "crop":
             if snapshot["crop"] is not None:
                 regions.append({"kind": "crop", "id": None, "title": "Crop", "edges": snapshot["crop"]})
@@ -99,6 +167,188 @@ class OperationSettingsPanel(QGroupBox):
         if self._active_tool == "crop":
             return "No crop region."
         return "No upside-down regions."
+
+    def _rebuild_enhancement_settings(self) -> None:
+        self._building = True
+        self._keys = [("enhancements", None)]
+        self._controls = {}
+        self._enhancement_controls = {}
+        self._clear_layout()
+
+        settings = self._preview.enhancement_settings()
+        for field, title, minimum, maximum, scale in _ENHANCEMENT_SLIDERS:
+            self._add_enhancement_slider(field, title, minimum, maximum, scale, getattr(settings, field))
+
+        reset_button = QPushButton("Reset Enhancements")
+        reset_button.setObjectName("CreateRegionButton")
+        reset_button.clicked.connect(self._reset_enhancements)
+        self._content_layout.addWidget(reset_button)
+        zoom_reset_button = QPushButton("Reset Preview Zoom")
+        zoom_reset_button.setObjectName("CreateRegionButton")
+        zoom_reset_button.clicked.connect(lambda _checked=False: self._preview.reset_enhancement_zoom())
+        self._content_layout.addWidget(zoom_reset_button)
+        self._content_layout.addStretch(1)
+        self._building = False
+
+    def _add_enhancement_slider(
+        self,
+        field: str,
+        title: str,
+        minimum: int,
+        maximum: int,
+        scale: float,
+        current_value: float,
+    ) -> None:
+        frame = QFrame()
+        frame.setObjectName("EnhancementSettings")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(8, 6, 8, 7)
+        layout.setSpacing(5)
+
+        label_row = QHBoxLayout()
+        label = QLabel(title)
+        label.setObjectName("RegionTitle")
+        value_label = QLabel(_format_slider_value(current_value))
+        value_label.setObjectName("DimensionLabel")
+        label_row.addWidget(label)
+        label_row.addStretch(1)
+        label_row.addWidget(value_label)
+        reset_button = QPushButton("Reset")
+        reset_button.setObjectName("TinyResetButton")
+        reset_button.clicked.connect(lambda _checked=False, name=field: self._reset_enhancement_field(name))
+        label_row.addWidget(reset_button)
+        layout.addLayout(label_row)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setObjectName("EnhancementSlider")
+        slider.setRange(minimum, maximum)
+        slider.setValue(round(current_value * scale))
+        slider.valueChanged.connect(lambda _value: self._apply_enhancement_settings())
+        layout.addWidget(slider)
+
+        self._enhancement_controls[field] = {"slider": slider, "value": value_label, "scale": scale}
+        self._content_layout.addWidget(frame)
+
+    def _apply_enhancement_settings(self) -> None:
+        if self._building:
+            return
+
+        values = {}
+        for field, controls in self._enhancement_controls.items():
+            value = controls["slider"].value() / controls["scale"]
+            values[field] = value
+            controls["value"].setText(_format_slider_value(value))
+
+        self._preview.set_enhancements(EnhancementSettings(**values))
+
+    def _reset_enhancements(self) -> None:
+        self._preview.reset_enhancements()
+        self._rebuild_enhancement_settings()
+
+    def _reset_enhancement_field(self, field: str) -> None:
+        controls = self._enhancement_controls.get(field)
+        if controls is None:
+            return
+
+        default_value = getattr(EnhancementSettings(), field)
+        controls["slider"].setValue(round(default_value * controls["scale"]))
+
+    def _rebuild_trim_settings(self) -> None:
+        self._building = True
+        self._keys = [("trim", None)]
+        self._controls = {}
+        self._enhancement_controls = {}
+        self._clear_layout()
+
+        if self._trim_video_name is None or self._trim_duration_ms <= 0:
+            self._add_placeholder("No video selected.")
+            self._content_layout.addStretch(1)
+            self._building = False
+            return
+
+        header = QLabel(self._trim_video_name)
+        header.setObjectName("RegionTitle")
+        self._content_layout.addWidget(header)
+
+        ranges = self._trim_ranges or [TrimRange(0, self._trim_duration_ms)]
+        for index, trim_range in enumerate(ranges):
+            self._add_trim_range_settings(index, trim_range, index == self._active_trim_index)
+
+        add_button = QPushButton("Add Trim Range")
+        add_button.setObjectName("CreateRegionButton")
+        add_button.clicked.connect(lambda _checked=False: self.trim_range_added.emit())
+        self._content_layout.addWidget(add_button)
+
+        reset_button = QPushButton("Reset Video Trim")
+        reset_button.setObjectName("CreateRegionButton")
+        reset_button.clicked.connect(lambda _checked=False: self.trim_ranges_reset.emit())
+        self._content_layout.addWidget(reset_button)
+
+        self._content_layout.addStretch(1)
+        self._building = False
+
+    def _add_trim_range_settings(self, index: int, trim_range: TrimRange, active: bool) -> None:
+        frame = QFrame()
+        frame.setObjectName("RegionSettings")
+        layout = QGridLayout(frame)
+        layout.setContentsMargins(8, 7, 8, 8)
+        layout.setHorizontalSpacing(6)
+        layout.setVerticalSpacing(4)
+        layout.setColumnStretch(1, 1)
+
+        title = QLabel(f"Range {index + 1}")
+        title.setObjectName("RegionTitle")
+        title.setStyleSheet("color: #f97316;" if active else "")
+        duration = QLabel(f"{_format_ms(trim_range.start_ms)} - {_format_ms(trim_range.end_ms)}")
+        duration.setObjectName("DimensionLabel")
+        duration.setWordWrap(True)
+        layout.addWidget(title, 0, 0)
+        layout.addWidget(duration, 0, 1, Qt.AlignRight)
+
+        start_spin = self._make_trim_spinbox(trim_range.start_ms)
+        end_spin = self._make_trim_spinbox(trim_range.end_ms)
+        start_spin.valueChanged.connect(lambda _value, idx=index: self._apply_trim_spins(idx, start_spin, end_spin))
+        end_spin.valueChanged.connect(lambda _value, idx=index: self._apply_trim_spins(idx, start_spin, end_spin))
+        start_spin.editingFinished.connect(lambda idx=index: self.trim_active_range_changed.emit(idx))
+        end_spin.editingFinished.connect(lambda idx=index: self.trim_active_range_changed.emit(idx))
+
+        layout.addWidget(QLabel("Start"), 1, 0)
+        layout.addWidget(start_spin, 1, 1)
+        layout.addWidget(QLabel("End"), 2, 0)
+        layout.addWidget(end_spin, 2, 1)
+
+        delete_button = QPushButton("Delete")
+        delete_button.setObjectName("TinyResetButton")
+        delete_button.clicked.connect(lambda _checked=False, idx=index: self.trim_range_deleted.emit(idx))
+        layout.addWidget(delete_button, 3, 0, 1, 2)
+
+        self._content_layout.addWidget(frame)
+
+    def _make_trim_spinbox(self, value: int) -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(0, self._trim_duration_ms)
+        spin.setKeyboardTracking(False)
+        spin.setValue(value)
+        spin.setMaximumWidth(96)
+        return spin
+
+    def _apply_trim_spins(self, index: int, start_spin: QSpinBox, end_spin: QSpinBox) -> None:
+        if self._building:
+            return
+
+        start = min(start_spin.value(), max(0, end_spin.value() - 1))
+        end = max(end_spin.value(), start + 1)
+        end = min(end, self._trim_duration_ms)
+        self.trim_range_changed.emit(index, start, end)
+
+    def _can_create_region(self, snapshot: dict) -> bool:
+        if snapshot["width"] <= 0 or snapshot["height"] <= 0:
+            return False
+        if self._active_tool == "enhancements":
+            return False
+        if self._active_tool == "crop":
+            return snapshot["crop"] is None
+        return True
 
     def _update_controls(self, regions: list[dict]) -> None:
         self._building = True
@@ -127,6 +377,17 @@ class OperationSettingsPanel(QGroupBox):
         label.setObjectName("SettingsPlaceholder")
         label.setWordWrap(True)
         self._content_layout.addWidget(label)
+
+    def _add_create_region_button(self) -> None:
+        if self._active_tool == "crop":
+            text = "New Crop Region"
+        else:
+            text = "New Upside-Down Region"
+
+        button = QPushButton(text)
+        button.setObjectName("CreateRegionButton")
+        button.clicked.connect(lambda: self._preview.create_default_region(self._active_tool))
+        self._content_layout.addWidget(button)
 
     def _add_region_settings(
         self,
@@ -200,3 +461,16 @@ class OperationSettingsPanel(QGroupBox):
             self._preview.set_crop_pixel_edges(left, top, right, bottom)
         elif region_id is not None:
             self._preview.set_invert_pixel_edges(region_id, left, top, right, bottom)
+
+
+def _format_slider_value(value: float) -> str:
+    return f"{value:+.2f}" if value < 0 else f"{value:.2f}"
+
+
+def _format_ms(ms: int) -> str:
+    total_seconds, milliseconds = divmod(max(0, int(ms)), 1000)
+    minutes, seconds = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+    return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"

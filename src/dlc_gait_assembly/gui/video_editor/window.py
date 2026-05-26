@@ -20,12 +20,13 @@ from PySide6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
-    QSlider,
 )
 
+from dlc_gait_assembly.domain.trimming import TrimRange
 from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 from dlc_gait_assembly.gui.video_editor.settings_panel import OperationSettingsPanel
+from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
 from dlc_gait_assembly.gui.video_editor.workers import VideoProcessingThread
 from dlc_gait_assembly.services.ffmpeg import ProcessingOptions, ffmpeg_available
 from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
@@ -48,6 +49,8 @@ class VideoEditorWidget(QWidget):
         self._processing_thread: VideoProcessingThread | None = None
         self._processing_errors: list[str] = []
         self._project_root = find_project_root(__file__)
+        self._trim_ranges_by_video: dict[str, list[TrimRange]] = {}
+        self._active_trim_range_by_video: dict[str, int] = {}
 
         self._build_ui()
         self._connect_signals()
@@ -144,13 +147,19 @@ class VideoEditorWidget(QWidget):
         tool_row.addWidget(QLabel("Operations"))
         self.crop_tool_button = _make_tool_button("Crop", "#475569")
         self.invert_tool_button = _make_tool_button("Upside-Down", "#c026d3")
+        self.enhancements_tool_button = _make_tool_button("Enhancements", "#0891b2")
+        self.trim_tool_button = _make_tool_button("Trim", "#f97316")
         self.crop_tool_button.setChecked(True)
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
         self.tool_group.addButton(self.crop_tool_button)
         self.tool_group.addButton(self.invert_tool_button)
+        self.tool_group.addButton(self.enhancements_tool_button)
+        self.tool_group.addButton(self.trim_tool_button)
         tool_row.addWidget(self.crop_tool_button)
         tool_row.addWidget(self.invert_tool_button)
+        tool_row.addWidget(self.enhancements_tool_button)
+        tool_row.addWidget(self.trim_tool_button)
         tool_row.addStretch(1)
         operations_layout.addLayout(tool_row)
         right_layout.addWidget(operations_bar)
@@ -160,7 +169,7 @@ class VideoEditorWidget(QWidget):
         timeline_row = QHBoxLayout()
         self.time_label = QLabel("00:00.000 / 00:00.000")
         self.time_label.setMinimumWidth(180)
-        self.timeline = QSlider(Qt.Horizontal)
+        self.timeline = TrimTimelineSlider()
         self.timeline.setRange(0, 0)
         timeline_row.addWidget(self.time_label)
         timeline_row.addWidget(self.timeline, 1)
@@ -178,9 +187,18 @@ class VideoEditorWidget(QWidget):
         self.video_list.currentItemChanged.connect(self._load_selected_video)
         self.crop_tool_button.clicked.connect(lambda: self._set_active_tool("crop"))
         self.invert_tool_button.clicked.connect(lambda: self._set_active_tool("invert"))
+        self.enhancements_tool_button.clicked.connect(lambda: self._set_active_tool("enhancements"))
+        self.trim_tool_button.clicked.connect(lambda: self._set_active_tool("trim"))
         self.process_button.clicked.connect(self._process_all_videos)
         self.timeline.valueChanged.connect(self._timeline_changed)
+        self.timeline.trim_active_changed.connect(self._on_trim_active_changed)
+        self.timeline.trim_range_changed.connect(self._on_trim_range_changed)
         self.preview.operation_enabled_requested.connect(self._enable_operation_from_preview)
+        self.settings_panel.trim_active_range_changed.connect(self._on_trim_active_changed)
+        self.settings_panel.trim_range_changed.connect(self._on_trim_range_changed)
+        self.settings_panel.trim_range_added.connect(self._add_trim_range)
+        self.settings_panel.trim_range_deleted.connect(self._delete_trim_range)
+        self.settings_panel.trim_ranges_reset.connect(self._reset_current_video_trim)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -227,6 +245,11 @@ class VideoEditorWidget(QWidget):
             }
             QPushButton#PrimaryButton:hover {
                 background: #036b6b;
+            }
+            QPushButton#TinyResetButton {
+                border-radius: 4px;
+                padding: 2px 6px;
+                font-size: 10px;
             }
             QFrame#OperationsBar {
                 border: 1px solid #cfd7e3;
@@ -275,6 +298,22 @@ class VideoEditorWidget(QWidget):
                 background: #ffffff;
                 padding: 2px 4px;
                 font-size: 11px;
+            }
+            QFrame#EnhancementSettings {
+                border: 1px solid #d8dee8;
+                border-radius: 5px;
+                background: #ffffff;
+            }
+            QSlider#EnhancementSlider::groove:horizontal {
+                height: 5px;
+                border-radius: 2px;
+                background: #dbe3ee;
+            }
+            QSlider#EnhancementSlider::handle:horizontal {
+                width: 12px;
+                margin: -5px 0;
+                border-radius: 6px;
+                background: #0891b2;
             }
             QListWidget {
                 border: 1px solid #cfd7e3;
@@ -331,7 +370,25 @@ class VideoEditorWidget(QWidget):
             QMessageBox.information(self, "No videos found", "That folder does not contain any supported video files.")
             return
 
-        self._add_video_paths(video_paths)
+        existing = {self.video_list.item(index).data(Qt.UserRole) for index in range(self.video_list.count())}
+        new_paths = [path for path in video_paths if str(path) not in existing]
+        if not new_paths:
+            QMessageBox.information(self, "No new videos", "All supported videos in that folder are already uploaded.")
+            return
+
+        duplicate_count = len(video_paths) - len(new_paths)
+        details = f"Folder:\n{folder}"
+        if duplicate_count:
+            details += f"\n\n{duplicate_count} supported video(s) are already in the uploaded list."
+
+        if not self._confirm_action(
+            "Add folder of videos?",
+            f"Add {len(new_paths)} video(s) from this folder?",
+            details,
+        ):
+            return
+
+        self._add_video_paths(new_paths)
 
     def _add_video_paths(self, paths) -> None:
         existing = {self.video_list.item(index).data(Qt.UserRole) for index in range(self.video_list.count())}
@@ -363,21 +420,35 @@ class VideoEditorWidget(QWidget):
 
     def _remove_selected_videos(self) -> None:
         for item in self.video_list.selectedItems():
+            path_key = item.data(Qt.UserRole)
+            self._trim_ranges_by_video.pop(path_key, None)
+            self._active_trim_range_by_video.pop(path_key, None)
             self.video_list.takeItem(self.video_list.row(item))
         if self.video_list.count() == 0:
             self._release_capture()
             self.preview.set_frame(None)
             self.preview_title.setText("Select a video from the uploaded list.")
             self.timeline.setRange(0, 0)
+            self._refresh_trim_context()
             self.time_label.setText("00:00.000 / 00:00.000")
         self._update_process_state()
 
     def _clear_videos(self) -> None:
+        if self.video_list.count() > 0 and not self._confirm_action(
+            "Clear uploaded videos?",
+            f"Remove all {self.video_list.count()} uploaded video(s) from the list?",
+            "This does not delete files from your computer.",
+        ):
+            return
+
         self.video_list.clear()
+        self._trim_ranges_by_video.clear()
+        self._active_trim_range_by_video.clear()
         self._release_capture()
         self.preview.set_frame(None)
         self.preview_title.setText("Select a video from the uploaded list.")
         self.timeline.setRange(0, 0)
+        self._refresh_trim_context()
         self.time_label.setText("00:00.000 / 00:00.000")
         self._update_process_state()
 
@@ -408,6 +479,7 @@ class VideoEditorWidget(QWidget):
         target_ms = min(requested_ms, self._duration_ms)
         self._set_timeline_value(target_ms)
         self._load_frame_at(target_ms)
+        self._refresh_trim_context()
 
     def _timeline_changed(self, value: int) -> None:
         if self._loading_slider:
@@ -440,6 +512,27 @@ class VideoEditorWidget(QWidget):
         self.timeline.setValue(value)
         self._loading_slider = False
 
+    def _refresh_trim_context(self) -> None:
+        if self._current_video is None or self._duration_ms <= 0:
+            self.timeline.set_trim_ranges(0, [])
+            self.settings_panel.set_trim_context(None, 0, [], 0)
+            return
+
+        key = str(self._current_video)
+        ranges = self._display_trim_ranges(key)
+        active_index = self._active_trim_range_by_video.get(key, 0)
+        active_index = min(active_index, max(0, len(ranges) - 1))
+        self.timeline.set_trim_ranges(self._duration_ms, ranges, active_index)
+        self.settings_panel.set_trim_context(self._current_video.name, self._duration_ms, ranges, active_index)
+
+    def _display_trim_ranges(self, key: str) -> list[TrimRange]:
+        ranges = self._trim_ranges_by_video.get(key)
+        if ranges:
+            return list(ranges)
+        if self._duration_ms > 0:
+            return [TrimRange(0, self._duration_ms)]
+        return []
+
     def _enable_operation_from_preview(self, name: str, enabled: bool) -> None:
         if not enabled:
             return
@@ -453,6 +546,81 @@ class VideoEditorWidget(QWidget):
     def _set_active_tool(self, name: str) -> None:
         self.preview.set_mode(name)
         self.settings_panel.set_active_tool(name)
+        self.timeline.set_trim_editing_enabled(name == "trim")
+        self._refresh_trim_context()
+
+    def _on_trim_active_changed(self, index: int) -> None:
+        if self._current_video is None:
+            return
+        key = str(self._current_video)
+        self._active_trim_range_by_video[key] = index
+        self._refresh_trim_context()
+
+    def _on_trim_range_changed(self, index: int, start_ms: int, end_ms: int) -> None:
+        if self._current_video is None or self._duration_ms <= 0:
+            return
+
+        key = str(self._current_video)
+        ranges = self._display_trim_ranges(key)
+        if not ranges:
+            return
+
+        index = min(max(0, index), len(ranges) - 1)
+        ranges[index] = TrimRange(start_ms, end_ms).clamped(self._duration_ms)
+        self._set_current_trim_ranges(ranges, index)
+
+    def _add_trim_range(self) -> None:
+        if self._current_video is None or self._duration_ms <= 0:
+            return
+
+        key = str(self._current_video)
+        ranges = list(self._trim_ranges_by_video.get(key, []))
+        span = max(250, min(5000, self._duration_ms // 4 or self._duration_ms))
+        start = min(self.timeline.value(), max(0, self._duration_ms - span))
+        end = min(self._duration_ms, start + span)
+        ranges.append(TrimRange(start, end))
+        self._set_current_trim_ranges(ranges, len(ranges) - 1)
+
+    def _delete_trim_range(self, index: int) -> None:
+        if self._current_video is None:
+            return
+
+        key = str(self._current_video)
+        ranges = list(self._trim_ranges_by_video.get(key, []))
+        if not ranges:
+            self._reset_current_video_trim()
+            return
+
+        if 0 <= index < len(ranges):
+            ranges.pop(index)
+        self._set_current_trim_ranges(ranges, max(0, min(index, len(ranges) - 1)))
+
+    def _reset_current_video_trim(self) -> None:
+        if self._current_video is None:
+            return
+
+        key = str(self._current_video)
+        self._trim_ranges_by_video.pop(key, None)
+        self._active_trim_range_by_video.pop(key, None)
+        self._refresh_trim_context()
+
+    def _set_current_trim_ranges(self, ranges: list[TrimRange], active_index: int) -> None:
+        if self._current_video is None:
+            return
+
+        key = str(self._current_video)
+        normalized = [trim.clamped(self._duration_ms) for trim in ranges]
+        normalized = [trim for trim in normalized if trim.is_usable()]
+        if not normalized or self._is_default_trim(normalized):
+            self._trim_ranges_by_video.pop(key, None)
+            self._active_trim_range_by_video.pop(key, None)
+        else:
+            self._trim_ranges_by_video[key] = normalized
+            self._active_trim_range_by_video[key] = max(0, min(active_index, len(normalized) - 1))
+        self._refresh_trim_context()
+
+    def _is_default_trim(self, ranges: list[TrimRange]) -> bool:
+        return len(ranges) == 1 and ranges[0].start_ms == 0 and ranges[0].end_ms == self._duration_ms
 
     def _process_all_videos(self) -> None:
         videos = self._video_paths()
@@ -465,13 +633,26 @@ class VideoEditorWidget(QWidget):
             crop_rect=self.preview.crop_region(),
             invert_enabled=bool(self.preview.invert_regions()),
             invert_rects=tuple(self.preview.invert_regions()),
+            enhancements=self.preview.enhancement_settings(),
         )
-        if not options.has_work():
-            QMessageBox.information(self, "No operation selected", "Draw a Crop or Upside-Down region before processing.")
+        trim_ranges_by_path = self._trim_ranges_for_processing(videos)
+        if not options.has_work() and not trim_ranges_by_path:
+            QMessageBox.information(
+                self,
+                "No operation selected",
+                "Draw a Crop or Upside-Down region, adjust an Enhancement, or set a Trim range before processing.",
+            )
             return
 
         if not ffmpeg_available():
             QMessageBox.critical(self, "ffmpeg is missing", "Install the conda environment first, or run: conda install -c conda-forge ffmpeg")
+            return
+
+        if not self._confirm_action(
+            "Process all uploaded videos?",
+            f"Process {len(videos)} uploaded video(s)?",
+            "Crop, upside-down, and enhancement settings apply to every video. Trim ranges apply only to the videos where you set them. You will choose the output location next.",
+        ):
             return
 
         output_root = QFileDialog.getExistingDirectory(
@@ -495,7 +676,7 @@ class VideoEditorWidget(QWidget):
         self._processing_errors = []
         self._set_processing_enabled(False)
 
-        self._processing_thread = VideoProcessingThread(videos, session_dir, options, self)
+        self._processing_thread = VideoProcessingThread(videos, session_dir, options, trim_ranges_by_path, self)
         self._processing_thread.file_started.connect(self._on_file_started)
         self._processing_thread.file_finished.connect(self._on_file_finished)
         self._processing_thread.file_failed.connect(self._on_file_failed)
@@ -530,6 +711,25 @@ class VideoEditorWidget(QWidget):
     def _video_paths(self) -> list[Path]:
         return [Path(self.video_list.item(index).data(Qt.UserRole)) for index in range(self.video_list.count())]
 
+    def _trim_ranges_for_processing(self, videos: list[Path]) -> dict[str, tuple[TrimRange, ...]]:
+        ranges_by_path = {}
+        for path in videos:
+            ranges = self._trim_ranges_by_video.get(str(path))
+            if ranges:
+                ranges_by_path[str(path)] = tuple(ranges)
+        return ranges_by_path
+
+    def _confirm_action(self, title: str, text: str, details: str = "") -> bool:
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Question)
+        message.setWindowTitle(title)
+        message.setText(text)
+        if details:
+            message.setInformativeText(details)
+        message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        message.setDefaultButton(QMessageBox.StandardButton.No)
+        return message.exec() == QMessageBox.StandardButton.Yes
+
     def _update_process_state(self) -> None:
         self.process_button.setEnabled(self.video_list.count() > 0)
 
@@ -541,6 +741,8 @@ class VideoEditorWidget(QWidget):
         self.process_button.setEnabled(enabled and self.video_list.count() > 0)
         self.crop_tool_button.setEnabled(enabled)
         self.invert_tool_button.setEnabled(enabled)
+        self.enhancements_tool_button.setEnabled(enabled)
+        self.trim_tool_button.setEnabled(enabled)
 
     def _default_output_root(self) -> Path:
         output_root = self._project_root / "outputs" / "videos"

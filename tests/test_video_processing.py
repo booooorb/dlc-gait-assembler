@@ -1,6 +1,8 @@
 from dlc_gait_assembly.video_processing import (
+    EnhancementSettings,
     NormalizedRect,
     ProcessingOptions,
+    TrimRange,
     build_filter_graph,
     normalized_to_pixel_rect,
 )
@@ -39,6 +41,49 @@ def test_build_filter_graph_with_multiple_invert_regions():
         "[region_1]crop=200:240:600:400,vflip[flipped_1];"
         "[base_1][flipped_1]overlay=600:400[v_inverted_1];"
         "[v_inverted_1]format=yuv420p[vout]"
+    )
+
+
+def test_build_filter_graph_with_enhancements_only():
+    options = ProcessingOptions(
+        enhancements=EnhancementSettings(
+            sharpening=0.6,
+            cas=0.35,
+            brightness=0.1,
+            contrast=1.2,
+        ),
+    )
+
+    assert build_filter_graph(1000, 800, options) == (
+        "[0:v]eq=brightness=0.1:contrast=1.2:gamma=1,"
+        "unsharp=5:5:0.6:5:5:0,"
+        "cas=strength=0.35[v_enhanced];"
+        "[v_enhanced]format=yuv420p[vout]"
+    )
+
+
+def test_build_filter_graph_with_trim_ranges_only():
+    options = ProcessingOptions(
+        trim_ranges=(
+            TrimRange(1000, 4000),
+            TrimRange(7000, 9000),
+        ),
+    )
+
+    assert build_filter_graph(1000, 800, options, source_fps=30.0) == (
+        "[0:v]split=2[trim_src_0][trim_src_1];"
+        "[trim_src_0]trim=start=1:end=4,setpts=N/(30*TB)[vtrim_0];"
+        "[trim_src_1]trim=start=7:end=9,setpts=N/(30*TB)[vtrim_1];"
+        "[vtrim_0][vtrim_1]concat=n=2:v=1:a=0,format=yuv420p[vout]"
+    )
+
+
+def test_build_filter_graph_with_trim_audio():
+    options = ProcessingOptions(trim_ranges=(TrimRange(1000, 4000),))
+
+    assert build_filter_graph(1000, 800, options, include_audio=True, source_fps=30.0) == (
+        "[0:v]trim=start=1:end=4,setpts=N/(30*TB),format=yuv420p[vout];"
+        "[0:a]atrim=start=1:end=4,asetpts=PTS-STARTPTS[aout]"
     )
 
 
