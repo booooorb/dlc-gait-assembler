@@ -3,20 +3,54 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractButton,
+    QComboBox,
+    QDoubleSpinBox,
     QFrame,
-    QGridLayout,
+    QGraphicsOpacityEffect,
+    QGraphicsView,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
     QMainWindow,
-    QSizePolicy,
+    QProgressBar,
+    QSlider,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
+
+
+TRANSITION_CONTROL_FADE_MS = 920
+TRANSITION_CONTROL_STAGGER_MS = 70
+
+ANIMATED_CONTROL_TYPES = (
+    QAbstractButton,
+    QComboBox,
+    QDoubleSpinBox,
+    QGroupBox,
+    QLineEdit,
+    QListWidget,
+    QProgressBar,
+    QSlider,
+    QSpinBox,
+)
+ANIMATED_OBJECT_NAMES = {
+    "EnhancementSettings",
+    "OperationsBar",
+    "PreviewTitle",
+    "RegionSettings",
+    "TitleLabel",
+    "WorkflowStep",
+}
 
 
 @dataclass(frozen=True)
@@ -32,31 +66,40 @@ class ToolSpec:
 
 TOOL_SPECS = [
     ToolSpec(
+        "manual_calibration",
+        "Calibration",
+        ManualCalibrationWidget,
+        True,
+        description="Set measurement references and check spatial scale.",
+        status="Ready",
+        accent="#0f766e",
+    ),
+    ToolSpec(
         "video_processing",
         "Video Processing",
         VideoEditorWidget,
         True,
-        "Bulk edits, trims, crops, inversions, enhancements, and H.264 export.",
+        "Prepare videos, trims, crops, enhancements, and H.264 export.",
         "Ready",
         "#0891b2",
     ),
     ToolSpec(
-        "manual_calibration",
-        "Manual Calibration",
-        description="Set up calibration references and scale checks.",
-        accent="#7c3aed",
+        "deeplabcut",
+        "DeepLabCut",
+        description="Train, evaluate, and analyze pose estimation projects.",
+        accent="#4f46e5",
     ),
     ToolSpec(
-        "data_preprocessing",
-        "Data Preprocessing",
-        description="Prepare tracking outputs before gait assembly.",
-        accent="#16a34a",
-    ),
-    ToolSpec(
-        "gait_parameter_assembly",
-        "Gait Parameter Assembly",
-        description="Assemble stride, stance, swing, and gait summary outputs.",
+        "gait_parameter_analysis",
+        "Gait Parameter Analysis",
+        description="Assemble stride, stance, swing, and gait outputs.",
         accent="#ea580c",
+    ),
+    ToolSpec(
+        "pca_random_forest",
+        "PCA and Random Forest Analysis",
+        description="Reduce gait features and build classification models.",
+        accent="#be185d",
     ),
 ]
 
@@ -68,6 +111,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
         self._active_tool: QWidget | None = None
         self._active_tool_id: str | None = None
+        self._transition_animations: list[QPropertyAnimation] = []
         self._tool_widgets: dict[str, QWidget] = {}
         self._stack = QStackedWidget()
         self._main_menu = MainMenuWidget(TOOL_SPECS)
@@ -109,7 +153,7 @@ class MainWindow(QMainWindow):
         self._active_tool = None
         self._active_tool_id = None
         self.setWindowTitle("DLC Gait Assembler")
-        self._stack.setCurrentWidget(self._main_menu)
+        self._fade_to_widget(self._main_menu)
 
     def _open_tool(self, tool_id: str) -> None:
         if not self._can_leave_active_tool():
@@ -128,7 +172,7 @@ class MainWindow(QMainWindow):
         self._active_tool = tool
         self._active_tool_id = tool_id
         self.setWindowTitle(f"DLC Gait Assembler - {spec.label}")
-        self._stack.setCurrentWidget(tool)
+        self._fade_to_widget(tool)
 
     def _tool_spec(self, tool_id: str) -> ToolSpec:
         for spec in TOOL_SPECS:
@@ -140,6 +184,52 @@ class MainWindow(QMainWindow):
         if self._active_tool is None or not hasattr(self._active_tool, "can_close"):
             return True
         return bool(self._active_tool.can_close(self))
+
+    def _fade_to_widget(self, widget: QWidget) -> None:
+        for animation in self._transition_animations:
+            animation.stop()
+        self._transition_animations.clear()
+
+        self._stack.setCurrentWidget(widget)
+        if not self.isVisible():
+            return
+
+        self._fade_controls(widget)
+
+    def _fade_controls(self, widget: QWidget) -> None:
+        targets = self._transition_targets(widget)
+        for index, target in enumerate(targets):
+            effect = target.graphicsEffect()
+            if not isinstance(effect, QGraphicsOpacityEffect):
+                effect = QGraphicsOpacityEffect(target)
+                target.setGraphicsEffect(effect)
+            effect.setOpacity(0.0)
+
+            animation = QPropertyAnimation(effect, b"opacity", self)
+            animation.setDuration(TRANSITION_CONTROL_FADE_MS)
+            animation.setStartValue(0.0)
+            animation.setEndValue(1.0)
+            animation.setEasingCurve(QEasingCurve.InOutCubic)
+            animation.finished.connect(lambda target=target, effect=effect: effect.setOpacity(1.0))
+            animation.finished.connect(lambda animation=animation: self._clear_transition_animation(animation))
+            self._transition_animations.append(animation)
+            QTimer.singleShot(index * TRANSITION_CONTROL_STAGGER_MS, animation.start)
+
+    def _transition_targets(self, widget: QWidget) -> list[QWidget]:
+        targets: list[QWidget] = []
+        for child in widget.findChildren(QWidget):
+            if not child.isVisible() or isinstance(child, QGraphicsView):
+                continue
+            if not _should_animate_transition_child(child):
+                continue
+            if _has_transition_target_ancestor(child, targets):
+                continue
+            targets.append(child)
+        return targets
+
+    def _clear_transition_animation(self, animation: QPropertyAnimation) -> None:
+        if animation in self._transition_animations:
+            self._transition_animations.remove(animation)
 
     def _release_all_tools(self) -> None:
         for tool in self._tool_widgets.values():
@@ -161,172 +251,184 @@ class MainMenuWidget(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(56, 44, 56, 52)
-        root.setSpacing(24)
-
-        header_panel = QFrame()
-        header_panel.setObjectName("MainMenuHeader")
-        header_layout = QVBoxLayout(header_panel)
-        header_layout.setContentsMargins(28, 24, 28, 24)
-        header_layout.setSpacing(8)
-
-        eyebrow = QLabel("GAIT WORKSPACE")
-        eyebrow.setObjectName("MainMenuEyebrow")
-        header_layout.addWidget(eyebrow)
-
-        header = QLabel("DLC Gait Assembler")
-        header.setObjectName("MainMenuTitle")
-        header_layout.addWidget(header)
-
-        subtitle = QLabel("Select a module to continue.")
-        subtitle.setObjectName("MainMenuSubtitle")
-        header_layout.addWidget(subtitle)
-
-        root.addWidget(header_panel)
-
-        grid = QGridLayout()
-        grid.setSpacing(16)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        root.addLayout(grid)
-
-        section_header = QLabel("Modules")
-        section_header.setObjectName("SectionHeader")
-        root.insertWidget(1, section_header)
-
+        root.setContentsMargins(44, 34, 44, 42)
+        root.setSpacing(26)
         root.addStretch(1)
 
+        stage = QFrame()
+        stage.setObjectName("MenuStage")
+        stage_layout = QVBoxLayout(stage)
+        stage_layout.setContentsMargins(34, 32, 34, 34)
+        stage_layout.setSpacing(30)
+        stage.setMaximumWidth(1180)
+
+        header = QWidget()
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+
+        title = QLabel("DLC Gait Assembler")
+        title.setObjectName("MainMenuTitle")
+        title.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(title)
+
+        stage_layout.addWidget(header)
+
+        path_frame = QFrame()
+        path_frame.setObjectName("WorkflowPath")
+        path_layout = QHBoxLayout(path_frame)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(10)
+
         for index, spec in enumerate(self._tools):
-            button = MenuCard(spec)
+            step = WorkflowStep(index + 1, spec)
             if spec.enabled:
-                button.clicked.connect(self.tool_requested.emit)
-            grid.addWidget(button, index // 2, index % 2)
+                step.clicked.connect(self.tool_requested.emit)
+            path_layout.addWidget(step, 1)
+            if index < len(self._tools) - 1:
+                connector = QLabel(">")
+                connector.setObjectName("WorkflowConnector")
+                connector.setAlignment(Qt.AlignCenter)
+                path_layout.addWidget(connector, 0, Qt.AlignVCenter)
+
+        stage_layout.addWidget(path_frame)
+
+        root.addWidget(stage, 0, Qt.AlignHCenter)
+        root.addStretch(1)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
             """
             QWidget {
-                background: #f4f6f8;
-                color: #111827;
+                background: #ffffff;
+                color: #172033;
                 font-size: 13px;
             }
-            QFrame#MainMenuHeader {
+            QLabel {
+                background: transparent;
+            }
+            QFrame#MenuStage {
                 background: #ffffff;
                 border: 1px solid #d8dee8;
                 border-radius: 8px;
             }
-            QLabel#MainMenuEyebrow {
-                color: #0891b2;
-                font-size: 11px;
-                font-weight: 800;
-            }
             QLabel#MainMenuTitle {
                 color: #0f172a;
-                font-size: 30px;
+                font-size: 34px;
                 font-weight: 800;
             }
-            QLabel#MainMenuSubtitle {
-                color: #475569;
-                font-size: 14px;
+            QFrame#WorkflowPath {
+                background: transparent;
+                border: 0;
             }
-            QLabel#SectionHeader {
-                color: #334155;
-                font-size: 13px;
+            QLabel#WorkflowConnector {
+                color: #8aa0b6;
+                font-size: 22px;
                 font-weight: 800;
-                padding-top: 4px;
+                min-width: 18px;
             }
-            QFrame#MenuCard {
-                background: #ffffff;
-                border: 1px solid #d7dee8;
-                border-radius: 8px;
+            QFrame#WorkflowStep {
+                background: #f8fafc;
+                border: 1px solid #d6dee9;
+                border-radius: 7px;
             }
-            QFrame#MenuCard[enabledCard="true"]:hover {
+            QFrame#WorkflowStep[enabledStep="true"]:hover {
+                background: #eefbfc;
                 border-color: #0891b2;
-                background: #f2fbfc;
             }
-            QFrame#MenuCard[enabledCard="false"] {
+            QFrame#WorkflowStep[enabledStep="false"] {
                 background: #eef1f5;
                 border-color: #dbe1ea;
             }
-            QLabel#CardTitle {
+            QLabel#StepIndex {
+                color: #ffffff;
+                border-radius: 18px;
+                font-size: 15px;
+                font-weight: 700;
+                min-width: 36px;
+                min-height: 36px;
+                max-width: 36px;
+                max-height: 36px;
+            }
+            QLabel#StepIndex[enabledStep="false"] {
+                color: #9aa5b5;
+            }
+            QLabel#StepTitle {
                 color: #111827;
                 font-size: 17px;
                 font-weight: 700;
             }
-            QLabel#CardDescription {
-                color: #526173;
-                font-size: 12px;
-            }
-            QLabel#CardStatus {
-                border-radius: 8px;
-                padding: 3px 8px;
-                font-size: 11px;
-                font-weight: 700;
-            }
-            QLabel#CardStatus[enabledCard="true"] {
-                color: #0e7490;
-                background: #cffafe;
-            }
-            QLabel#CardStatus[enabledCard="false"] {
+            QLabel#StepTitle[enabledStep="false"] {
                 color: #94a3b8;
-                background: #e2e8f0;
             }
-            QLabel#DisabledTitle {
-                color: #64748b;
-                font-size: 17px;
-                font-weight: 700;
+            QLabel#StepDescription {
+                color: #526173;
+                font-size: 11px;
+            }
+            QLabel#StepDescription[enabledStep="false"] {
+                color: #9aa5b5;
             }
             """
         )
 
-
-class MenuCard(QFrame):
+class WorkflowStep(QFrame):
     clicked = Signal(str)
 
-    def __init__(self, spec: ToolSpec):
+    def __init__(self, index: int, spec: ToolSpec):
         super().__init__()
         self._spec = spec
-        self.setObjectName("MenuCard")
-        self.setProperty("enabledCard", spec.enabled)
+        self.setObjectName("WorkflowStep")
+        self.setProperty("enabledStep", spec.enabled)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setMinimumHeight(150)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumHeight(190)
         if spec.enabled:
             self.setCursor(Qt.PointingHandCursor)
-        if not spec.enabled:
+        else:
             self.setToolTip("Not available yet.")
-        self._build_ui(spec)
+        self._build_ui(index, spec)
 
-    def _build_ui(self, spec: ToolSpec) -> None:
+    def _build_ui(self, index: int, spec: ToolSpec) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 16)
+        root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
-        top_row = QHBoxLayout()
-        top_row.setSpacing(10)
-
-        accent = QLabel()
-        accent.setFixedSize(10, 10)
-        accent.setStyleSheet(f"background: {spec.accent}; border-radius: 5px;")
-        top_row.addWidget(accent, 0, Qt.AlignTop)
+        number = QLabel(str(index))
+        number.setObjectName("StepIndex")
+        number.setProperty("enabledStep", spec.enabled)
+        number.setAlignment(Qt.AlignCenter)
+        number.setStyleSheet(f"background: {spec.accent if spec.enabled else '#d6dee9'};")
+        root.addWidget(number, 0, Qt.AlignLeft)
 
         title = QLabel(spec.label)
-        title.setObjectName("CardTitle" if spec.enabled else "DisabledTitle")
-        top_row.addWidget(title, 1)
-
-        status = QLabel(spec.status)
-        status.setObjectName("CardStatus")
-        status.setProperty("enabledCard", spec.enabled)
-        top_row.addWidget(status, 0, Qt.AlignRight)
-        root.addLayout(top_row)
+        title.setObjectName("StepTitle")
+        title.setProperty("enabledStep", spec.enabled)
+        title.setWordWrap(True)
+        root.addWidget(title)
 
         description = QLabel(spec.description)
-        description.setObjectName("CardDescription")
+        description.setObjectName("StepDescription")
+        description.setProperty("enabledStep", spec.enabled)
         description.setWordWrap(True)
         root.addWidget(description)
         root.addStretch(1)
 
-    def mousePressEvent(self, event) -> None:
-        if self._spec.enabled and event.button() == Qt.LeftButton:
+    def mouseReleaseEvent(self, event) -> None:
+        if self._spec.enabled and event.button() == Qt.LeftButton and self.rect().contains(event.pos()):
             self.clicked.emit(self._spec.id)
-        super().mousePressEvent(event)
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
+
+
+def _should_animate_transition_child(child: QWidget) -> bool:
+    return child.objectName() in ANIMATED_OBJECT_NAMES or isinstance(child, ANIMATED_CONTROL_TYPES)
+
+
+def _has_transition_target_ancestor(child: QWidget, targets: list[QWidget]) -> bool:
+    parent = child.parentWidget()
+    while parent is not None:
+        if parent in targets:
+            return True
+        parent = parent.parentWidget()
+    return False
