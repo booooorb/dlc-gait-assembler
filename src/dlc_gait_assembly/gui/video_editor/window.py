@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -117,7 +123,7 @@ class VideoEditorWidget(QWidget):
         self.settings_panel = OperationSettingsPanel(self.preview)
         left_layout.addWidget(self.settings_panel, 3)
 
-        self.process_button = QPushButton("Process All Uploaded Videos")
+        self.process_button = QPushButton("Process Files")
         self.process_button.setObjectName("PrimaryButton")
         left_layout.addWidget(self.process_button)
 
@@ -298,6 +304,12 @@ class VideoEditorWidget(QWidget):
                 background: #ffffff;
                 padding: 2px 4px;
                 font-size: 11px;
+            }
+            QComboBox, QLineEdit {
+                border: 1px solid #cfd7e3;
+                border-radius: 4px;
+                background: #ffffff;
+                padding: 5px 6px;
             }
             QFrame#EnhancementSettings {
                 border: 1px solid #d8dee8;
@@ -641,34 +653,18 @@ class VideoEditorWidget(QWidget):
             enhancements=self.preview.enhancement_settings(),
         )
         trim_ranges_by_path = self._trim_ranges_for_processing(videos)
-        if not options.has_work() and not trim_ranges_by_path:
-            QMessageBox.information(
-                self,
-                "No operation selected",
-                "Draw a Crop or Upside-Down region, adjust an Enhancement, or set a Trim range before processing.",
-            )
-            return
 
         if not ffmpeg_available():
             QMessageBox.critical(self, "ffmpeg is missing", "Install the conda environment first, or run: conda install -c conda-forge ffmpeg")
             return
 
-        if not self._confirm_action(
-            "Process all uploaded videos?",
-            f"Process {len(videos)} uploaded video(s)?",
-            "Crop, upside-down, and enhancement settings apply to every video. Trim ranges apply only to the videos where you set them. You will choose the output location next.",
-        ):
+        export_dialog = ExportSettingsDialog(len(videos), self._default_output_root(), self)
+        if export_dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
-        output_root = QFileDialog.getExistingDirectory(
-            self,
-            "Choose Where to Create the Output Folder",
-            str(self._default_output_root()),
-        )
-        if not output_root:
-            return
+        output_root = export_dialog.output_root()
+        options = replace(options, crf=export_dialog.crf(), preset=export_dialog.preset())
 
-        output_root = Path(output_root).expanduser()
         try:
             session_dir = make_session_output_dir(output_root)
         except Exception as exc:
@@ -781,6 +777,83 @@ def _dot_icon(color: str) -> QIcon:
     painter.drawEllipse(2, 2, 12, 12)
     painter.end()
     return QIcon(pixmap)
+
+
+class ExportSettingsDialog(QDialog):
+    def __init__(self, video_count: int, default_output_root: Path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Export")
+        self.setModal(True)
+        self.setMinimumWidth(460)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel(f"Process {video_count} video(s)")
+        title.setObjectName("PreviewTitle")
+        layout.addWidget(title)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
+
+        path_row = QHBoxLayout()
+        self.output_root_edit = QLineEdit(str(default_output_root))
+        self.output_root_edit.setMinimumWidth(280)
+        browse_button = QPushButton("Browse")
+        browse_button.clicked.connect(self._browse_output_root)
+        path_row.addWidget(self.output_root_edit, 1)
+        path_row.addWidget(browse_button)
+        form.addRow("Output folder", path_row)
+
+        self.codec_combo = QComboBox()
+        self.codec_combo.addItem("H.264 / MP4", "h264_mp4")
+        form.addRow("Format", self.codec_combo)
+
+        self.quality_combo = QComboBox()
+        self.quality_combo.addItem("High detail (CRF 18)", (18, "slow"))
+        self.quality_combo.addItem("Maximum detail (CRF 16)", (16, "slow"))
+        self.quality_combo.addItem("Balanced (CRF 20)", (20, "medium"))
+        form.addRow("Quality", self.quality_combo)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_button is not None:
+            ok_button.setText("Process Files")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def output_root(self) -> Path:
+        return Path(self.output_root_edit.text()).expanduser().resolve()
+
+    def crf(self) -> int:
+        crf, _preset = self.quality_combo.currentData()
+        return int(crf)
+
+    def preset(self) -> str:
+        _crf, preset = self.quality_combo.currentData()
+        return str(preset)
+
+    def accept(self) -> None:
+        if not self.output_root_edit.text().strip():
+            QMessageBox.warning(self, "Output folder required", "Choose an output folder before processing.")
+            return
+        super().accept()
+
+    def _browse_output_root(self) -> None:
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Output Folder",
+            self.output_root_edit.text() or str(Path.home()),
+        )
+        if directory:
+            self.output_root_edit.setText(directory)
 
 
 def _format_ms(ms: int) -> str:

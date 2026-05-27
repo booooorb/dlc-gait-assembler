@@ -7,6 +7,7 @@ from dlc_gait_assembly.video_processing import (
     normalized_to_pixel_rect,
     output_path_for_input,
 )
+from dlc_gait_assembly.services.ffmpeg import build_processing_command
 
 
 def test_build_filter_graph_with_crop_and_invert():
@@ -61,6 +62,10 @@ def test_build_filter_graph_with_enhancements_only():
         "cas=strength=0.35[v_enhanced];"
         "[v_enhanced]format=yuv420p[vout]"
     )
+
+
+def test_build_filter_graph_with_no_edits_transcodes_to_mp4_ready_video():
+    assert build_filter_graph(1000, 800, ProcessingOptions()) == "[0:v]format=yuv420p[vout]"
 
 
 def test_build_filter_graph_with_trim_ranges_only():
@@ -171,3 +176,36 @@ def test_output_path_uses_unique_name_when_processed_file_exists(tmp_path):
 
     assert output_path != input_path
     assert output_path.name == "clip_processed_02.mp4"
+
+
+def test_output_path_converts_non_mp4_inputs_to_mp4(tmp_path):
+    input_path = tmp_path / "clip.avi"
+    input_path.write_bytes(b"not a real video")
+
+    output_path = output_path_for_input(input_path, tmp_path)
+
+    assert output_path.suffix == ".mp4"
+    assert output_path.name == "clip_processed.mp4"
+
+
+def test_processing_command_exports_h264_mp4(tmp_path):
+    command = build_processing_command(
+        ffmpeg_path="/usr/bin/ffmpeg",
+        input_path=tmp_path / "clip.mov",
+        output_path=tmp_path / "clip_processed.mp4",
+        filter_graph="[0:v]format=yuv420p[vout]",
+        options=ProcessingOptions(crf=18, preset="slow"),
+        has_trim=False,
+        include_trim_audio=False,
+    )
+
+    assert command[0] == "/usr/bin/ffmpeg"
+    assert command[command.index("-c:v") + 1] == "libx264"
+    assert command[command.index("-profile:v") + 1] == "high"
+    assert command[command.index("-tag:v") + 1] == "avc1"
+    assert command[command.index("-preset") + 1] == "slow"
+    assert command[command.index("-crf") + 1] == "18"
+    assert command[command.index("-pix_fmt") + 1] == "yuv420p"
+    assert command[command.index("-c:a") + 1] == "aac"
+    assert command[command.index("-f") + 1] == "mp4"
+    assert command[-1].endswith(".mp4")

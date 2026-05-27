@@ -21,7 +21,7 @@ class ProcessingOptions:
     enhancements: EnhancementSettings = field(default_factory=EnhancementSettings)
     trim_ranges: tuple[TrimRange, ...] = ()
     crf: int = 18
-    preset: str = "veryfast"
+    preset: str = "slow"
 
     def has_work(self) -> bool:
         has_crop = self.crop_enabled and self.crop_rect is not None and self.crop_rect.is_usable()
@@ -80,9 +80,6 @@ def _has_audio_stream(input_path: Path, ffmpeg_path: str | None = None) -> bool:
 
 
 def process_video(input_path: str | Path, output_dir: str | Path, options: ProcessingOptions) -> ProcessingResult:
-    if not options.has_work():
-        raise ValueError("Enable crop, invert, enhancements, or trim before processing.")
-
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path is None:
         raise RuntimeError("ffmpeg was not found. Install it with conda-forge before processing videos.")
@@ -101,6 +98,33 @@ def process_video(input_path: str | Path, output_dir: str | Path, options: Proce
     )
     output_path = output_path_for_input(input_path, output_dir)
 
+    command = build_processing_command(
+        ffmpeg_path=ffmpeg_path,
+        input_path=input_path,
+        output_path=output_path,
+        filter_graph=filter_graph,
+        options=options,
+        has_trim=options.has_trim(),
+        include_trim_audio=include_trim_audio,
+    )
+
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip() or completed.stdout.strip() or "ffmpeg failed without an error message."
+        raise RuntimeError(stderr[-3000:])
+
+    return ProcessingResult(input_path=input_path, output_path=output_path, command=command)
+
+
+def build_processing_command(
+    ffmpeg_path: str,
+    input_path: Path,
+    output_path: Path,
+    filter_graph: str,
+    options: ProcessingOptions,
+    has_trim: bool,
+    include_trim_audio: bool,
+) -> list[str]:
     command = [
         ffmpeg_path,
         "-hide_banner",
@@ -115,6 +139,10 @@ def process_video(input_path: str | Path, output_dir: str | Path, options: Proce
         "[vout]",
         "-c:v",
         "libx264",
+        "-profile:v",
+        "high",
+        "-tag:v",
+        "avc1",
         "-preset",
         options.preset,
         "-crf",
@@ -125,7 +153,7 @@ def process_video(input_path: str | Path, output_dir: str | Path, options: Proce
         "passthrough",
     ]
 
-    if options.has_trim():
+    if has_trim:
         if include_trim_audio:
             command.extend(["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"])
         else:
@@ -133,14 +161,8 @@ def process_video(input_path: str | Path, output_dir: str | Path, options: Proce
     else:
         command.extend(["-map", "0:a?", "-c:a", "aac", "-b:a", "192k"])
 
-    command.extend(["-movflags", "+faststart", str(output_path)])
-
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    if completed.returncode != 0:
-        stderr = completed.stderr.strip() or completed.stdout.strip() or "ffmpeg failed without an error message."
-        raise RuntimeError(stderr[-3000:])
-
-    return ProcessingResult(input_path=input_path, output_path=output_path, command=command)
+    command.extend(["-movflags", "+faststart", "-f", "mp4", str(output_path)])
+    return command
 
 
 def build_filter_graph(
@@ -188,7 +210,7 @@ def build_filter_graph(
     elif current != "[0:v]":
         parts.append(f"{current}format=yuv420p[vout]")
     else:
-        raise ValueError("No video filters were enabled.")
+        parts.append("[0:v]format=yuv420p[vout]")
 
     return ";".join(parts)
 

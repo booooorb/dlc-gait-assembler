@@ -58,6 +58,27 @@ def test_regional_inversion_preserves_timing_resolution_and_quality(tmp_path):
         assert psnr >= PSNR_MINIMUM_DB
 
 
+def test_h264_mp4_transcode_preserves_timing_resolution_and_quality(tmp_path):
+    cv2, np = _require_video_stack()
+    source = _read_video_metadata(FIXTURE_VIDEO, cv2)
+
+    result = process_video(FIXTURE_VIDEO, tmp_path, ProcessingOptions())
+    output = _read_video_metadata(result.output_path, cv2)
+
+    assert result.output_path.suffix == ".mp4"
+    assert output.width == source.width
+    assert output.height == source.height
+    assert output.frame_count == source.frame_count
+    assert output.duration_seconds == pytest.approx(source.duration_seconds, abs=_frame_duration(source))
+    assert output.fps == pytest.approx(source.fps, abs=FPS_TOLERANCE)
+    assert len(output.stts_entries) == 1
+
+    for frame_index in _sample_frame_indices(source.frame_count):
+        original_frame = _read_frame(FIXTURE_VIDEO, frame_index, cv2)
+        output_frame = _read_frame(result.output_path, frame_index, cv2)
+        assert _psnr(original_frame, output_frame, np) >= PSNR_MINIMUM_DB
+
+
 def test_crop_preserves_timing_and_uses_expected_resolution(tmp_path):
     cv2, _np = _require_video_stack()
     crop_rect = NormalizedRect(0.1, 0.1, 0.8, 0.8)
@@ -179,6 +200,17 @@ def _masked_psnr(original, output, edited_rect: NormalizedRect, np) -> float:
     mask[top:bottom, left:right] = False
 
     diff = original[mask].astype("float32") - output[mask].astype("float32")
+    mse = float(np.mean(diff * diff))
+    if mse <= 0.0:
+        return math.inf
+    return 20.0 * math.log10(255.0 / math.sqrt(mse))
+
+
+def _psnr(original, output, np) -> float:
+    if original.shape != output.shape:
+        raise AssertionError(f"Frame shape changed from {original.shape} to {output.shape}")
+
+    diff = original.astype("float32") - output.astype("float32")
     mse = float(np.mean(diff * diff))
     if mse <= 0.0:
         return math.inf
