@@ -12,8 +12,18 @@ dependencies = [
     "opencv-python",
 ]
 
+[project.optional-dependencies]
+test = [
+    "numpy",
+    "pytest",
+]
+
 [project.scripts]
 dlc-gait-assembler = "dlc_gait_assembly.gui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

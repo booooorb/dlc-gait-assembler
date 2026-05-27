@@ -611,12 +611,17 @@ class VideoEditorWidget(QWidget):
         key = str(self._current_video)
         normalized = [trim.clamped(self._duration_ms) for trim in ranges]
         normalized = [trim for trim in normalized if trim.is_usable()]
+        active_trim = normalized[active_index] if 0 <= active_index < len(normalized) else None
+        normalized = sorted(normalized, key=lambda trim: (trim.start_ms, trim.end_ms))
         if not normalized or self._is_default_trim(normalized):
             self._trim_ranges_by_video.pop(key, None)
             self._active_trim_range_by_video.pop(key, None)
         else:
             self._trim_ranges_by_video[key] = normalized
-            self._active_trim_range_by_video[key] = max(0, min(active_index, len(normalized) - 1))
+            if active_trim in normalized:
+                self._active_trim_range_by_video[key] = normalized.index(active_trim)
+            else:
+                self._active_trim_range_by_video[key] = max(0, min(active_index, len(normalized) - 1))
         self._refresh_trim_context()
 
     def _is_default_trim(self, ranges: list[TrimRange]) -> bool:
@@ -716,7 +721,7 @@ class VideoEditorWidget(QWidget):
         for path in videos:
             ranges = self._trim_ranges_by_video.get(str(path))
             if ranges:
-                ranges_by_path[str(path)] = tuple(ranges)
+                ranges_by_path[str(path)] = tuple(sorted(ranges, key=lambda trim: (trim.start_ms, trim.end_ms)))
         return ranges_by_path
 
     def _confirm_action(self, title: str, text: str, details: str = "") -> bool:

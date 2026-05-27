@@ -11,6 +11,7 @@ from dlc_gait_assembly.services.ffmpeg import (
     build_filter_graph,
     ffmpeg_available,
     normalized_to_pixel_rect,
+    output_path_for_input,
     process_video,
 )
 from dlc_gait_assembly.services.project_paths import make_session_output_dir
@@ -31,6 +32,7 @@ __all__ = [
     "is_supported_video",
     "make_session_output_dir",
     "normalized_to_pixel_rect",
+    "output_path_for_input",
     "probe_video",
     "process_video",
 ]

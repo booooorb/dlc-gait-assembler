@@ -50,8 +50,16 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def _has_audio_stream(input_path: Path) -> bool:
-    ffprobe_path = shutil.which("ffprobe")
+def _find_ffprobe(ffmpeg_path: str | None = None) -> str | None:
+    if ffmpeg_path:
+        sibling = Path(ffmpeg_path).with_name("ffprobe")
+        if sibling.exists():
+            return str(sibling)
+    return shutil.which("ffprobe")
+
+
+def _has_audio_stream(input_path: Path, ffmpeg_path: str | None = None) -> bool:
+    ffprobe_path = _find_ffprobe(ffmpeg_path)
     if ffprobe_path is None:
         return False
 
@@ -84,15 +92,14 @@ def process_video(input_path: str | Path, output_dir: str | Path, options: Proce
     output_dir.mkdir(parents=True, exist_ok=True)
 
     info = probe_video(input_path)
-    include_trim_audio = options.has_trim() and _has_audio_stream(input_path)
+    include_trim_audio = options.has_trim() and _has_audio_stream(input_path, ffmpeg_path)
     filter_graph = build_filter_graph(
         info.width,
         info.height,
         options,
         include_audio=include_trim_audio,
-        source_fps=info.fps,
     )
-    output_path = _unique_output_path(output_dir / f"{input_path.stem}_processed.mp4")
+    output_path = output_path_for_input(input_path, output_dir)
 
     command = [
         ffmpeg_path,
@@ -114,7 +121,10 @@ def process_video(input_path: str | Path, output_dir: str | Path, options: Proce
         str(options.crf),
         "-pix_fmt",
         "yuv420p",
+        "-fps_mode",
+        "passthrough",
     ]
+
     if options.has_trim():
         if include_trim_audio:
             command.extend(["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"])
@@ -161,7 +171,7 @@ def build_filter_graph(
         parts.append(f"{current}{','.join(enhancement_filters)}{enhanced}")
         current = enhanced
 
-    trim_ranges = tuple(trim for trim in options.trim_ranges if trim.is_usable())
+    trim_ranges = _normalized_trim_ranges(options.trim_ranges)
 
     if options.crop_enabled and options.crop_rect is not None and options.crop_rect.is_usable():
         crop = normalized_to_pixel_rect(options.crop_rect, source_width, source_height)
@@ -174,7 +184,7 @@ def build_filter_graph(
             return ";".join(parts)
 
     if trim_ranges:
-        parts.extend(_build_trim_filters(current, trim_ranges, include_audio, source_fps))
+        parts.extend(_build_trim_filters(current, trim_ranges, include_audio))
     elif current != "[0:v]":
         parts.append(f"{current}format=yuv420p[vout]")
     else:
@@ -187,16 +197,11 @@ def _build_trim_filters(
     current: str,
     trim_ranges: tuple[TrimRange, ...],
     include_audio: bool,
-    source_fps: float | None,
 ) -> list[str]:
     parts: list[str] = []
-    video_setpts = _trim_video_setpts(source_fps)
     if len(trim_ranges) == 1:
         trim = trim_ranges[0]
-        parts.append(
-            f"{current}trim=start={_fmt_float(trim.start_seconds())}:"
-            f"end={_fmt_float(trim.end_seconds())},setpts={video_setpts},format=yuv420p[vout]"
-        )
+        parts.append(f"{current}{_video_trim_filter(trim)},format=yuv420p[vout]")
         if include_audio:
             parts.append(
                 f"[0:a]atrim=start={_fmt_float(trim.start_seconds())}:"
@@ -213,10 +218,7 @@ def _build_trim_filters(
 
     concat_inputs = []
     for index, trim in enumerate(trim_ranges):
-        parts.append(
-            f"[trim_src_{index}]trim=start={_fmt_float(trim.start_seconds())}:"
-            f"end={_fmt_float(trim.end_seconds())},setpts={video_setpts}[vtrim_{index}]"
-        )
+        parts.append(f"[trim_src_{index}]{_video_trim_filter(trim)}[vtrim_{index}]")
         concat_inputs.append(f"[vtrim_{index}]")
         if include_audio:
             parts.append(
@@ -226,17 +228,38 @@ def _build_trim_filters(
             concat_inputs.append(f"[atrim_{index}]")
 
     if include_audio:
-        parts.append(f"{''.join(concat_inputs)}concat=n={len(trim_ranges)}:v=1:a=1[vout][aout]")
+        parts.append(f"{''.join(concat_inputs)}concat=n={len(trim_ranges)}:v=1:a=1[vconcat][aout]")
+        parts.append("[vconcat]format=yuv420p[vout]")
     else:
         parts.append(f"{''.join(concat_inputs)}concat=n={len(trim_ranges)}:v=1:a=0,format=yuv420p[vout]")
 
     return parts
 
 
-def _trim_video_setpts(source_fps: float | None) -> str:
-    if source_fps is not None and source_fps > 0:
-        return f"N/({_fmt_float(source_fps)}*TB)"
-    return "PTS-STARTPTS"
+def _video_trim_filter(trim: TrimRange) -> str:
+    return (
+        f"trim=start={_fmt_float(trim.start_seconds())}:"
+        f"end={_fmt_float(trim.end_seconds())},setpts=PTS-STARTPTS"
+    )
+
+
+def _trim_sort_key(trim: TrimRange) -> tuple[int, int]:
+    return trim.start_ms, trim.end_ms
+
+
+def _normalized_trim_ranges(trim_ranges: tuple[TrimRange, ...]) -> tuple[TrimRange, ...]:
+    sorted_ranges = sorted((trim for trim in trim_ranges if trim.is_usable()), key=_trim_sort_key)
+    merged: list[TrimRange] = []
+
+    for trim in sorted_ranges:
+        if not merged or trim.start_ms > merged[-1].end_ms:
+            merged.append(trim)
+            continue
+
+        previous = merged[-1]
+        merged[-1] = TrimRange(previous.start_ms, max(previous.end_ms, trim.end_ms))
+
+    return tuple(merged)
 
 
 def build_enhancement_filters(settings: EnhancementSettings) -> list[str]:
@@ -329,6 +352,15 @@ def _unique_output_path(path: Path) -> Path:
             return candidate
 
     raise RuntimeError(f"Could not create a unique output path for {path}")
+
+
+def output_path_for_input(input_path: str | Path, output_dir: str | Path) -> Path:
+    input_path = Path(input_path).expanduser().resolve()
+    output_dir = Path(output_dir).expanduser().resolve()
+    output_path = _unique_output_path(output_dir / f"{input_path.stem}_processed.mp4")
+    if output_path == input_path:
+        raise RuntimeError("Refusing to overwrite the original input video.")
+    return output_path
 
 
 def _clamp_int(value: int, minimum: int, maximum: int) -> int:

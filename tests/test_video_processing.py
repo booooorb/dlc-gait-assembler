@@ -5,6 +5,7 @@ from dlc_gait_assembly.video_processing import (
     TrimRange,
     build_filter_graph,
     normalized_to_pixel_rect,
+    output_path_for_input,
 )
 
 
@@ -72,8 +73,8 @@ def test_build_filter_graph_with_trim_ranges_only():
 
     assert build_filter_graph(1000, 800, options, source_fps=30.0) == (
         "[0:v]split=2[trim_src_0][trim_src_1];"
-        "[trim_src_0]trim=start=1:end=4,setpts=N/(30*TB)[vtrim_0];"
-        "[trim_src_1]trim=start=7:end=9,setpts=N/(30*TB)[vtrim_1];"
+        "[trim_src_0]trim=start=1:end=4,setpts=PTS-STARTPTS[vtrim_0];"
+        "[trim_src_1]trim=start=7:end=9,setpts=PTS-STARTPTS[vtrim_1];"
         "[vtrim_0][vtrim_1]concat=n=2:v=1:a=0,format=yuv420p[vout]"
     )
 
@@ -82,8 +83,60 @@ def test_build_filter_graph_with_trim_audio():
     options = ProcessingOptions(trim_ranges=(TrimRange(1000, 4000),))
 
     assert build_filter_graph(1000, 800, options, include_audio=True, source_fps=30.0) == (
-        "[0:v]trim=start=1:end=4,setpts=N/(30*TB),format=yuv420p[vout];"
+        "[0:v]trim=start=1:end=4,setpts=PTS-STARTPTS,format=yuv420p[vout];"
         "[0:a]atrim=start=1:end=4,asetpts=PTS-STARTPTS[aout]"
+    )
+
+
+def test_build_filter_graph_sorts_trim_ranges_by_start_time():
+    options = ProcessingOptions(
+        trim_ranges=(
+            TrimRange(7000, 9000),
+            TrimRange(1000, 4000),
+        ),
+    )
+
+    assert build_filter_graph(1000, 800, options, source_fps=30.0) == (
+        "[0:v]split=2[trim_src_0][trim_src_1];"
+        "[trim_src_0]trim=start=1:end=4,setpts=PTS-STARTPTS[vtrim_0];"
+        "[trim_src_1]trim=start=7:end=9,setpts=PTS-STARTPTS[vtrim_1];"
+        "[vtrim_0][vtrim_1]concat=n=2:v=1:a=0,format=yuv420p[vout]"
+    )
+
+
+def test_build_filter_graph_merges_overlapping_trim_ranges():
+    options = ProcessingOptions(
+        trim_ranges=(
+            TrimRange(3000, 5000),
+            TrimRange(1000, 4000),
+            TrimRange(7000, 8000),
+        ),
+    )
+
+    assert build_filter_graph(1000, 800, options, source_fps=30.0) == (
+        "[0:v]split=2[trim_src_0][trim_src_1];"
+        "[trim_src_0]trim=start=1:end=5,setpts=PTS-STARTPTS[vtrim_0];"
+        "[trim_src_1]trim=start=7:end=8,setpts=PTS-STARTPTS[vtrim_1];"
+        "[vtrim_0][vtrim_1]concat=n=2:v=1:a=0,format=yuv420p[vout]"
+    )
+
+
+def test_build_filter_graph_preserves_timing_for_non_trim_exports():
+    options = ProcessingOptions(
+        crop_enabled=True,
+        crop_rect=NormalizedRect(0.1, 0.1, 0.8, 0.8),
+    )
+
+    assert build_filter_graph(1920, 1080, options, source_fps=29.97) == (
+        "[0:v]crop=1536:864:192:108,format=yuv420p[vout]"
+    )
+
+
+def test_build_filter_graph_with_trim_ranges_falls_back_to_timestamps_without_fps():
+    options = ProcessingOptions(trim_ranges=(TrimRange(1000, 4000),))
+
+    assert build_filter_graph(1000, 800, options) == (
+        "[0:v]trim=start=1:end=4,setpts=PTS-STARTPTS,format=yuv420p[vout]"
     )
 
 
@@ -96,3 +149,25 @@ def test_normalized_rect_is_clamped_and_even_sized():
     assert rect.height % 2 == 0
     assert rect.x + rect.width <= 1921
     assert rect.y + rect.height <= 1081
+
+
+def test_output_path_never_overwrites_input(tmp_path):
+    input_path = tmp_path / "clip.mp4"
+    input_path.write_bytes(b"not a real video")
+
+    output_path = output_path_for_input(input_path, tmp_path)
+
+    assert output_path != input_path
+    assert output_path.name == "clip_processed.mp4"
+
+
+def test_output_path_uses_unique_name_when_processed_file_exists(tmp_path):
+    input_path = tmp_path / "clip.mp4"
+    existing_output = tmp_path / "clip_processed.mp4"
+    input_path.write_bytes(b"not a real video")
+    existing_output.write_bytes(b"existing output")
+
+    output_path = output_path_for_input(input_path, tmp_path)
+
+    assert output_path != input_path
+    assert output_path.name == "clip_processed_02.mp4"
