@@ -29,8 +29,8 @@ from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWid
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
 
-TRANSITION_CONTROL_FADE_MS = 920
-TRANSITION_CONTROL_STAGGER_MS = 70
+TRANSITION_CONTROL_FADE_MS = 460
+TRANSITION_CONTROL_STAGGER_MS = 32
 
 ANIMATED_CONTROL_TYPES = (
     QAbstractButton,
@@ -111,6 +111,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
         self._active_tool: QWidget | None = None
         self._active_tool_id: str | None = None
+        self._did_initial_reveal = False
         self._transition_animations: list[QPropertyAnimation] = []
         self._tool_widgets: dict[str, QWidget] = {}
         self._stack = QStackedWidget()
@@ -133,6 +134,14 @@ class MainWindow(QMainWindow):
         self._release_all_tools()
 
         super().closeEvent(event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._did_initial_reveal:
+            return
+
+        self._did_initial_reveal = True
+        QTimer.singleShot(0, lambda: self._fade_controls(self._stack.currentWidget()))
 
     def _build_navigation(self) -> None:
         navigation = self.menuBar().addMenu("Navigation")

@@ -20,7 +20,6 @@ except ImportError:
 
 _REGION_BASE_Z = 5.0
 _REGION_ACTIVE_Z = 7.0
-_ENHANCEMENT_ZOOM_STEP = 2.0
 _MAX_ENHANCEMENT_ZOOM = 32.0
 
 
@@ -380,15 +379,31 @@ class RegionPreviewView(QGraphicsView):
         ):
             self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
 
+    def wheelEvent(self, event) -> None:
+        pos = _event_pos(event)
+        scene_pos = self.mapToScene(pos)
+        if self._mode != "enhancements" or self._image_bounds.isNull() or not self._image_bounds.contains(scene_pos):
+            super().wheelEvent(event)
+            return
+
+        direction = event.angleDelta().y()
+        if direction == 0:
+            event.accept()
+            return
+
+        factor = 1.25 if direction > 0 else 0.8
+        self._zoom_at(pos, factor)
+        event.accept()
+
     def mousePressEvent(self, event):
         pos = _event_pos(event)
         scene_pos = self.mapToScene(pos)
 
+        if self._mode == "enhancements":
+            super().mousePressEvent(event)
+            return
+
         if event.button() == Qt.LeftButton and self._image_bounds.contains(scene_pos):
-            if self._mode == "enhancements":
-                self._zoom_at(pos, _ENHANCEMENT_ZOOM_STEP)
-                event.accept()
-                return
             if self._mode == "trim":
                 super().mousePressEvent(event)
                 return
@@ -407,11 +422,6 @@ class RegionPreviewView(QGraphicsView):
                 self._drag_target = self._next_invert_id
                 self._next_invert_id += 1
             self._update_region_from_drag(self._drag_start, self._drag_start)
-            event.accept()
-            return
-
-        if event.button() == Qt.RightButton and self._mode == "enhancements" and self._image_bounds.contains(scene_pos):
-            self._zoom_at(pos, 1 / _ENHANCEMENT_ZOOM_STEP)
             event.accept()
             return
 

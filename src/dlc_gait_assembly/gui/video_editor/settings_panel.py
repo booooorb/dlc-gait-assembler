@@ -180,11 +180,11 @@ class OperationSettingsPanel(QGroupBox):
             self._add_enhancement_slider(field, title, minimum, maximum, scale, getattr(settings, field))
 
         reset_button = QPushButton("Reset Enhancements")
-        reset_button.setObjectName("CreateRegionButton")
+        reset_button.setObjectName("ResetButton")
         reset_button.clicked.connect(self._reset_enhancements)
         self._content_layout.addWidget(reset_button)
         zoom_reset_button = QPushButton("Reset Preview Zoom")
-        zoom_reset_button.setObjectName("CreateRegionButton")
+        zoom_reset_button.setObjectName("ResetButton")
         zoom_reset_button.clicked.connect(lambda _checked=False: self._preview.reset_enhancement_zoom())
         self._content_layout.addWidget(zoom_reset_button)
         self._content_layout.addStretch(1)
@@ -275,12 +275,12 @@ class OperationSettingsPanel(QGroupBox):
             self._add_trim_range_settings(index, trim_range, index == self._active_trim_index)
 
         add_button = QPushButton("Add Trim Range")
-        add_button.setObjectName("CreateRegionButton")
+        add_button.setObjectName("CreateTrimRangeButton")
         add_button.clicked.connect(lambda _checked=False: self.trim_range_added.emit())
         self._content_layout.addWidget(add_button)
 
         reset_button = QPushButton("Reset Video Trim")
-        reset_button.setObjectName("CreateRegionButton")
+        reset_button.setObjectName("ResetButton")
         reset_button.clicked.connect(lambda _checked=False: self.trim_ranges_reset.emit())
         self._content_layout.addWidget(reset_button)
 
@@ -318,7 +318,7 @@ class OperationSettingsPanel(QGroupBox):
         layout.addWidget(end_spin, 2, 1)
 
         delete_button = QPushButton("Delete")
-        delete_button.setObjectName("TinyResetButton")
+        delete_button.setObjectName("DeleteButton")
         delete_button.clicked.connect(lambda _checked=False, idx=index: self.trim_range_deleted.emit(idx))
         layout.addWidget(delete_button, 3, 0, 1, 2)
 
@@ -381,11 +381,13 @@ class OperationSettingsPanel(QGroupBox):
     def _add_create_region_button(self) -> None:
         if self._active_tool == "crop":
             text = "New Crop Region"
+            object_name = "CreateCropRegionButton"
         else:
             text = "New Upside-Down Region"
+            object_name = "CreateInvertRegionButton"
 
         button = QPushButton(text)
-        button.setObjectName("CreateRegionButton")
+        button.setObjectName(object_name)
         button.clicked.connect(lambda: self._preview.create_default_region(self._active_tool))
         self._content_layout.addWidget(button)
 

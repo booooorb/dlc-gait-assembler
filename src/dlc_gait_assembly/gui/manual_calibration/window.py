@@ -79,7 +79,9 @@ class ManualCalibrationWidget(QWidget):
         media_layout.setSpacing(8)
         media_buttons = QHBoxLayout()
         self.open_media_button = QPushButton("Open Image/Video")
+        self.open_media_button.setObjectName("OpenMediaButton")
         self.clear_calibration_button = QPushButton("Clear Calibration")
+        self.clear_calibration_button.setObjectName("ClearButton")
         media_buttons.addWidget(self.open_media_button)
         media_buttons.addWidget(self.clear_calibration_button)
         media_layout.addLayout(media_buttons)
@@ -98,7 +100,7 @@ class ManualCalibrationWidget(QWidget):
         self.tau_spin.setSingleStep(0.25)
         self.tau_spin.setSuffix("%")
         self.tau_spin.setValue(2.0)
-        settings_layout.addRow("Tau", self.tau_spin)
+        settings_layout.addRow("Margin of Calibration Error", self.tau_spin)
         left_layout.addWidget(settings_box)
 
         results_box = QGroupBox("SOP checks")
@@ -143,6 +145,7 @@ class ManualCalibrationWidget(QWidget):
         tools_layout.addWidget(self.cm_tool_button)
         tools_layout.addStretch(1)
         self.reset_zoom_button = QPushButton("Reset Zoom")
+        self.reset_zoom_button.setObjectName("ResetButton")
         tools_layout.addWidget(self.reset_zoom_button)
         right_layout.addWidget(tools_bar)
 
@@ -183,6 +186,9 @@ class ManualCalibrationWidget(QWidget):
                 color: #111827;
                 font-size: 13px;
             }
+            QLabel {
+                background: transparent;
+            }
             QGroupBox {
                 border: 1px solid #d8dee8;
                 border-radius: 6px;
@@ -196,6 +202,7 @@ class ManualCalibrationWidget(QWidget):
                 padding: 0 4px;
                 color: #374151;
                 font-weight: 600;
+                background: transparent;
             }
             QLabel#TitleLabel {
                 font-size: 19px;
@@ -219,16 +226,35 @@ class ManualCalibrationWidget(QWidget):
                 background: #edf7f7;
                 border-color: #8ccfcf;
             }
-            QToolButton {
-                border: 1px solid #c9d2df;
-                border-radius: 5px;
-                padding: 7px 10px;
-                background: #ffffff;
-                font-weight: 600;
+            QPushButton#OpenMediaButton {
+                background: #e5f3ff;
+                border-color: #93c5fd;
+                color: #1e3a8a;
+                font-weight: 700;
             }
-            QToolButton:checked {
-                background: #eef2f7;
-                border-color: #64748b;
+            QPushButton#OpenMediaButton:hover {
+                background: #d7ecff;
+                border-color: #3b82f6;
+            }
+            QPushButton#ClearButton {
+                background: #fde8e8;
+                border-color: #f3a5a5;
+                color: #991b1b;
+                font-weight: 700;
+            }
+            QPushButton#ClearButton:hover {
+                background: #fbd5d5;
+                border-color: #ef4444;
+            }
+            QPushButton#ResetButton {
+                background: #e8f6f8;
+                border-color: #8bd6df;
+                color: #155e75;
+                font-weight: 650;
+            }
+            QPushButton#ResetButton:hover {
+                background: #d8f0f4;
+                border-color: #0891b2;
             }
             QFrame#OperationsBar {
                 border: 1px solid #cfd7e3;
@@ -481,7 +507,44 @@ def _make_tool_button(text: str, color: str) -> QToolButton:
     button.setIconSize(QSize(12, 12))
     button.setCheckable(True)
     button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+    button.setStyleSheet(_tool_button_style(color))
     return button
+
+
+def _tool_button_style(color: str) -> str:
+    return f"""
+        QToolButton {{
+            background: {_mix_hex(color, "#ffffff", 0.88)};
+            border: 1px solid {_mix_hex(color, "#ffffff", 0.50)};
+            color: #111827;
+            border-radius: 5px;
+            padding: 7px 10px;
+            font-weight: 700;
+        }}
+        QToolButton:hover {{
+            background: {_mix_hex(color, "#ffffff", 0.78)};
+            border-color: {color};
+        }}
+        QToolButton:checked {{
+            background: {_mix_hex(color, "#ffffff", 0.70)};
+            border: 2px solid {color};
+        }}
+        QToolButton:disabled {{
+            background: #eef1f5;
+            border-color: #d8dee8;
+            color: #94a3b8;
+        }}
+    """
+
+
+def _mix_hex(color: str, base: str, base_weight: float) -> str:
+    foreground = QColor(color)
+    background = QColor(base)
+    weight = max(0.0, min(1.0, base_weight))
+    red = round(foreground.red() * (1.0 - weight) + background.red() * weight)
+    green = round(foreground.green() * (1.0 - weight) + background.green() * weight)
+    blue = round(foreground.blue() * (1.0 - weight) + background.blue() * weight)
+    return f"#{red:02x}{green:02x}{blue:02x}"
 
 
 def _dot_icon(color: str) -> QIcon:

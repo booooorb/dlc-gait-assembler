@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-
+#TODO : Output documentation inside folder, detailing changes made. 
+#TODO BUG: Switching windows back to the Video Processing after from a different window (calibration) might cause you unable to move the regions of upside down and crop (bounded movement, cannot move to different place)
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -99,9 +100,13 @@ class VideoEditorWidget(QWidget):
         videos_layout.setSpacing(8)
         button_row = QHBoxLayout()
         self.add_videos_button = QPushButton("Add Files")
+        self.add_videos_button.setObjectName("AddFilesButton")
         self.add_folder_button = QPushButton("Add Folder")
+        self.add_folder_button.setObjectName("AddFolderButton")
         self.remove_videos_button = QPushButton("Remove")
+        self.remove_videos_button.setObjectName("RemoveButton")
         self.clear_videos_button = QPushButton("Clear")
+        self.clear_videos_button.setObjectName("ClearButton")
         button_row.addWidget(self.add_videos_button)
         button_row.addWidget(self.add_folder_button)
         button_row.addWidget(self.remove_videos_button)
@@ -214,6 +219,9 @@ class VideoEditorWidget(QWidget):
                 color: #111827;
                 font-size: 13px;
             }
+            QLabel {
+                background: transparent;
+            }
             QGroupBox {
                 border: 1px solid #d8dee8;
                 border-radius: 6px;
@@ -227,6 +235,7 @@ class VideoEditorWidget(QWidget):
                 padding: 0 4px;
                 color: #374151;
                 font-weight: 600;
+                background: transparent;
             }
             QPushButton {
                 border: 1px solid #c9d2df;
@@ -241,6 +250,48 @@ class VideoEditorWidget(QWidget):
             QPushButton:disabled {
                 color: #94a3b8;
                 background: #eef1f5;
+            }
+            QPushButton#AddFilesButton {
+                background: #e6f6ef;
+                border-color: #8bd8b7;
+                color: #14532d;
+                font-weight: 650;
+            }
+            QPushButton#AddFilesButton:hover {
+                background: #d5f0e5;
+                border-color: #22c55e;
+            }
+            QPushButton#AddFolderButton {
+                background: #e5f3ff;
+                border-color: #93c5fd;
+                color: #1e3a8a;
+                font-weight: 650;
+            }
+            QPushButton#AddFolderButton:hover {
+                background: #d7ecff;
+                border-color: #3b82f6;
+            }
+            QPushButton#RemoveButton,
+            QPushButton#DeleteButton {
+                background: #fde8e8;
+                border-color: #f3a5a5;
+                color: #991b1b;
+                font-weight: 700;
+            }
+            QPushButton#RemoveButton:hover,
+            QPushButton#DeleteButton:hover {
+                background: #fbd5d5;
+                border-color: #ef4444;
+            }
+            QPushButton#ClearButton {
+                background: #fff1df;
+                border-color: #fdba74;
+                color: #9a3412;
+                font-weight: 700;
+            }
+            QPushButton#ClearButton:hover {
+                background: #ffe3c2;
+                border-color: #f97316;
             }
             QPushButton#PrimaryButton {
                 background: #047c7c;
@@ -257,6 +308,34 @@ class VideoEditorWidget(QWidget):
                 padding: 2px 6px;
                 font-size: 10px;
             }
+            QPushButton#CreateRegionButton,
+            QPushButton#CreateCropRegionButton,
+            QPushButton#CreateInvertRegionButton,
+            QPushButton#CreateTrimRangeButton,
+            QPushButton#ResetButton {
+                font-weight: 650;
+            }
+            QPushButton#CreateCropRegionButton {
+                background: #eef2f7;
+                border-color: #b8c4d4;
+                color: #334155;
+            }
+            QPushButton#CreateInvertRegionButton {
+                background: #fae8ff;
+                border-color: #e879f9;
+                color: #86198f;
+            }
+            QPushButton#CreateTrimRangeButton {
+                background: #fff1df;
+                border-color: #fdba74;
+                color: #9a3412;
+            }
+            QPushButton#ResetButton,
+            QPushButton#CreateRegionButton {
+                background: #e8f6f8;
+                border-color: #8bd6df;
+                color: #155e75;
+            }
             QFrame#OperationsBar {
                 border: 1px solid #cfd7e3;
                 border-radius: 6px;
@@ -268,10 +347,6 @@ class VideoEditorWidget(QWidget):
                 padding: 7px 10px;
                 background: #ffffff;
                 font-weight: 600;
-            }
-            QToolButton:checked {
-                background: #eef2f7;
-                border-color: #64748b;
             }
             QLabel#TitleLabel {
                 font-size: 19px;
@@ -764,7 +839,44 @@ def _make_tool_button(text: str, color: str) -> QToolButton:
     button.setIconSize(QSize(12, 12))
     button.setCheckable(True)
     button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+    button.setStyleSheet(_tool_button_style(color))
     return button
+
+
+def _tool_button_style(color: str) -> str:
+    return f"""
+        QToolButton {{
+            background: {_mix_hex(color, "#ffffff", 0.88)};
+            border: 1px solid {_mix_hex(color, "#ffffff", 0.50)};
+            color: #111827;
+            border-radius: 5px;
+            padding: 7px 10px;
+            font-weight: 700;
+        }}
+        QToolButton:hover {{
+            background: {_mix_hex(color, "#ffffff", 0.78)};
+            border-color: {color};
+        }}
+        QToolButton:checked {{
+            background: {_mix_hex(color, "#ffffff", 0.70)};
+            border: 2px solid {color};
+        }}
+        QToolButton:disabled {{
+            background: #eef1f5;
+            border-color: #d8dee8;
+            color: #94a3b8;
+        }}
+    """
+
+
+def _mix_hex(color: str, base: str, base_weight: float) -> str:
+    foreground = QColor(color)
+    background = QColor(base)
+    weight = max(0.0, min(1.0, base_weight))
+    red = round(foreground.red() * (1.0 - weight) + background.red() * weight)
+    green = round(foreground.green() * (1.0 - weight) + background.green() * weight)
+    blue = round(foreground.blue() * (1.0 - weight) + background.blue() * weight)
+    return f"#{red:02x}{green:02x}{blue:02x}"
 
 
 def _dot_icon(color: str) -> QIcon:
