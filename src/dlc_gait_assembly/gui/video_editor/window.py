@@ -95,15 +95,17 @@ class VideoEditorWidget(QWidget):
         self.preview = RegionPreviewView()
 
         left_panel = QWidget()
+        left_panel.setMinimumWidth(350)
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(14, 14, 14, 14)
-        left_layout.setSpacing(12)
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(9)
 
         title = QLabel("Video Processing Window")
         title.setObjectName("TitleLabel")
         left_layout.addWidget(title)
 
         videos_box = QGroupBox("Uploaded videos")
+        videos_box.setMinimumHeight(150)
         videos_layout = QVBoxLayout(videos_box)
         videos_layout.setSpacing(8)
         button_row = QHBoxLayout()
@@ -131,10 +133,10 @@ class VideoEditorWidget(QWidget):
         list_font.setPointSize(9)
         self.video_list.setFont(list_font)
         videos_layout.addWidget(self.video_list, 1)
-        left_layout.addWidget(videos_box, 4)
+        left_layout.addWidget(videos_box, 3)
 
         self.settings_panel = OperationSettingsPanel(self.preview)
-        left_layout.addWidget(self.settings_panel, 3)
+        left_layout.addWidget(self.settings_panel, 4)
 
         self.process_button = QPushButton("Process Files")
         self.process_button.setObjectName("PrimaryButton")
@@ -147,6 +149,7 @@ class VideoEditorWidget(QWidget):
         left_layout.addWidget(self.progress)
 
         right_panel = QWidget()
+        right_panel.setMinimumWidth(390)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(14, 14, 14, 14)
         right_layout.setSpacing(10)
@@ -196,7 +199,9 @@ class VideoEditorWidget(QWidget):
 
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
-        splitter.setSizes([390, 890])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([455, 825])
 
     def _connect_signals(self) -> None:
         self.add_videos_button.clicked.connect(self._add_videos)
@@ -252,69 +257,85 @@ class VideoEditorWidget(QWidget):
                 background: #ffffff;
             }
             QPushButton:hover {
-                background: #edf7f7;
-                border-color: #8ccfcf;
+                background: #f1f8f8;
+                border-color: #a8cfd0;
             }
             QPushButton:disabled {
                 color: #94a3b8;
-                background: #eef1f5;
+                background: #f1f4f8;
             }
             QPushButton#AddFilesButton {
-                background: #e6f6ef;
-                border-color: #8bd8b7;
-                color: #14532d;
+                background: #f0f8f6;
+                border-color: #b9ddd4;
+                color: #23524c;
                 font-weight: 650;
             }
             QPushButton#AddFilesButton:hover {
-                background: #d5f0e5;
-                border-color: #22c55e;
+                background: #e6f2ef;
+                border-color: #7bbcaf;
             }
             QPushButton#AddFolderButton {
-                background: #e5f3ff;
-                border-color: #93c5fd;
-                color: #1e3a8a;
+                background: #f1f6fb;
+                border-color: #bed0e5;
+                color: #2b4a6f;
                 font-weight: 650;
             }
             QPushButton#AddFolderButton:hover {
-                background: #d7ecff;
-                border-color: #3b82f6;
+                background: #e8f1f9;
+                border-color: #8eaccd;
             }
             QPushButton#RemoveButton,
             QPushButton#DeleteButton {
-                background: #fde8e8;
-                border-color: #f3a5a5;
-                color: #991b1b;
+                background: #fff1f1;
+                border-color: #e8b9b9;
+                color: #8f2d2d;
                 font-weight: 700;
             }
             QPushButton#RemoveButton:hover,
             QPushButton#DeleteButton:hover {
-                background: #fbd5d5;
-                border-color: #ef4444;
+                background: #fbe6e6;
+                border-color: #d98282;
             }
             QPushButton#ClearButton {
-                background: #fff1df;
-                border-color: #fdba74;
-                color: #9a3412;
+                background: #fff6ec;
+                border-color: #e6c7a3;
+                color: #81532b;
                 font-weight: 700;
             }
             QPushButton#ClearButton:hover {
-                background: #ffe3c2;
-                border-color: #f97316;
+                background: #f9ecd9;
+                border-color: #d7a66f;
             }
             QPushButton#PrimaryButton {
-                background: #047c7c;
-                border-color: #047c7c;
+                background: #0f766e;
+                border-color: #0f766e;
                 color: white;
                 font-weight: 700;
                 padding: 10px;
             }
             QPushButton#PrimaryButton:hover {
-                background: #036b6b;
+                background: #0b6962;
             }
             QPushButton#TinyResetButton {
                 border-radius: 4px;
-                padding: 2px 6px;
-                font-size: 10px;
+                padding: 0 4px;
+                font-size: 9px;
+            }
+            QPushButton#InlineDeleteButton {
+                border: 0;
+                border-radius: 8px;
+                padding: 0;
+                min-width: 18px;
+                max-width: 18px;
+                min-height: 18px;
+                max-height: 18px;
+                background: transparent;
+                color: #a33a3a;
+                font-weight: 800;
+            }
+            QPushButton#InlineDeleteButton:hover {
+                background: #f7e4e4;
+                color: #7f1d1d;
             }
             QPushButton#CreateRegionButton,
             QPushButton#CreateCropRegionButton,
@@ -324,25 +345,25 @@ class VideoEditorWidget(QWidget):
                 font-weight: 650;
             }
             QPushButton#CreateCropRegionButton {
-                background: #eef2f7;
-                border-color: #b8c4d4;
+                background: #f2f5f8;
+                border-color: #c6d0dc;
                 color: #334155;
             }
             QPushButton#CreateInvertRegionButton {
-                background: #fae8ff;
-                border-color: #e879f9;
-                color: #86198f;
+                background: #f8f1fb;
+                border-color: #d8b8e7;
+                color: #68407b;
             }
             QPushButton#CreateTrimRangeButton {
-                background: #fff1df;
-                border-color: #fdba74;
-                color: #9a3412;
+                background: #fff6ec;
+                border-color: #e6c7a3;
+                color: #81532b;
             }
             QPushButton#ResetButton,
             QPushButton#CreateRegionButton {
-                background: #e8f6f8;
-                border-color: #8bd6df;
-                color: #155e75;
+                background: #eef7f7;
+                border-color: #badada;
+                color: #275f63;
             }
             QFrame#OperationsBar {
                 border: 1px solid #cfd7e3;
@@ -375,18 +396,25 @@ class VideoEditorWidget(QWidget):
             }
             QLabel#RegionTitle {
                 font-weight: 700;
-                font-size: 12px;
+                font-size: 10px;
             }
             QLabel#DimensionLabel {
                 color: #64748b;
-                font-size: 11px;
+                font-size: 9px;
             }
             QSpinBox {
                 border: 1px solid #cfd7e3;
                 border-radius: 4px;
                 background: #ffffff;
-                padding: 2px 4px;
-                font-size: 11px;
+                padding: 0 2px;
+                font-size: 10px;
+            }
+            QDoubleSpinBox {
+                border: 1px solid #cfd7e3;
+                border-radius: 4px;
+                background: #ffffff;
+                padding: 0 2px;
+                font-size: 10px;
             }
             QComboBox, QLineEdit {
                 border: 1px solid #cfd7e3;
@@ -400,14 +428,14 @@ class VideoEditorWidget(QWidget):
                 background: #ffffff;
             }
             QSlider#EnhancementSlider::groove:horizontal {
-                height: 5px;
+                height: 4px;
                 border-radius: 2px;
                 background: #dbe3ee;
             }
             QSlider#EnhancementSlider::handle:horizontal {
-                width: 12px;
-                margin: -5px 0;
-                border-radius: 6px;
+                width: 10px;
+                margin: -4px 0;
+                border-radius: 5px;
                 background: #0891b2;
             }
             QListWidget {
@@ -883,20 +911,21 @@ def _make_tool_button(text: str, color: str) -> QToolButton:
 def _tool_button_style(color: str) -> str:
     return f"""
         QToolButton {{
-            background: {_mix_hex(color, "#ffffff", 0.88)};
-            border: 1px solid {_mix_hex(color, "#ffffff", 0.50)};
-            color: #111827;
+            background: {_mix_hex(color, "#ffffff", 0.94)};
+            border: 1px solid {_mix_hex(color, "#ffffff", 0.74)};
+            color: #263241;
             border-radius: 5px;
             padding: 7px 10px;
             font-weight: 700;
         }}
         QToolButton:hover {{
-            background: {_mix_hex(color, "#ffffff", 0.78)};
-            border-color: {color};
+            background: {_mix_hex(color, "#ffffff", 0.90)};
+            border-color: {_mix_hex(color, "#ffffff", 0.48)};
         }}
         QToolButton:checked {{
-            background: {_mix_hex(color, "#ffffff", 0.70)};
-            border: 2px solid {color};
+            background: {_mix_hex(color, "#ffffff", 0.84)};
+            border: 1px solid {_mix_hex(color, "#ffffff", 0.28)};
+            color: #111827;
         }}
         QToolButton:disabled {{
             background: #eef1f5;

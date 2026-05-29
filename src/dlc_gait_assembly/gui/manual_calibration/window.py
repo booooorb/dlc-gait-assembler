@@ -67,6 +67,7 @@ class ManualCalibrationWidget(QWidget):
         root_layout.addWidget(splitter)
 
         left_panel = QWidget()
+        left_panel.setMinimumWidth(320)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(12)
@@ -107,19 +108,23 @@ class ManualCalibrationWidget(QWidget):
         results_box = QGroupBox("SOP checks")
         results_layout = QVBoxLayout(results_box)
         self.results_label = QLabel()
+        self.results_label.setObjectName("ResultsLabel")
         self.results_label.setWordWrap(True)
         self.results_label.setTextFormat(Qt.RichText)
         self.results_label.setOpenExternalLinks(False)
         results_scroll = QScrollArea()
+        results_scroll.setObjectName("ResultsScroll")
         results_scroll.setWidgetResizable(True)
         results_scroll.setFrameShape(QFrame.NoFrame)
         results_scroll.setWidget(self.results_label)
         results_layout.addWidget(results_scroll)
         self.export_conversion_button = QPushButton("Export Conversion Map")
+        self.export_conversion_button.setObjectName("ExportButton")
         results_layout.addWidget(self.export_conversion_button)
         left_layout.addWidget(results_box, 1)
 
         right_panel = QWidget()
+        right_panel.setMinimumWidth(420)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(14, 14, 14, 14)
         right_layout.setSpacing(10)
@@ -167,6 +172,8 @@ class ManualCalibrationWidget(QWidget):
 
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
         splitter.setSizes([390, 890])
 
     def _connect_signals(self) -> None:
@@ -220,6 +227,15 @@ class ManualCalibrationWidget(QWidget):
                 color: #64748b;
                 font-size: 12px;
             }
+            QLabel#ResultsLabel {
+                background: #ffffff;
+            }
+            QScrollArea#ResultsScroll,
+            QScrollArea#ResultsScroll > QWidget,
+            QScrollArea#ResultsScroll > QWidget > QWidget {
+                background: #ffffff;
+                border: 0;
+            }
             QPushButton {
                 border: 1px solid #c9d2df;
                 border-radius: 5px;
@@ -227,38 +243,40 @@ class ManualCalibrationWidget(QWidget):
                 background: #ffffff;
             }
             QPushButton:hover {
-                background: #edf7f7;
-                border-color: #8ccfcf;
+                background: #f1f8f8;
+                border-color: #a8cfd0;
             }
             QPushButton#OpenMediaButton {
-                background: #e5f3ff;
-                border-color: #93c5fd;
-                color: #1e3a8a;
+                background: #f1f6fb;
+                border-color: #bed0e5;
+                color: #2b4a6f;
                 font-weight: 700;
             }
             QPushButton#OpenMediaButton:hover {
-                background: #d7ecff;
-                border-color: #3b82f6;
+                background: #e8f1f9;
+                border-color: #8eaccd;
             }
             QPushButton#ClearButton {
-                background: #fde8e8;
-                border-color: #f3a5a5;
-                color: #991b1b;
+                background: #fff1f1;
+                border-color: #e8b9b9;
+                color: #8f2d2d;
                 font-weight: 700;
             }
             QPushButton#ClearButton:hover {
-                background: #fbd5d5;
-                border-color: #ef4444;
+                background: #fbe6e6;
+                border-color: #d98282;
             }
-            QPushButton#ResetButton {
-                background: #e8f6f8;
-                border-color: #8bd6df;
-                color: #155e75;
+            QPushButton#ResetButton,
+            QPushButton#ExportButton {
+                background: #eef7f7;
+                border-color: #badada;
+                color: #275f63;
                 font-weight: 650;
             }
-            QPushButton#ResetButton:hover {
-                background: #d8f0f4;
-                border-color: #0891b2;
+            QPushButton#ResetButton:hover,
+            QPushButton#ExportButton:hover {
+                background: #e3f0f1;
+                border-color: #86bbbd;
             }
             QFrame#OperationsBar {
                 border: 1px solid #cfd7e3;
@@ -550,20 +568,21 @@ def _make_tool_button(text: str, color: str) -> QToolButton:
 def _tool_button_style(color: str) -> str:
     return f"""
         QToolButton {{
-            background: {_mix_hex(color, "#ffffff", 0.88)};
-            border: 1px solid {_mix_hex(color, "#ffffff", 0.50)};
-            color: #111827;
+            background: {_mix_hex(color, "#ffffff", 0.94)};
+            border: 1px solid {_mix_hex(color, "#ffffff", 0.74)};
+            color: #263241;
             border-radius: 5px;
             padding: 7px 10px;
             font-weight: 700;
         }}
         QToolButton:hover {{
-            background: {_mix_hex(color, "#ffffff", 0.78)};
-            border-color: {color};
+            background: {_mix_hex(color, "#ffffff", 0.90)};
+            border-color: {_mix_hex(color, "#ffffff", 0.48)};
         }}
         QToolButton:checked {{
-            background: {_mix_hex(color, "#ffffff", 0.70)};
-            border: 2px solid {color};
+            background: {_mix_hex(color, "#ffffff", 0.84)};
+            border: 1px solid {_mix_hex(color, "#ffffff", 0.28)};
+            color: #111827;
         }}
         QToolButton:disabled {{
             background: #eef1f5;

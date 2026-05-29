@@ -32,7 +32,7 @@ class CalibrationPreviewView(QGraphicsView):
         self.setRenderHints(self.renderHints() | QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         self.setAlignment(Qt.AlignCenter)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setMinimumSize(680, 440)
+        self.setMinimumSize(360, 260)
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
@@ -51,6 +51,7 @@ class CalibrationPreviewView(QGraphicsView):
         self._draft_key: str | None = None
         self._right_delete_target: DeleteTarget | None = None
         self._right_press_view_pos: QPoint | None = None
+        self._fit_pending = False
 
     def set_frame(self, image: QImage | None) -> None:
         if image is None or image.isNull():
@@ -104,12 +105,25 @@ class CalibrationPreviewView(QGraphicsView):
         self.resetTransform()
         self._zoom = 1.0
         if not self._image_bounds.isNull():
-            self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+            self._schedule_fit_to_view()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._zoom <= 1.001 and not self._image_bounds.isNull():
-            self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+            self._schedule_fit_to_view()
+
+    def _schedule_fit_to_view(self) -> None:
+        if self._fit_pending:
+            return
+        self._fit_pending = True
+        QTimer.singleShot(0, self._fit_to_view)
+
+    def _fit_to_view(self) -> None:
+        self._fit_pending = False
+        if self._image_bounds.isNull() or self._zoom > 1.001:
+            return
+        self.resetTransform()
+        self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
 
     def wheelEvent(self, event) -> None:
         if self._image_bounds.isNull():

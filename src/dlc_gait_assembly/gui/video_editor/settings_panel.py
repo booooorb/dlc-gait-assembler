@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QDoubleSpinBox,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -57,7 +58,7 @@ class OperationSettingsPanel(QGroupBox):
         self._active_trim_index = 0
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 10, 8, 8)
+        layout.setContentsMargins(6, 7, 6, 6)
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -67,7 +68,7 @@ class OperationSettingsPanel(QGroupBox):
         self._content = QWidget()
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout.setSpacing(8)
+        self._content_layout.setSpacing(4)
         self._scroll.setWidget(self._content)
         layout.addWidget(self._scroll, 1)
 
@@ -202,19 +203,27 @@ class OperationSettingsPanel(QGroupBox):
         frame = QFrame()
         frame.setObjectName("EnhancementSettings")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(8, 6, 8, 7)
-        layout.setSpacing(5)
+        layout.setContentsMargins(5, 3, 5, 4)
+        layout.setSpacing(2)
 
         label_row = QHBoxLayout()
+        label_row.setSpacing(4)
         label = QLabel(title)
         label.setObjectName("RegionTitle")
-        value_label = QLabel(_format_slider_value(current_value))
-        value_label.setObjectName("DimensionLabel")
         label_row.addWidget(label)
         label_row.addStretch(1)
-        label_row.addWidget(value_label)
-        reset_button = QPushButton("Reset")
+        spin = QDoubleSpinBox()
+        spin.setRange(minimum / scale, maximum / scale)
+        spin.setDecimals(2)
+        spin.setSingleStep(1.0 / scale)
+        spin.setKeyboardTracking(False)
+        spin.setValue(current_value)
+        spin.setMaximumWidth(62)
+        spin.valueChanged.connect(lambda _value: self._apply_enhancement_settings(source="spin"))
+        label_row.addWidget(spin)
+        reset_button = QPushButton("R")
         reset_button.setObjectName("TinyResetButton")
+        reset_button.setToolTip(f"Reset {title}")
         reset_button.clicked.connect(lambda _checked=False, name=field: self._reset_enhancement_field(name))
         label_row.addWidget(reset_button)
         layout.addLayout(label_row)
@@ -223,21 +232,34 @@ class OperationSettingsPanel(QGroupBox):
         slider.setObjectName("EnhancementSlider")
         slider.setRange(minimum, maximum)
         slider.setValue(round(current_value * scale))
-        slider.valueChanged.connect(lambda _value: self._apply_enhancement_settings())
+        slider.valueChanged.connect(lambda _value: self._apply_enhancement_settings(source="slider"))
         layout.addWidget(slider)
 
-        self._enhancement_controls[field] = {"slider": slider, "value": value_label, "scale": scale}
+        self._enhancement_controls[field] = {"slider": slider, "spin": spin, "scale": scale}
         self._content_layout.addWidget(frame)
 
-    def _apply_enhancement_settings(self) -> None:
+    def _apply_enhancement_settings(self, source: str = "slider") -> None:
         if self._building:
             return
 
+        self._building = True
         values = {}
         for field, controls in self._enhancement_controls.items():
-            value = controls["slider"].value() / controls["scale"]
+            slider = controls["slider"]
+            spin = controls["spin"]
+            scale = controls["scale"]
+            if source == "spin":
+                value = spin.value()
+                slider.blockSignals(True)
+                slider.setValue(round(value * scale))
+                slider.blockSignals(False)
+            else:
+                value = slider.value() / scale
+                spin.blockSignals(True)
+                spin.setValue(value)
+                spin.blockSignals(False)
             values[field] = value
-            controls["value"].setText(_format_slider_value(value))
+        self._building = False
 
         self._preview.set_enhancements(EnhancementSettings(**values))
 
@@ -252,6 +274,7 @@ class OperationSettingsPanel(QGroupBox):
 
         default_value = getattr(EnhancementSettings(), field)
         controls["slider"].setValue(round(default_value * controls["scale"]))
+        controls["spin"].setValue(default_value)
 
     def _rebuild_trim_settings(self) -> None:
         self._building = True
@@ -291,9 +314,9 @@ class OperationSettingsPanel(QGroupBox):
         frame = QFrame()
         frame.setObjectName("RegionSettings")
         layout = QGridLayout(frame)
-        layout.setContentsMargins(8, 7, 8, 8)
-        layout.setHorizontalSpacing(6)
-        layout.setVerticalSpacing(4)
+        layout.setContentsMargins(5, 4, 5, 5)
+        layout.setHorizontalSpacing(4)
+        layout.setVerticalSpacing(2)
         layout.setColumnStretch(1, 1)
 
         title = QLabel(f"Range {index + 1}")
@@ -329,7 +352,7 @@ class OperationSettingsPanel(QGroupBox):
         spin.setRange(0, self._trim_duration_ms)
         spin.setKeyboardTracking(False)
         spin.setValue(value)
-        spin.setMaximumWidth(96)
+        spin.setMaximumWidth(78)
         return spin
 
     def _apply_trim_spins(self, index: int, start_spin: QSpinBox, end_spin: QSpinBox) -> None:
@@ -403,17 +426,22 @@ class OperationSettingsPanel(QGroupBox):
         frame = QFrame()
         frame.setObjectName("RegionSettings")
         layout = QGridLayout(frame)
-        layout.setContentsMargins(8, 7, 8, 8)
-        layout.setHorizontalSpacing(6)
-        layout.setVerticalSpacing(5)
+        layout.setContentsMargins(5, 4, 5, 5)
+        layout.setHorizontalSpacing(4)
+        layout.setVerticalSpacing(2)
 
         title_label = QLabel(title)
         title_label.setObjectName("RegionTitle")
         title_label.setStyleSheet("color: #c026d3;" if kind == "invert" else "color: #334155;")
         dimension_label = QLabel(f'{edges["width"]} x {edges["height"]} px')
         dimension_label.setObjectName("DimensionLabel")
+        delete_button = QPushButton("x")
+        delete_button.setObjectName("InlineDeleteButton")
+        delete_button.setToolTip(f"Delete {title}")
+        delete_button.clicked.connect(lambda _checked=False, k=kind, rid=region_id: self._delete_region(k, rid))
         layout.addWidget(title_label, 0, 0, 1, 2)
-        layout.addWidget(dimension_label, 0, 2, 1, 2, Qt.AlignRight)
+        layout.addWidget(dimension_label, 0, 2, Qt.AlignRight)
+        layout.addWidget(delete_button, 0, 3, Qt.AlignRight)
 
         spins: dict[str, QSpinBox] = {}
         fields = [
@@ -430,7 +458,7 @@ class OperationSettingsPanel(QGroupBox):
             spin.setRange(0, maximum)
             spin.setKeyboardTracking(False)
             spin.setValue(edges[field])
-            spin.setMinimumWidth(72)
+            spin.setMinimumWidth(48)
             spins[field] = spin
             layout.addWidget(spin, row, column + 1)
 
@@ -464,9 +492,11 @@ class OperationSettingsPanel(QGroupBox):
         elif region_id is not None:
             self._preview.set_invert_pixel_edges(region_id, left, top, right, bottom)
 
-
-def _format_slider_value(value: float) -> str:
-    return f"{value:+.2f}" if value < 0 else f"{value:.2f}"
+    def _delete_region(self, kind: str, region_id: int | None) -> None:
+        if kind == "crop":
+            self._preview.delete_region("crop")
+        elif region_id is not None:
+            self._preview.delete_region(f"invert:{region_id}")
 
 
 def _format_ms(ms: int) -> str:

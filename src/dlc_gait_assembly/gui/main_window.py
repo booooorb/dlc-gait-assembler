@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
@@ -25,12 +25,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
 
 TRANSITION_CONTROL_FADE_MS = 460
 TRANSITION_CONTROL_STAGGER_MS = 32
+MAIN_MENU_STAGE_WIDTH = 1180
+WORKFLOW_PATH_WIDTH = 1112
+WORKFLOW_STEP_WIDTH = 192
+WORKFLOW_STEP_HEIGHT = 190
+WORKFLOW_CONNECTOR_WIDTH = 18
 
 ANIMATED_CONTROL_TYPES = (
     QAbstractButton,
@@ -86,7 +92,10 @@ TOOL_SPECS = [
     ToolSpec(
         "deeplabcut",
         "DeepLabCut",
+        DeepLabCutWidget,
+        True,
         description="Train, evaluate, and analyze pose estimation projects.",
+        status="Ready",
         accent="#4f46e5",
     ),
     ToolSpec(
@@ -142,6 +151,11 @@ class MainWindow(QMainWindow):
 
         self._did_initial_reveal = True
         QTimer.singleShot(0, lambda: self._fade_controls(self._stack.currentWidget()))
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            QTimer.singleShot(0, self._repaint_current_widget)
 
     def _build_navigation(self) -> None:
         navigation = self.menuBar().addMenu("Navigation")
@@ -219,7 +233,9 @@ class MainWindow(QMainWindow):
             animation.setStartValue(0.0)
             animation.setEndValue(1.0)
             animation.setEasingCurve(QEasingCurve.InOutCubic)
-            animation.finished.connect(lambda target=target, effect=effect: effect.setOpacity(1.0))
+            animation.finished.connect(
+                lambda target=target, effect=effect: self._finish_transition_effect(target, effect)
+            )
             animation.finished.connect(lambda animation=animation: self._clear_transition_animation(animation))
             self._transition_animations.append(animation)
             QTimer.singleShot(index * TRANSITION_CONTROL_STAGGER_MS, animation.start)
@@ -239,6 +255,22 @@ class MainWindow(QMainWindow):
     def _clear_transition_animation(self, animation: QPropertyAnimation) -> None:
         if animation in self._transition_animations:
             self._transition_animations.remove(animation)
+
+    def _finish_transition_effect(self, target: QWidget, effect: QGraphicsOpacityEffect) -> None:
+        effect.setOpacity(1.0)
+        if target.graphicsEffect() is effect:
+            target.setGraphicsEffect(None)
+        target.updateGeometry()
+        target.update()
+
+    def _repaint_current_widget(self) -> None:
+        widget = self._stack.currentWidget()
+        if widget is not None:
+            widget.updateGeometry()
+            widget.update()
+            for child in widget.findChildren(QWidget):
+                child.updateGeometry()
+                child.update()
 
     def _release_all_tools(self) -> None:
         for tool in self._tool_widgets.values():
@@ -269,7 +301,7 @@ class MainMenuWidget(QWidget):
         stage_layout = QVBoxLayout(stage)
         stage_layout.setContentsMargins(34, 32, 34, 34)
         stage_layout.setSpacing(30)
-        stage.setMaximumWidth(1180)
+        stage.setFixedWidth(MAIN_MENU_STAGE_WIDTH)
 
         header = QWidget()
         header_layout = QVBoxLayout(header)
@@ -285,6 +317,7 @@ class MainMenuWidget(QWidget):
 
         path_frame = QFrame()
         path_frame.setObjectName("WorkflowPath")
+        path_frame.setFixedWidth(WORKFLOW_PATH_WIDTH)
         path_layout = QHBoxLayout(path_frame)
         path_layout.setContentsMargins(0, 0, 0, 0)
         path_layout.setSpacing(10)
@@ -298,6 +331,7 @@ class MainMenuWidget(QWidget):
                 connector = QLabel(">")
                 connector.setObjectName("WorkflowConnector")
                 connector.setAlignment(Qt.AlignCenter)
+                connector.setFixedWidth(WORKFLOW_CONNECTOR_WIDTH)
                 path_layout.addWidget(connector, 0, Qt.AlignVCenter)
 
         stage_layout.addWidget(path_frame)
@@ -389,7 +423,7 @@ class WorkflowStep(QFrame):
         self.setObjectName("WorkflowStep")
         self.setProperty("enabledStep", spec.enabled)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setMinimumHeight(190)
+        self.setFixedSize(WORKFLOW_STEP_WIDTH, WORKFLOW_STEP_HEIGHT)
         if spec.enabled:
             self.setCursor(Qt.PointingHandCursor)
         else:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
@@ -41,8 +41,12 @@ class RegionRectItem(QGraphicsRectItem):
         self.setZValue(_REGION_BASE_Z)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
+        self.setAcceptedMouseButtons(Qt.LeftButton)
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.SizeAllCursor)
+
+    def set_bounds(self, bounds: QRectF) -> None:
+        self._bounds = QRectF(bounds)
 
     def set_scene_rect(self, scene_rect: QRectF) -> None:
         self.setRect(0, 0, max(2.0, scene_rect.width()), max(2.0, scene_rect.height()))
@@ -105,7 +109,7 @@ class RegionRectItem(QGraphicsRectItem):
 
     def reset_interaction(self) -> None:
         self._drag_mode = None
-        self.unsetCursor()
+        self.setCursor(Qt.SizeAllCursor)
 
     def _notify_changed(self) -> None:
         self._on_changed(self.name, self.mapRectToScene(self.rect()).intersected(self._bounds))
@@ -224,7 +228,7 @@ class RegionPreviewView(QGraphicsView):
         self.setRenderHints(self.renderHints() | QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.NoDrag)
         self.setAlignment(Qt.AlignCenter)
-        self.setMinimumSize(640, 420)
+        self.setMinimumSize(360, 260)
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
@@ -245,6 +249,7 @@ class RegionPreviewView(QGraphicsView):
         self._shade_items: list[QGraphicsRectItem] = []
         self._enhancements = EnhancementSettings()
         self._enhancement_zoom = 1.0
+        self._fit_pending = False
 
     def set_frame(self, image: QImage | None) -> None:
         self._source_image = image.copy() if image is not None else None
@@ -285,7 +290,7 @@ class RegionPreviewView(QGraphicsView):
     def reset_enhancement_zoom(self) -> None:
         self._enhancement_zoom = 1.0
         if not self._image_bounds.isNull():
-            self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+            self._schedule_fit_to_view()
 
     def reactivate(self) -> None:
         self._drag_start = None
@@ -299,7 +304,7 @@ class RegionPreviewView(QGraphicsView):
         self._scene.setSceneRect(self._image_bounds)
         self._render()
         if not (self._mode == "enhancements" and self._enhancement_zoom > 1.001):
-            self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+            self._schedule_fit_to_view()
         self.viewport().update()
 
     def create_default_region(self, mode: str | None = None) -> None:
@@ -396,7 +401,20 @@ class RegionPreviewView(QGraphicsView):
             not self._image_bounds.isNull()
             and not (self._mode == "enhancements" and self._enhancement_zoom > 1.001)
         ):
-            self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+            self._schedule_fit_to_view()
+
+    def _schedule_fit_to_view(self) -> None:
+        if self._fit_pending:
+            return
+        self._fit_pending = True
+        QTimer.singleShot(0, self._fit_to_view)
+
+    def _fit_to_view(self) -> None:
+        self._fit_pending = False
+        if self._image_bounds.isNull() or (self._mode == "enhancements" and self._enhancement_zoom > 1.001):
+            return
+        self.resetTransform()
+        self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
 
     def wheelEvent(self, event) -> None:
         pos = _event_pos(event)
@@ -660,6 +678,7 @@ class RegionPreviewView(QGraphicsView):
                 )
                 self._scene.addItem(item)
                 self._invert_items[region_id] = item
+            item.set_bounds(self._image_bounds)
             item.set_scene_rect(self._normalized_to_scene_rect(region))
 
     def _set_annotation_visibility(self, visible: bool) -> None:
@@ -685,6 +704,7 @@ class RegionPreviewView(QGraphicsView):
             item = RegionRectItem(name, color, self._image_bounds, self._on_item_changed, self.delete_region, fill_alpha)
             self._scene.addItem(item)
 
+        item.set_bounds(self._image_bounds)
         item.set_scene_rect(self._normalized_to_scene_rect(region))
         return item
 
