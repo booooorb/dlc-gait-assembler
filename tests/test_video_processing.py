@@ -8,6 +8,7 @@ from dlc_gait_assembly.video_processing import (
     output_path_for_input,
 )
 from dlc_gait_assembly.services.ffmpeg import build_processing_command
+from dlc_gait_assembly.services.output_documents import write_video_processing_session_documents
 
 
 def test_build_filter_graph_with_crop_and_invert():
@@ -209,3 +210,38 @@ def test_processing_command_exports_h264_mp4(tmp_path):
     assert command[command.index("-c:a") + 1] == "aac"
     assert command[command.index("-f") + 1] == "mp4"
     assert command[-1].endswith(".mp4")
+
+
+def test_video_processing_session_documents_describe_outputs_and_edits(tmp_path):
+    input_path = tmp_path / "clip.avi"
+    output_path = tmp_path / "session" / "clip_processed.mp4"
+    input_path.write_bytes(b"not a real video")
+    output_path.parent.mkdir()
+    output_path.write_bytes(b"not a real output")
+
+    options = ProcessingOptions(
+        crop_enabled=True,
+        crop_rect=NormalizedRect(0.1, 0.2, 0.3, 0.4),
+        invert_enabled=True,
+        invert_rects=(NormalizedRect(0.5, 0.5, 0.2, 0.2),),
+        trim_ranges=(TrimRange(1000, 3000),),
+        crf=16,
+        preset="slow",
+    )
+
+    paths = write_video_processing_session_documents(
+        output_path.parent,
+        [input_path],
+        [(str(input_path), str(output_path))],
+        [],
+        options,
+        {str(input_path.resolve()): (TrimRange(1000, 3000),)},
+    )
+
+    manifest = paths["manifest"].read_text(encoding="utf-8")
+    summary = paths["summary"].read_text(encoding="utf-8")
+    assert '"video_codec": "H.264"' in manifest
+    assert '"container": "mp4"' in manifest
+    assert '"completed": 1' in manifest
+    assert "Upside-down regions: 1" in summary
+    assert "1000 ms to 3000 ms" in summary

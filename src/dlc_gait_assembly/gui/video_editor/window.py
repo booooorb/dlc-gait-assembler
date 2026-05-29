@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-#TODO : Output documentation inside folder, detailing changes made. 
-#TODO BUG: Switching windows back to the Video Processing after from a different window (calibration) might cause you unable to move the regions of upside down and crop (bounded movement, cannot move to different place)
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -36,6 +34,7 @@ from dlc_gait_assembly.gui.video_editor.settings_panel import OperationSettingsP
 from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
 from dlc_gait_assembly.gui.video_editor.workers import VideoProcessingThread
 from dlc_gait_assembly.services.ffmpeg import ProcessingOptions, ffmpeg_available
+from dlc_gait_assembly.services.output_documents import write_video_processing_session_documents
 from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
 from dlc_gait_assembly.services.video_io import is_supported_video
 
@@ -55,6 +54,11 @@ class VideoEditorWidget(QWidget):
         self._loading_slider = False
         self._processing_thread: VideoProcessingThread | None = None
         self._processing_errors: list[str] = []
+        self._processing_failures: list[tuple[str, str]] = []
+        self._processing_outputs: list[tuple[str, str]] = []
+        self._processing_options: ProcessingOptions | None = None
+        self._processing_video_paths: list[Path] = []
+        self._processing_trim_ranges_by_path: dict[str, tuple[TrimRange, ...]] = {}
         self._project_root = find_project_root(__file__)
         self._trim_ranges_by_video: dict[str, list[TrimRange]] = {}
         self._active_trim_range_by_video: dict[str, int] = {}
@@ -77,6 +81,10 @@ class VideoEditorWidget(QWidget):
 
     def release_resources(self) -> None:
         self._release_capture()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self.preview.reactivate)
 
     def _build_ui(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
@@ -750,6 +758,11 @@ class VideoEditorWidget(QWidget):
         self.progress.setValue(0)
         self.progress.setFormat("%v / %m")
         self._processing_errors = []
+        self._processing_failures = []
+        self._processing_outputs = []
+        self._processing_options = options
+        self._processing_video_paths = videos
+        self._processing_trim_ranges_by_path = trim_ranges_by_path
         self._set_processing_enabled(False)
 
         self._processing_thread = VideoProcessingThread(videos, session_dir, options, trim_ranges_by_path, self)
@@ -764,9 +777,11 @@ class VideoEditorWidget(QWidget):
 
     def _on_file_finished(self, input_path: str, output_path: str) -> None:
         self.progress.setValue(self.progress.value() + 1)
+        self._processing_outputs.append((input_path, output_path))
 
     def _on_file_failed(self, input_path: str, message: str) -> None:
         self.progress.setValue(self.progress.value() + 1)
+        self._processing_failures.append((input_path, message))
         self._processing_errors.append(f"{Path(input_path).name}: {message}")
 
     def _on_processing_completed(self, session_dir: str) -> None:
@@ -775,6 +790,28 @@ class VideoEditorWidget(QWidget):
         if self._processing_thread is not None:
             self._processing_thread.deleteLater()
             self._processing_thread = None
+
+        documentation_error = None
+        if self._processing_options is not None:
+            try:
+                write_video_processing_session_documents(
+                    session_dir,
+                    self._processing_video_paths,
+                    self._processing_outputs,
+                    self._processing_failures,
+                    self._processing_options,
+                    self._processing_trim_ranges_by_path,
+                )
+            except Exception as exc:
+                documentation_error = str(exc)
+
+        self._processing_options = None
+        self._processing_video_paths = []
+        self._processing_trim_ranges_by_path = {}
+
+        if documentation_error is not None:
+            self._processing_errors.append(f"Documentation: {documentation_error}")
+
         if self._processing_errors:
             QMessageBox.warning(
                 self,

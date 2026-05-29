@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
 from dlc_gait_assembly.domain.calibration import CalibrationReport, calculate_calibration_report
 from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationPreviewView
-from dlc_gait_assembly.services.project_paths import find_project_root
+from dlc_gait_assembly.services.output_documents import write_calibration_conversion_export
+from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
 
 try:
     import cv2
@@ -114,6 +115,8 @@ class ManualCalibrationWidget(QWidget):
         results_scroll.setFrameShape(QFrame.NoFrame)
         results_scroll.setWidget(self.results_label)
         results_layout.addWidget(results_scroll)
+        self.export_conversion_button = QPushButton("Export Conversion Map")
+        results_layout.addWidget(self.export_conversion_button)
         left_layout.addWidget(results_box, 1)
 
         right_panel = QWidget()
@@ -177,6 +180,7 @@ class ManualCalibrationWidget(QWidget):
         self.preview.sticks_changed.connect(self._update_calibration_results)
         self.preview.stick_delete_requested.connect(self._confirm_delete_calibration_stick)
         self.timeline.valueChanged.connect(self._timeline_changed)
+        self.export_conversion_button.clicked.connect(self._export_conversion_map)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -414,6 +418,38 @@ class ManualCalibrationWidget(QWidget):
         sticks = self.preview.calibration_sticks() if hasattr(self, "preview") else []
         report = calculate_calibration_report(sticks, self.tau_spin.value() if hasattr(self, "tau_spin") else 2.0)
         self.results_label.setText(_report_to_html(report))
+        if hasattr(self, "export_conversion_button"):
+            self.export_conversion_button.setEnabled(bool(report.view_axis))
+
+    def _export_conversion_map(self) -> None:
+        sticks = self.preview.calibration_sticks()
+        report = calculate_calibration_report(sticks, self.tau_spin.value())
+        if not report.view_axis:
+            QMessageBox.information(self, "No calibration data", "Create calibration sticks before exporting a conversion map.")
+            return
+
+        output_root = self._default_output_root()
+        directory = QFileDialog.getExistingDirectory(self, "Choose calibration output folder", str(output_root))
+        if not directory:
+            return
+
+        try:
+            session_dir = make_session_output_dir(directory)
+            paths = write_calibration_conversion_export(session_dir, sticks, report)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+
+        QMessageBox.information(
+            self,
+            "Conversion map exported",
+            f"Output folder:\n{session_dir}\n\nMap:\n{paths['map'].name}\nReport:\n{paths['report'].name}",
+        )
+
+    def _default_output_root(self) -> Path:
+        output_root = self._project_root / "outputs" / "calibration"
+        output_root.mkdir(parents=True, exist_ok=True)
+        return output_root
 
     def _release_capture(self) -> None:
         if self._capture is not None:

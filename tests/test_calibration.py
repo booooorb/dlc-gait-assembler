@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from dlc_gait_assembly.domain.calibration import CalibrationPoint, CalibrationStick, calculate_calibration_report
+import json
+
+from dlc_gait_assembly.domain.calibration import (
+    CalibrationPoint,
+    CalibrationStick,
+    build_conversion_factor_map,
+    calculate_calibration_report,
+)
+from dlc_gait_assembly.services.output_documents import write_calibration_conversion_export
 
 
 def test_calibration_report_passes_for_consistent_three_view_measurements():
@@ -62,6 +70,32 @@ def test_calibration_report_flags_view_specific_scaling():
     assert report.axis_passed is True
     assert report.view_passed is False
     assert "View-specific scaling" in report.recommendation
+
+
+def test_conversion_factor_map_can_be_applied_to_coordinates():
+    report = calculate_calibration_report(_consistent_three_view_sticks(), tau_percent=2.0)
+
+    conversion_map = build_conversion_factor_map(report)
+    view_one = conversion_map["views"]["1"]
+
+    assert conversion_map["recommended_scope"] == "shared"
+    assert view_one["recommended_x_centimeters_per_pixel"] == 0.01
+    assert view_one["recommended_y_centimeters_per_pixel"] == 0.01
+    assert 250 * view_one["recommended_x_centimeters_per_pixel"] == 2.5
+    assert 125 * view_one["recommended_y_centimeters_per_pixel"] == 1.25
+
+
+def test_calibration_export_writes_conversion_map_and_report(tmp_path):
+    sticks = _consistent_three_view_sticks()
+    report = calculate_calibration_report(sticks, tau_percent=2.0)
+
+    paths = write_calibration_conversion_export(tmp_path, sticks, report)
+
+    payload = json.loads(paths["map"].read_text(encoding="utf-8"))
+    assert paths["report"].exists()
+    assert payload["conversion_factor_map"]["views"]["1"]["recommended_x_centimeters_per_pixel"] == 0.01
+    assert payload["sticks"][0]["name"] == "xline_view1"
+    assert "x_cm = x_px" in paths["report"].read_text(encoding="utf-8")
 
 
 def _consistent_three_view_sticks() -> list[CalibrationStick]:

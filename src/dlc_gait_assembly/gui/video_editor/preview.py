@@ -103,6 +103,10 @@ class RegionRectItem(QGraphicsRectItem):
 
         super().mouseReleaseEvent(event)
 
+    def reset_interaction(self) -> None:
+        self._drag_mode = None
+        self.unsetCursor()
+
     def _notify_changed(self) -> None:
         self._on_changed(self.name, self.mapRectToScene(self.rect()).intersected(self._bounds))
 
@@ -282,6 +286,21 @@ class RegionPreviewView(QGraphicsView):
         self._enhancement_zoom = 1.0
         if not self._image_bounds.isNull():
             self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+
+    def reactivate(self) -> None:
+        self._drag_start = None
+        self._drag_target = None
+        for item in self._region_items():
+            item.reset_interaction()
+
+        if self._image_bounds.isNull():
+            return
+
+        self._scene.setSceneRect(self._image_bounds)
+        self._render()
+        if not (self._mode == "enhancements" and self._enhancement_zoom > 1.001):
+            self.fitInView(self._image_bounds, Qt.KeepAspectRatio)
+        self.viewport().update()
 
     def create_default_region(self, mode: str | None = None) -> None:
         if self._image_bounds.isNull():
