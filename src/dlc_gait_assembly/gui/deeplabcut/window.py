@@ -99,6 +99,10 @@ class DeepLabCutWidget(QWidget):
             self._terminal.append_prompt(self._cwd)
             return
 
+        display_command = command
+        if command == DEEPLABCUT_LAUNCH_COMMAND:
+            display_command = _deeplabcut_display_command()
+
         if self._is_process_running():
             self._process.write((command + os.linesep).encode())
             return
@@ -112,6 +116,8 @@ class DeepLabCutWidget(QWidget):
             return
 
         program, arguments = _shell_command(command)
+        if display_command != command:
+            self._terminal.append_output(f"{display_command}\n")
         self._process = QProcess(self)
         self._process.setProgram(program)
         self._process.setArguments(arguments)
@@ -394,12 +400,22 @@ def _shell_command(command: str) -> tuple[str, list[str]]:
 
 def _deeplabcut_shell_command() -> str:
     if sys.platform.startswith("win"):
-        return (
-            "call conda activate DEEPLABCUT "
-            "|| call \"%USERPROFILE%\\anaconda3\\Scripts\\activate.bat\" DEEPLABCUT "
-            "|| call \"%USERPROFILE%\\miniconda3\\Scripts\\activate.bat\" DEEPLABCUT "
-            "&& python -u -m deeplabcut"
-        )
+        conda_candidates = [
+            "%USERPROFILE%\\anaconda3\\condabin\\conda.bat",
+            "%USERPROFILE%\\miniconda3\\condabin\\conda.bat",
+            "%LOCALAPPDATA%\\anaconda3\\condabin\\conda.bat",
+            "%LOCALAPPDATA%\\miniconda3\\condabin\\conda.bat",
+            "C:\\ProgramData\\anaconda3\\condabin\\conda.bat",
+            "C:\\ProgramData\\miniconda3\\condabin\\conda.bat",
+        ]
+        run_attempts = [
+            'conda run -n DEEPLABCUT --no-capture-output python -u -m deeplabcut',
+            *[
+                f'if exist "{path}" call "{path}" run -n DEEPLABCUT --no-capture-output python -u -m deeplabcut'
+                for path in conda_candidates
+            ],
+        ]
+        return " || ".join(run_attempts)
 
     conda_candidates = [
         "$HOME/anaconda3/etc/profile.d/conda.sh",
@@ -414,3 +430,9 @@ def _deeplabcut_shell_command() -> str:
         f'|| {source_attempts}; '
         "conda activate DEEPLABCUT && python -u -m deeplabcut"
     )
+
+
+def _deeplabcut_display_command() -> str:
+    if sys.platform.startswith("win"):
+        return "conda run -n DEEPLABCUT --no-capture-output python -u -m deeplabcut"
+    return "conda activate DEEPLABCUT && python -u -m deeplabcut"

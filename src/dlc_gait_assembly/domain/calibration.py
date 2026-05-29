@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import isfinite
+from math import hypot, isfinite
 
 
 Axis = str
@@ -39,11 +39,13 @@ class CalibrationStick:
     def marker_points(self) -> tuple[CalibrationPoint, ...]:
         return tuple(self.start.interpolate(self.end, position) for position in self.ordered_marker_positions())
 
-    def centimeter_pixel_lengths(self) -> tuple[float, ...]:
+    def centimeter_pixel_lengths(self, use_euclidean: bool = False) -> tuple[float, ...]:
         points = self.marker_points()
         lengths: list[float] = []
         for first, second in zip(points, points[1:]):
-            if self.axis == "x":
+            if use_euclidean:
+                pixel_length = hypot(second.x - first.x, second.y - first.y)
+            elif self.axis == "x":
                 pixel_length = abs(second.x - first.x)
             elif self.axis == "y":
                 pixel_length = abs(second.y - first.y)
@@ -150,9 +152,13 @@ def build_conversion_factor_map(report: CalibrationReport) -> dict:
     }
 
 
-def calculate_calibration_report(sticks: list[CalibrationStick], tau_percent: float = 2.0) -> CalibrationReport:
+def calculate_calibration_report(
+    sticks: list[CalibrationStick],
+    tau_percent: float = 2.0,
+    use_euclidean_lengths: bool = False,
+) -> CalibrationReport:
     tau_percent = max(0.0, float(tau_percent))
-    view_axis_stats = _calculate_view_axis_stats(sticks, tau_percent)
+    view_axis_stats = _calculate_view_axis_stats(sticks, tau_percent, use_euclidean_lengths)
     view_stats = _calculate_view_stats(view_axis_stats, tau_percent)
     overall_mean = _mean([view.view_mean for view in view_stats])
 
@@ -181,11 +187,12 @@ def calculate_calibration_report(sticks: list[CalibrationStick], tau_percent: fl
 def _calculate_view_axis_stats(
     sticks: list[CalibrationStick],
     tau_percent: float,
+    use_euclidean_lengths: bool,
 ) -> tuple[ViewAxisCalibration, ...]:
     grouped: dict[tuple[int, Axis], list[float]] = {}
     for stick in sticks:
         key = (stick.view_index, stick.axis)
-        for pixel_length in stick.centimeter_pixel_lengths():
+        for pixel_length in stick.centimeter_pixel_lengths(use_euclidean_lengths):
             grouped.setdefault(key, []).append(1.0 / pixel_length)
 
     stats: list[ViewAxisCalibration] = []

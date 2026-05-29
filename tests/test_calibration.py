@@ -85,6 +85,18 @@ def test_conversion_factor_map_can_be_applied_to_coordinates():
     assert 125 * view_one["recommended_y_centimeters_per_pixel"] == 1.25
 
 
+def test_calibration_report_can_use_euclidean_segment_lengths():
+    sticks = [
+        CalibrationStick("x", 1, CalibrationPoint(0, 0), CalibrationPoint(300, 400), ()),
+    ]
+
+    axis_report = calculate_calibration_report(sticks, tau_percent=2.0)
+    euclidean_report = calculate_calibration_report(sticks, tau_percent=2.0, use_euclidean_lengths=True)
+
+    assert axis_report.view_axis[0].mean_conversion_factor == 1 / 300
+    assert euclidean_report.view_axis[0].mean_conversion_factor == 1 / 500
+
+
 def test_calibration_export_writes_conversion_map_and_report(tmp_path):
     sticks = _consistent_three_view_sticks()
     report = calculate_calibration_report(sticks, tau_percent=2.0)

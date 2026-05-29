@@ -6,6 +6,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -103,6 +104,9 @@ class ManualCalibrationWidget(QWidget):
         self.tau_spin.setSuffix("%")
         self.tau_spin.setValue(2.0)
         settings_layout.addRow("Margin of Calibration Error", self.tau_spin)
+        self.euclidean_lengths_checkbox = QCheckBox("Use Euclidean calibration length")
+        self.euclidean_lengths_checkbox.setToolTip("Measure each marker segment as the full distance between two points instead of only x/y axis distance.")
+        settings_layout.addRow(self.euclidean_lengths_checkbox)
         left_layout.addWidget(settings_box)
 
         results_box = QGroupBox("SOP checks")
@@ -184,6 +188,7 @@ class ManualCalibrationWidget(QWidget):
         self.cm_tool_button.clicked.connect(lambda: self._set_active_tool("cm"))
         self.reset_zoom_button.clicked.connect(self.preview.reset_zoom)
         self.tau_spin.valueChanged.connect(self._update_calibration_results)
+        self.euclidean_lengths_checkbox.toggled.connect(self._update_calibration_results)
         self.preview.sticks_changed.connect(self._update_calibration_results)
         self.preview.stick_delete_requested.connect(self._confirm_delete_calibration_stick)
         self.timeline.valueChanged.connect(self._timeline_changed)
@@ -434,14 +439,18 @@ class ManualCalibrationWidget(QWidget):
 
     def _update_calibration_results(self) -> None:
         sticks = self.preview.calibration_sticks() if hasattr(self, "preview") else []
-        report = calculate_calibration_report(sticks, self.tau_spin.value() if hasattr(self, "tau_spin") else 2.0)
+        report = calculate_calibration_report(
+            sticks,
+            self.tau_spin.value() if hasattr(self, "tau_spin") else 2.0,
+            self.euclidean_lengths_checkbox.isChecked() if hasattr(self, "euclidean_lengths_checkbox") else False,
+        )
         self.results_label.setText(_report_to_html(report))
         if hasattr(self, "export_conversion_button"):
             self.export_conversion_button.setEnabled(bool(report.view_axis))
 
     def _export_conversion_map(self) -> None:
         sticks = self.preview.calibration_sticks()
-        report = calculate_calibration_report(sticks, self.tau_spin.value())
+        report = calculate_calibration_report(sticks, self.tau_spin.value(), self.euclidean_lengths_checkbox.isChecked())
         if not report.view_axis:
             QMessageBox.information(self, "No calibration data", "Create calibration sticks before exporting a conversion map.")
             return
