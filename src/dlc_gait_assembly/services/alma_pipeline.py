@@ -37,6 +37,7 @@ class AlmaSettings:
     stride_length_max_cm: float = 8.0
     n_continuous_strides: int = 10
     generate_stickplot: bool = True
+    custom_bodypart_mapping: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -215,7 +216,7 @@ def _run_alma_gait_analysis_external(
 
 def _run_single_file(csv_file: Path, output_folder: Path, settings: AlmaSettings, kinematics, pd, plt) -> AlmaRunResult:
     dataframe = pd.read_csv(csv_file, header=[1, 2])
-    dataframe, bodyparts, _bodyparts_raw = kinematics.fix_column_names(dataframe)
+    dataframe, bodyparts, _bodyparts_raw = kinematics.fix_column_names(dataframe, settings.custom_bodypart_mapping)
 
     if settings.analysis_type == "Treadmill":
         parameters, coords, is_stance, bodyparts, drag_masks, starts = kinematics.extract_parameters(

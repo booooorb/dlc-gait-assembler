@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -41,6 +42,17 @@ from dlc_gait_assembly.services.project_paths import find_project_root
 from dlc_gait_assembly.services.video_io import probe_video
 
 
+STANDARD_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")
+BODY_PART_ALIASES = {
+    "toe": ("toe", "toer", "toel", "toe_r", "toe_l"),
+    "mtp": ("mtp", "mtpr", "mtpl", "mtp_r", "mtp_l"),
+    "ankle": ("ankle", "ankler", "anklel", "ankle_r", "ankle_l"),
+    "knee": ("knee", "kneer", "kneel", "knee_r", "knee_l"),
+    "hip": ("hip", "hipr", "hipl", "hip_r", "hip_l"),
+    "iliac crest": ("iliac crest", "crest", "crestr", "crestl", "crest_r", "crest_l", "iliac crestr", "iliac crestl", "iliacr", "iliacl"),
+}
+
+
 class GaitAnalysisWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -51,6 +63,8 @@ class GaitAnalysisWidget(QWidget):
         self._defaults = settings_from_alma_config(load_alma_config_defaults(self._alma_root))
         self._calibration_map_path: Path | None = None
         self._calibration_map_source = ""
+        self._raw_bodyparts: list[str] = []
+        self._bodypart_combos: dict[str, QComboBox] = {}
 
         self._build_ui()
         self._connect_signals()
@@ -270,6 +284,40 @@ class GaitAnalysisWidget(QWidget):
         self.log.setReadOnly(True)
         right_layout.addWidget(self.log, 1)
 
+        mapping_box = QGroupBox("Body Part Mapping")
+        mapping_box.setMaximumHeight(210)
+        mapping_layout = QVBoxLayout(mapping_box)
+        mapping_layout.setSpacing(6)
+        mapping_header = QHBoxLayout()
+        self.use_custom_mapping_checkbox = QCheckBox("Use custom mapping")
+        self.reload_mapping_button = QPushButton("Load From CSV")
+        self.auto_mapping_button = QPushButton("Auto Detect")
+        mapping_header.addWidget(self.use_custom_mapping_checkbox)
+        mapping_header.addStretch(1)
+        mapping_header.addWidget(self.reload_mapping_button)
+        mapping_header.addWidget(self.auto_mapping_button)
+        mapping_layout.addLayout(mapping_header)
+
+        self.mapping_status_label = QLabel("Add a CSV to detect labels.")
+        self.mapping_status_label.setObjectName("MutedLabel")
+        mapping_layout.addWidget(self.mapping_status_label)
+
+        mapping_grid = QGridLayout()
+        mapping_grid.setHorizontalSpacing(10)
+        mapping_grid.setVerticalSpacing(4)
+        for index, standard_bodypart in enumerate(STANDARD_BODYPARTS):
+            row = index // 2
+            column = (index % 2) * 2
+            label = QLabel(standard_bodypart)
+            combo = QComboBox()
+            combo.setMinimumWidth(130)
+            combo.setEnabled(False)
+            self._bodypart_combos[standard_bodypart] = combo
+            mapping_grid.addWidget(label, row, column)
+            mapping_grid.addWidget(combo, row, column + 1)
+        mapping_layout.addLayout(mapping_grid)
+        right_layout.addWidget(mapping_box)
+
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 0)
@@ -286,6 +334,9 @@ class GaitAnalysisWidget(QWidget):
         self.reference_radio.toggled.connect(self._update_calibration_method)
         self.load_fps_button.clicked.connect(self._load_frame_rate_from_video)
         self.import_calibration_map_button.clicked.connect(self._import_calibration_map)
+        self.use_custom_mapping_checkbox.toggled.connect(self._update_mapping_enabled)
+        self.reload_mapping_button.clicked.connect(self._load_bodypart_mapping_from_first_file)
+        self.auto_mapping_button.clicked.connect(self._apply_auto_bodypart_mapping)
         self.file_list.model().rowsInserted.connect(self._update_run_state)
         self.file_list.model().rowsRemoved.connect(self._update_run_state)
 
@@ -308,11 +359,16 @@ class GaitAnalysisWidget(QWidget):
             self._selected_files.append(resolved)
             self.file_list.addItem(str(resolved))
             existing.add(str(resolved))
+        if self._selected_files and not self._raw_bodyparts:
+            self._load_bodypart_mapping_from_first_file()
         self._update_run_state()
 
     def _clear_files(self) -> None:
         self._selected_files.clear()
         self.file_list.clear()
+        self._raw_bodyparts = []
+        self._refresh_bodypart_mapping_choices()
+        self.mapping_status_label.setText("Add a CSV to detect labels.")
         self._update_run_state()
 
     def _select_output_folder(self) -> None:
@@ -374,6 +430,49 @@ class GaitAnalysisWidget(QWidget):
         self._append_log(f"Calibration map imported from {path}: {pixels_per_cm:.3f} px/cm ({source})")
         self._update_calibration_method()
 
+    def _load_bodypart_mapping_from_first_file(self) -> None:
+        if not self._selected_files:
+            QMessageBox.information(self, "No input files", "Add a CSV file before loading body part labels.")
+            return
+
+        csv_path = self._selected_files[0]
+        try:
+            self._raw_bodyparts = _read_dlc_bodyparts(csv_path)
+        except Exception as exc:
+            self._raw_bodyparts = []
+            self._refresh_bodypart_mapping_choices()
+            self.mapping_status_label.setText("Could not read body part labels.")
+            QMessageBox.critical(self, "Could not read body part labels", str(exc))
+            return
+
+        self._refresh_bodypart_mapping_choices()
+        self._apply_auto_bodypart_mapping()
+        self.mapping_status_label.setText(f"{len(self._raw_bodyparts)} labels loaded from {csv_path.name}.")
+
+    def _refresh_bodypart_mapping_choices(self) -> None:
+        choices = ["(none)", *self._raw_bodyparts]
+        for combo in self._bodypart_combos.values():
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(choices)
+            if current in choices:
+                combo.setCurrentText(current)
+            combo.blockSignals(False)
+        self._update_mapping_enabled()
+
+    def _apply_auto_bodypart_mapping(self) -> None:
+        if not self._raw_bodyparts:
+            return
+        for standard_bodypart, combo in self._bodypart_combos.items():
+            auto_label = _auto_bodypart_label(self._raw_bodyparts, standard_bodypart)
+            combo.setCurrentText(auto_label or "(none)")
+
+    def _update_mapping_enabled(self) -> None:
+        enabled = self.use_custom_mapping_checkbox.isChecked() and bool(self._raw_bodyparts)
+        for combo in self._bodypart_combos.values():
+            combo.setEnabled(enabled)
+
     def _update_analysis_mode(self) -> None:
         treadmill = self.treadmill_radio.isChecked()
         self.treadmill_speed_label.setVisible(treadmill)
@@ -398,6 +497,9 @@ class GaitAnalysisWidget(QWidget):
             return
 
         settings = self._collect_settings()
+        if self.use_custom_mapping_checkbox.isChecked() and not settings.custom_bodypart_mapping:
+            QMessageBox.warning(self, "No body part mapping", "Select at least one body part mapping or turn off custom mapping.")
+            return
         self.progress.setValue(0)
         self.log.clear()
         self.status_label.setText("Running ALMA gait analysis...")
@@ -439,7 +541,19 @@ class GaitAnalysisWidget(QWidget):
             stride_length_max_cm=self.stride_length_max_spin.value(),
             n_continuous_strides=self.continuous_strides_spin.value(),
             generate_stickplot=self.stickplot_checkbox.isChecked(),
+            custom_bodypart_mapping=self._collect_bodypart_mapping(),
         )
+
+    def _collect_bodypart_mapping(self) -> dict[str, str] | None:
+        if not self.use_custom_mapping_checkbox.isChecked():
+            return None
+
+        mapping: dict[str, str] = {}
+        for standard_bodypart, combo in self._bodypart_combos.items():
+            raw_bodypart = combo.currentText()
+            if raw_bodypart and raw_bodypart != "(none)":
+                mapping[raw_bodypart] = standard_bodypart
+        return mapping or None
 
     def _update_progress(self, value: int, text: str) -> None:
         self.progress.setValue(value)
@@ -564,6 +678,8 @@ class AlmaAnalysisThread(QThread):
                 self.log_message.emit(f"Pixels per CM: {self._settings.pixels_per_cm:g}")
                 if self._settings.calibration_map_path is not None:
                     self.log_message.emit(f"Calibration map: {self._settings.calibration_map_path}")
+            if self._settings.custom_bodypart_mapping:
+                self.log_message.emit(f"Body part mapping: {self._settings.custom_bodypart_mapping}")
 
             def progress(index: int, total: int, message: str) -> None:
                 value = 10 + int((index - 1) * 80 / max(1, total))
@@ -603,3 +719,33 @@ def _reference_segment_label(segment: str) -> str:
         "ankle_mtp": "ankle_mtp (0.8cm)",
     }
     return labels.get(segment, "ankle_toe (1.5cm)")
+
+
+def _read_dlc_bodyparts(csv_path: Path) -> list[str]:
+    with Path(csv_path).open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        try:
+            next(reader)
+            bodyparts = next(reader)
+            coords = next(reader)
+        except StopIteration as exc:
+            raise ValueError(f"{csv_path} does not look like a DeepLabCut CSV with scorer/bodyparts/coords rows.") from exc
+
+    labels: list[str] = []
+    seen: set[str] = set()
+    for bodypart, coord in zip(bodyparts, coords):
+        label = bodypart.strip()
+        if coord.strip().lower() == "x" and label and label not in seen:
+            labels.append(label)
+            seen.add(label)
+    if not labels:
+        raise ValueError(f"No body part labels were found in {csv_path}.")
+    return labels
+
+
+def _auto_bodypart_label(raw_bodyparts: list[str], standard_bodypart: str) -> str | None:
+    aliases = set(BODY_PART_ALIASES.get(standard_bodypart, (standard_bodypart,)))
+    for raw_bodypart in raw_bodyparts:
+        if raw_bodypart.strip().lower() in aliases:
+            return raw_bodypart
+    return None
