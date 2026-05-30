@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QProcess, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -48,29 +49,42 @@ class DeepLabCutWidget(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
 
-        toolbar = QWidget()
+        toolbar = QFrame()
         toolbar.setObjectName("TerminalToolbar")
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        toolbar_layout.setSpacing(8)
+        toolbar_layout.setContentsMargins(14, 11, 14, 11)
+        toolbar_layout.setSpacing(10)
+
+        title_block = QWidget()
+        title_block.setObjectName("TitleBlock")
+        title_layout = QVBoxLayout(title_block)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(2)
 
         title = QLabel("DeepLabCut Terminal")
         title.setObjectName("TitleLabel")
-        toolbar_layout.addWidget(title)
+        title_layout.addWidget(title)
+
+        subtitle = QLabel("DEEPLABCUT conda environment")
+        subtitle.setObjectName("SubtitleLabel")
+        title_layout.addWidget(subtitle)
+
+        toolbar_layout.addWidget(title_block)
         toolbar_layout.addStretch(1)
 
-        self.status_label = QLabel("Expected conda environment: DEEPLABCUT")
-        self.status_label.setObjectName("StatusLabel")
+        self.status_label = QLabel("Ready")
+        self.status_label.setObjectName("StatusPill")
+        self.status_label.setProperty("running", False)
         toolbar_layout.addWidget(self.status_label)
 
         self.launch_button = QPushButton("Launch DeepLabCut")
         self.launch_button.setObjectName("PrimaryButton")
         toolbar_layout.addWidget(self.launch_button)
 
-        self.install_docs_button = QPushButton("Install Guide")
+        self.install_docs_button = QPushButton("Install")
         self.user_docs_button = QPushButton("Docs")
         self.github_button = QPushButton("GitHub")
         self.paper_button = QPushButton("Paper")
@@ -81,8 +95,29 @@ class DeepLabCutWidget(QWidget):
 
         root.addWidget(toolbar)
 
+        terminal_frame = QFrame()
+        terminal_frame.setObjectName("TerminalFrame")
+        terminal_layout = QVBoxLayout(terminal_frame)
+        terminal_layout.setContentsMargins(8, 8, 8, 8)
+        terminal_layout.setSpacing(0)
+
+        terminal_header = QFrame()
+        terminal_header.setObjectName("TerminalHeader")
+        terminal_header_layout = QHBoxLayout(terminal_header)
+        terminal_header_layout.setContentsMargins(9, 7, 9, 7)
+        terminal_header_layout.setSpacing(7)
+        terminal_label = QLabel("Console")
+        terminal_label.setObjectName("TerminalHeaderLabel")
+        terminal_header_layout.addWidget(terminal_label)
+        terminal_header_layout.addStretch(1)
+        command_hint = QLabel("activate-dlc")
+        command_hint.setObjectName("CommandHint")
+        terminal_header_layout.addWidget(command_hint)
+        terminal_layout.addWidget(terminal_header)
+
         self._terminal = TerminalPane()
-        root.addWidget(self._terminal, 1)
+        terminal_layout.addWidget(self._terminal, 1)
+        root.addWidget(terminal_frame, 1)
 
     def _connect_signals(self) -> None:
         self.launch_button.clicked.connect(lambda: self._terminal.submit_command(DEEPLABCUT_LAUNCH_COMMAND))
@@ -155,7 +190,10 @@ class DeepLabCutWidget(QWidget):
     def _set_running(self, running: bool) -> None:
         self.launch_button.setEnabled(not running)
         self.launch_button.setText("Running..." if running else "Launch DeepLabCut")
-        self.status_label.setText("Process running. Ctrl+C interrupts." if running else "Ready")
+        self.status_label.setText("Running" if running else "Ready")
+        self.status_label.setProperty("running", running)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         self._terminal.set_process_running(running)
 
     def _read_stdout(self) -> None:
@@ -165,7 +203,7 @@ class DeepLabCutWidget(QWidget):
         self._terminal.append_output(output)
 
     def _on_process_started(self) -> None:
-        self.status_label.setText("Process running. Ctrl+C interrupts.")
+        self.status_label.setText("Running")
 
     def _on_process_error(self, error: QProcess.ProcessError) -> None:
         self._terminal.append_output(f"\nProcess error: {self._process.errorString() if self._process else error}\n")
@@ -196,12 +234,20 @@ class DeepLabCutWidget(QWidget):
         self.setStyleSheet(
             """
             QWidget#DeepLabCutWidget {
-                background: #f7f8fa;
+                background: #eef3f7;
                 color: #111827;
                 font-size: 13px;
             }
             QWidget#TerminalToolbar {
+                background: transparent;
+            }
+            QFrame#TerminalToolbar {
                 background: #ffffff;
+                border: 1px solid #d4dde8;
+                border-radius: 8px;
+            }
+            QWidget#TitleBlock {
+                background: transparent;
             }
             QLabel {
                 background: transparent;
@@ -211,25 +257,66 @@ class DeepLabCutWidget(QWidget):
                 font-size: 17px;
                 font-weight: 800;
             }
-            QLabel#StatusLabel {
-                color: #475569;
+            QLabel#SubtitleLabel {
+                color: #64748b;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QLabel#StatusPill {
+                background: #ecfdf5;
+                border: 1px solid #bbf7d0;
+                border-radius: 11px;
+                color: #166534;
+                font-size: 11px;
+                font-weight: 800;
+                padding: 3px 9px;
+            }
+            QLabel#StatusPill[running="true"] {
+                background: #e0f2fe;
+                border-color: #bae6fd;
+                color: #075985;
+            }
+            QFrame#TerminalFrame {
+                background: #0f172a;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+            }
+            QFrame#TerminalHeader {
+                background: #111827;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+            }
+            QLabel#TerminalHeaderLabel {
+                color: #cbd5e1;
                 font-size: 12px;
                 font-weight: 700;
             }
+            QLabel#CommandHint {
+                color: #94a3b8;
+                font-family: Menlo, Consolas, monospace;
+                font-size: 11px;
+                font-weight: 700;
+            }
             QPlainTextEdit#TerminalPane {
-                border: 1px solid #cfd7e3;
-                border-radius: 6px;
+                border: 0;
+                border-top: 1px solid #1e293b;
+                border-radius: 0;
+                border-bottom-left-radius: 6px;
+                border-bottom-right-radius: 6px;
                 background: #020617;
                 color: #e2e8f0;
                 font-family: Menlo, Consolas, monospace;
                 font-size: 13px;
-                padding: 10px;
+                padding: 12px;
                 selection-background-color: #2563eb;
+            }
+            QWidget#TerminalViewport {
+                background: #020617;
             }
             QPushButton {
                 border: 1px solid #c9d2df;
                 border-radius: 5px;
-                padding: 6px 9px;
+                padding: 7px 10px;
                 background: #ffffff;
                 color: #334155;
                 font-weight: 700;
@@ -243,13 +330,13 @@ class DeepLabCutWidget(QWidget):
                 background: #f1f4f8;
             }
             QPushButton#PrimaryButton {
-                background: #e8edff;
-                border-color: #b8c2ff;
-                color: #3730a3;
+                background: #e0f2fe;
+                border-color: #7dd3fc;
+                color: #075985;
             }
             QPushButton#PrimaryButton:hover {
-                background: #dfe6ff;
-                border-color: #94a3ff;
+                background: #bae6fd;
+                border-color: #38bdf8;
             }
             """
         )
@@ -262,6 +349,7 @@ class TerminalPane(QPlainTextEdit):
     def __init__(self):
         super().__init__()
         self.setObjectName("TerminalPane")
+        self.viewport().setObjectName("TerminalViewport")
         self.setUndoRedoEnabled(False)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.setMaximumBlockCount(5000)

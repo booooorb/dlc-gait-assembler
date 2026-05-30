@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
     QGraphicsView,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
+from dlc_gait_assembly.gui.gait_analysis.window import GaitAnalysisWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
@@ -42,7 +42,6 @@ ANIMATED_CONTROL_TYPES = (
     QAbstractButton,
     QComboBox,
     QDoubleSpinBox,
-    QGroupBox,
     QLineEdit,
     QListWidget,
     QProgressBar,
@@ -50,10 +49,7 @@ ANIMATED_CONTROL_TYPES = (
     QSpinBox,
 )
 ANIMATED_OBJECT_NAMES = {
-    "EnhancementSettings",
-    "OperationsBar",
     "PreviewTitle",
-    "RegionSettings",
     "TitleLabel",
     "WorkflowStep",
 }
@@ -78,7 +74,7 @@ TOOL_SPECS = [
         True,
         description="Set measurement references and check spatial scale.",
         status="Ready",
-        accent="#0f766e",
+        accent="#065f46",
     ),
     ToolSpec(
         "video_processing",
@@ -87,7 +83,7 @@ TOOL_SPECS = [
         True,
         "Prepare videos, trims, crops, enhancements, and H.264 export.",
         "Ready",
-        "#0891b2",
+        "#0f766e",
     ),
     ToolSpec(
         "deeplabcut",
@@ -96,19 +92,22 @@ TOOL_SPECS = [
         True,
         description="Train, evaluate, and analyze pose estimation projects.",
         status="Ready",
-        accent="#4f46e5",
+        accent="#0369a1",
     ),
     ToolSpec(
         "gait_parameter_analysis",
         "Gait Parameter Analysis",
+        GaitAnalysisWidget,
+        True,
         description="Assemble stride, stance, swing, and gait outputs.",
-        accent="#ea580c",
+        status="Ready",
+        accent="#1d4ed8",
     ),
     ToolSpec(
         "pca_random_forest",
         "PCA and Random Forest Analysis",
         description="Reduce gait features and build classification models.",
-        accent="#be185d",
+        accent="#6d28d9",
     ),
 ]
 
@@ -214,6 +213,7 @@ class MainWindow(QMainWindow):
         self._transition_animations.clear()
 
         self._stack.setCurrentWidget(widget)
+        self._clear_opacity_effects(widget)
         if not self.isVisible():
             return
 
@@ -251,6 +251,14 @@ class MainWindow(QMainWindow):
                 continue
             targets.append(child)
         return targets
+
+    def _clear_opacity_effects(self, widget: QWidget) -> None:
+        for child in (widget, *widget.findChildren(QWidget)):
+            effect = child.graphicsEffect()
+            if isinstance(effect, QGraphicsOpacityEffect):
+                effect.setOpacity(1.0)
+                child.setGraphicsEffect(None)
+                child.update()
 
     def _clear_transition_animation(self, animation: QPropertyAnimation) -> None:
         if animation in self._transition_animations:

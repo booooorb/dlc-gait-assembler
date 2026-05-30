@@ -12,3 +12,8 @@ outputs/**
 !outputs/**/
 !outputs/.gitkeep
 !outputs/**/.gitkeep
+
+# Local ALMA source checkout / reference data
+DLC-Gait-Analysis-main/
+Dlc-Gait-Analysis-main/
+Dlc-Gait-Analysis-m/

@@ -100,7 +100,7 @@ class VideoEditorWidget(QWidget):
         left_layout.setContentsMargins(12, 12, 12, 12)
         left_layout.setSpacing(9)
 
-        title = QLabel("Video Processing Window")
+        title = QLabel("Video Processing")
         title.setObjectName("TitleLabel")
         left_layout.addWidget(title)
 
@@ -249,6 +249,12 @@ class VideoEditorWidget(QWidget):
                 color: #374151;
                 font-weight: 600;
                 background: transparent;
+            }
+            QScrollArea#OperationSettingsScroll,
+            QScrollArea#OperationSettingsScroll > QWidget,
+            QWidget#OperationSettingsContent {
+                background: #ffffff;
+                border: 0;
             }
             QPushButton {
                 border: 1px solid #c9d2df;
