@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectI
 
 from dlc_gait_assembly.domain.enhancements import EnhancementSettings
 from dlc_gait_assembly.domain.regions import NormalizedRect
+from dlc_gait_assembly.gui import theme
 
 try:
     import cv2
@@ -188,8 +189,8 @@ class RegionRectItem(QGraphicsRectItem):
         rect = self._delete_button_rect()
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(QPen(QColor(255, 255, 255, 220), max(1.0, 2.0 / self._view_scale())))
-        painter.setBrush(QColor(214, 39, 40, 178))
+        painter.setPen(QPen(theme.color(theme.BACKGROUND, 220), max(1.0, 2.0 / self._view_scale())))
+        painter.setBrush(theme.color(theme.NUMBER_ICON, 178))
         painter.drawEllipse(rect)
 
         pad = rect.width() * 0.32
@@ -655,7 +656,7 @@ class RegionPreviewView(QGraphicsView):
         self._crop_item = self._sync_one_item(
             self._crop_item,
             "crop",
-            QColor(255, 255, 255, 210),
+            theme.color(theme.BACKGROUND, 210),
             self._crop_norm,
             fill_alpha=0,
         )
@@ -671,7 +672,7 @@ class RegionPreviewView(QGraphicsView):
             if item is None:
                 item = RegionRectItem(
                     f"invert:{region_id}",
-                    QColor("#c026d3"),
+                    QColor(theme.TOOL_2),
                     self._image_bounds,
                     self._on_item_changed,
                     self.delete_region,
@@ -724,7 +725,7 @@ class RegionPreviewView(QGraphicsView):
             QRectF(bounds.left(), crop.top(), crop.left() - bounds.left(), crop.height()),
             QRectF(crop.right(), crop.top(), bounds.right() - crop.right(), crop.height()),
         ]
-        brush = QColor(0, 0, 0, 82)
+        brush = theme.color(theme.TEXT, 82)
 
         for rect in shade_rects:
             if rect.width() <= 0 or rect.height() <= 0:

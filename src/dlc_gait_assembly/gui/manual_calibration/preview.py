@@ -7,13 +7,14 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPainterPathSt
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
 from dlc_gait_assembly.domain.calibration import CalibrationPoint, CalibrationStick
+from dlc_gait_assembly.gui import theme
 
 
 DeleteTarget = tuple[str, str | int]
 
-_X_COLOR = QColor("#0ea5e9")
-_Y_COLOR = QColor("#f97316")
-_CM_COLOR = QColor("#22c55e")
+_X_COLOR = QColor(theme.TOOL_3)
+_Y_COLOR = QColor(theme.TOOL_2)
+_CM_COLOR = QColor(theme.TOOL_1)
 _ACTIVE_Z = 8.0
 _BASE_Z = 5.0
 _MAX_ZOOM = 32.0
@@ -572,7 +573,7 @@ class CalibrationStickItem(QGraphicsItem):
         rect = QRectF(anchor.x(), anchor.y(), text_rect.width() + 10.0 / scale, text_rect.height() + 6.0 / scale)
         rect.moveCenter(anchor)
 
-        background = QColor("#ffffff")
+        background = QColor(theme.BACKGROUND)
         background.setAlpha(218)
         painter.setPen(QPen(color, max(1.0, 1.0 / scale)))
         painter.setBrush(background)
@@ -585,20 +586,20 @@ class CalibrationStickItem(QGraphicsItem):
         halo_pen_width = max(1.2, 2.1 / scale)
         mark_pen_width = max(0.8, 1.0 / scale)
 
-        painter.setPen(QPen(QColor("#ffffff"), halo_pen_width))
+        painter.setPen(QPen(QColor(theme.BACKGROUND), halo_pen_width))
         painter.setBrush(color)
         painter.drawEllipse(point, radius, radius)
 
-        painter.setPen(QPen(QColor("#ffffff"), halo_pen_width))
+        painter.setPen(QPen(QColor(theme.BACKGROUND), halo_pen_width))
         painter.drawLine(QPointF(point.x() - cross, point.y()), QPointF(point.x() + cross, point.y()))
         painter.drawLine(QPointF(point.x(), point.y() - cross), QPointF(point.x(), point.y() + cross))
 
-        painter.setPen(QPen(QColor("#111827"), mark_pen_width))
+        painter.setPen(QPen(QColor(theme.TEXT), mark_pen_width))
         painter.drawLine(QPointF(point.x() - cross, point.y()), QPointF(point.x() + cross, point.y()))
         painter.drawLine(QPointF(point.x(), point.y() - cross), QPointF(point.x(), point.y() + cross))
 
-        painter.setPen(QPen(QColor("#ffffff"), max(0.8, 0.8 / scale)))
-        painter.setBrush(QColor("#111827"))
+        painter.setPen(QPen(QColor(theme.BACKGROUND), max(0.8, 0.8 / scale)))
+        painter.setBrush(QColor(theme.TEXT))
         painter.drawEllipse(point, max(0.9, 1.1 / scale), max(0.9, 1.1 / scale))
 
     def _view_scale(self) -> float:

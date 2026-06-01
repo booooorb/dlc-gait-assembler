@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.domain.calibration import CalibrationReport, calculate_calibration_report
 from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
+from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationPreviewView
 from dlc_gait_assembly.services.output_documents import write_calibration_conversion_export
 from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
@@ -143,9 +144,9 @@ class ManualCalibrationWidget(QWidget):
         tools_layout.setContentsMargins(10, 8, 10, 8)
         tools_layout.setSpacing(8)
         tools_layout.addWidget(QLabel("Tools"))
-        self.x_tool_button = _make_tool_button("X Calibration Stick", "#0ea5e9")
-        self.y_tool_button = _make_tool_button("Y Calibration Stick", "#f97316")
-        self.cm_tool_button = _make_tool_button("Centimeter Marker", "#22c55e")
+        self.x_tool_button = _make_tool_button("X Calibration Stick", theme.TOOL_3)
+        self.y_tool_button = _make_tool_button("Y Calibration Stick", theme.TOOL_2)
+        self.cm_tool_button = _make_tool_button("Centimeter Marker", theme.TOOL_1)
         self.x_tool_button.setChecked(True)
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
@@ -196,27 +197,29 @@ class ManualCalibrationWidget(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
-            """
+            theme.stylesheet(
+                """
             QWidget {
-                background: #f7f8fa;
-                color: #111827;
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT};
                 font-size: 13px;
             }
             QLabel {
                 background: transparent;
             }
             QGroupBox {
-                border: 1px solid #d8dee8;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 6px;
-                margin-top: 10px;
-                padding: 10px 8px 8px 8px;
-                background: #ffffff;
+                margin-top: 18px;
+                padding: 16px 10px 10px 10px;
+                background: {theme.PANEL};
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-                color: #374151;
+                subcontrol-position: top left;
+                left: 5px;
+                padding: 0 3px;
+                color: {theme.TEXT};
                 font-weight: 600;
                 background: transparent;
             }
@@ -229,88 +232,99 @@ class ManualCalibrationWidget(QWidget):
                 font-weight: 700;
             }
             QLabel#MutedLabel {
-                color: #64748b;
+                color: {theme.TEXT};
                 font-size: 12px;
             }
             QLabel#ResultsLabel {
-                background: #ffffff;
+                background: {theme.PANEL};
             }
             QScrollArea#ResultsScroll,
             QScrollArea#ResultsScroll > QWidget,
             QScrollArea#ResultsScroll > QWidget > QWidget {
-                background: #ffffff;
+                background: {theme.PANEL};
                 border: 0;
             }
             QPushButton {
-                border: 1px solid #c9d2df;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
                 padding: 7px 10px;
-                background: #ffffff;
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT};
             }
             QPushButton:hover {
-                background: #f1f8f8;
-                border-color: #a8cfd0;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#OpenMediaButton {
-                background: #f1f6fb;
-                border-color: #bed0e5;
-                color: #2b4a6f;
+                background: {theme.SURFACE};
+                border-color: {theme.ACCENT};
+                color: {theme.TEXT};
                 font-weight: 700;
             }
             QPushButton#OpenMediaButton:hover {
-                background: #e8f1f9;
-                border-color: #8eaccd;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#ClearButton {
-                background: #fff1f1;
-                border-color: #e8b9b9;
-                color: #8f2d2d;
+                background: {theme.TEXT};
+                border-color: {theme.TEXT};
+                color: {theme.BACKGROUND};
                 font-weight: 700;
             }
             QPushButton#ClearButton:hover {
-                background: #fbe6e6;
-                border-color: #d98282;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#ResetButton,
             QPushButton#ExportButton {
-                background: #eef7f7;
-                border-color: #badada;
-                color: #275f63;
+                background: {theme.SURFACE};
+                border-color: {theme.ACCENT};
+                color: {theme.TEXT};
                 font-weight: 650;
+            }
+            QPushButton#ExportButton {
+                background: {theme.TEXT};
+                border-color: {theme.TEXT};
+                color: {theme.BACKGROUND};
             }
             QPushButton#ResetButton:hover,
             QPushButton#ExportButton:hover {
-                background: #e3f0f1;
-                border-color: #86bbbd;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QFrame#OperationsBar {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 6px;
-                background: #ffffff;
+                background: {theme.PANEL};
             }
             QGraphicsView {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 6px;
-                background: #111827;
+                background: {theme.TEXT};
             }
             QDoubleSpinBox {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 4px;
-                background: #ffffff;
+                background: {theme.SURFACE};
                 padding: 4px 6px;
             }
             QSlider::groove:horizontal {
                 height: 5px;
                 border-radius: 2px;
-                background: #dbe3ee;
+                background: {theme.SURFACE};
             }
             QSlider::handle:horizontal {
                 width: 13px;
                 margin: -5px 0;
                 border-radius: 6px;
-                background: #0891b2;
+                background: {theme.TEXT};
             }
             """
+            )
         )
 
     def _open_media(self) -> None:
@@ -487,14 +501,14 @@ class ManualCalibrationWidget(QWidget):
 def _report_to_html(report: CalibrationReport) -> str:
     if not report.view_axis:
         return (
-            "<p style='color:#64748b;'>Create an x calibration stick, a y calibration stick, "
+            f"<p style='color:{theme.TEXT};'>Create an x calibration stick, a y calibration stick, "
             "and add centimeter markers. Stick endpoints already count as CM markers.</p>"
             f"<p><b>Tau:</b> {report.tau_percent:.2f}%</p>"
         )
 
     parts = [
         f"<p><b>Overall:</b> {_status_text(report.overall_passed)}<br>"
-        f"<span style='color:#475569;'>{report.recommendation}</span></p>",
+        f"<span style='color:{theme.TEXT};'>{report.recommendation}</span></p>",
         f"<p><b>Tau:</b> {report.tau_percent:.2f}% &nbsp; "
         f"<b>Axis threshold:</b> {2.0 * report.tau_percent:.2f}%</p>",
         "<p><b>Measured 1 cm segments</b></p>",
@@ -551,10 +565,10 @@ def _report_to_html(report: CalibrationReport) -> str:
 
 def _status_text(value: bool | None) -> str:
     if value is True:
-        return "<span style='color:#15803d; font-weight:700;'>PASS</span>"
+        return f"<span style='color:{theme.ACCENT}; font-weight:700;'>PASS</span>"
     if value is False:
-        return "<span style='color:#b91c1c; font-weight:700;'>FAIL</span>"
-    return "<span style='color:#64748b; font-weight:700;'>NEEDS DATA</span>"
+        return f"<span style='color:{theme.TEXT}; font-weight:700;'>FAIL</span>"
+    return f"<span style='color:{theme.SURFACE}; font-weight:700;'>NEEDS DATA</span>"
 
 
 def _percent(value: float | None) -> str:
@@ -566,10 +580,7 @@ def _percent(value: float | None) -> str:
 def _make_tool_button(text: str, color: str) -> QToolButton:
     button = QToolButton()
     button.setText(text)
-    button.setIcon(_dot_icon(color))
-    button.setIconSize(QSize(12, 12))
     button.setCheckable(True)
-    button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
     button.setStyleSheet(_tool_button_style(color))
     return button
 
@@ -577,51 +588,35 @@ def _make_tool_button(text: str, color: str) -> QToolButton:
 def _tool_button_style(color: str) -> str:
     return f"""
         QToolButton {{
-            background: {_mix_hex(color, "#ffffff", 0.94)};
-            border: 1px solid {_mix_hex(color, "#ffffff", 0.74)};
-            color: #263241;
+            background: {theme.mix_hex(color, theme.BACKGROUND, 0.82)};
+            border: 1px solid {theme.mix_hex(color, theme.BACKGROUND, 0.50)};
+            color: {theme.TEXT};
             border-radius: 5px;
             padding: 7px 10px;
             font-weight: 700;
         }}
         QToolButton:hover {{
-            background: {_mix_hex(color, "#ffffff", 0.90)};
-            border-color: {_mix_hex(color, "#ffffff", 0.48)};
+            background: {theme.mix_hex(color, theme.BACKGROUND, 0.48)};
+            border: 2px solid {theme.TEXT};
+            padding: 6px 9px;
         }}
         QToolButton:checked {{
-            background: {_mix_hex(color, "#ffffff", 0.84)};
-            border: 1px solid {_mix_hex(color, "#ffffff", 0.28)};
-            color: #111827;
+            background: {theme.mix_hex(color, theme.BACKGROUND, 0.12)};
+            border: 3px solid {theme.TEXT};
+            color: {theme.TEXT};
+            padding: 5px 8px;
+        }}
+        QToolButton:checked:hover {{
+            background: {theme.mix_hex(color, theme.BACKGROUND, 0.06)};
+            border: 3px solid {theme.TEXT};
+            padding: 5px 8px;
         }}
         QToolButton:disabled {{
-            background: #eef1f5;
-            border-color: #d8dee8;
-            color: #94a3b8;
+            background: {theme.SURFACE};
+            border-color: {theme.ACCENT};
+            color: {theme.TEXT};
         }}
     """
-
-
-def _mix_hex(color: str, base: str, base_weight: float) -> str:
-    foreground = QColor(color)
-    background = QColor(base)
-    weight = max(0.0, min(1.0, base_weight))
-    red = round(foreground.red() * (1.0 - weight) + background.red() * weight)
-    green = round(foreground.green() * (1.0 - weight) + background.green() * weight)
-    blue = round(foreground.blue() * (1.0 - weight) + background.blue() * weight)
-    return f"#{red:02x}{green:02x}{blue:02x}"
-
-
-def _dot_icon(color: str) -> QIcon:
-    pixmap = QPixmap(16, 16)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(color))
-    painter.drawEllipse(2, 2, 12, 12)
-    painter.end()
-    return QIcon(pixmap)
-
 
 def _format_ms(ms: int) -> str:
     total_seconds, milliseconds = divmod(max(0, int(ms)), 1000)

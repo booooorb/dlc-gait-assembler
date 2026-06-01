@@ -5,6 +5,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QSlider
 
 from dlc_gait_assembly.domain.trimming import TrimRange
+from dlc_gait_assembly.gui import theme
 
 
 class TrimTimelineSlider(QSlider):
@@ -41,8 +42,8 @@ class TrimTimelineSlider(QSlider):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        orange = QColor("#f97316")
-        inactive = QColor("#fdba74")
+        orange = QColor(theme.TEXT)
+        inactive = QColor(theme.ACCENT)
         y = self.height() // 2
 
         for index, trim in enumerate(self._trim_ranges):

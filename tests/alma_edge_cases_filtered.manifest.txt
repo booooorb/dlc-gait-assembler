@@ -1,0 +1,18 @@
+Synthetic ALMA/DLC filtered coordinate edge-case fixture
+CSV: alma_edge_cases_filtered.csv
+Frames: 230
+Settings intended for first ALMA pass: spontaneous walking, manual 50 px/cm, left-to-right, cutoff 6 Hz, drag clearance 0.10 cm, drag frames 4, step height 0-2 cm, stride length 0-8 cm.
+
+Write tests for 
+
+Embedded cases in order:
+- baseline_normal_1
+- baseline_normal_2
+- short_stride_near_detection_threshold
+- low_clearance_dragging_like_stride
+- high_step_filtered_by_2cm_max
+- long_stride_filtered_by_8cm_max
+- low_likelihood_swing_segment
+- flat_no_lift_stride
+- jittered_stance_stride
+- baseline_normal_after_edges

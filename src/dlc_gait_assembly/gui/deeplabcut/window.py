@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dlc_gait_assembly.gui import theme
+
 
 DEEPLABCUT_DOCS_URL = "https://deeplabcut.github.io/DeepLabCut/"
 DEEPLABCUT_INSTALL_URL = "https://deeplabcut.github.io/DeepLabCut/docs/installation"
@@ -232,18 +234,19 @@ class DeepLabCutWidget(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
-            """
+            theme.stylesheet(
+                """
             QWidget#DeepLabCutWidget {
-                background: #eef3f7;
-                color: #111827;
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT};
                 font-size: 13px;
             }
             QWidget#TerminalToolbar {
                 background: transparent;
             }
             QFrame#TerminalToolbar {
-                background: #ffffff;
-                border: 1px solid #d4dde8;
+                background: {theme.PANEL};
+                border: 1px solid {theme.ACCENT};
                 border-radius: 8px;
             }
             QWidget#TitleBlock {
@@ -253,92 +256,94 @@ class DeepLabCutWidget(QWidget):
                 background: transparent;
             }
             QLabel#TitleLabel {
-                color: #0f172a;
+                color: {theme.TEXT};
                 font-size: 17px;
                 font-weight: 800;
             }
             QLabel#SubtitleLabel {
-                color: #64748b;
+                color: {theme.TEXT};
                 font-size: 11px;
                 font-weight: 600;
             }
             QLabel#StatusPill {
-                background: #ecfdf5;
-                border: 1px solid #bbf7d0;
-                border-radius: 11px;
-                color: #166534;
+                background: transparent;
+                border: 0;
+                color: {theme.TEXT};
                 font-size: 11px;
                 font-weight: 800;
-                padding: 3px 9px;
+                padding: 0 2px;
             }
             QLabel#StatusPill[running="true"] {
-                background: #e0f2fe;
-                border-color: #bae6fd;
-                color: #075985;
+                background: transparent;
+                border: 0;
+                color: {theme.TEXT};
             }
             QFrame#TerminalFrame {
-                background: #0f172a;
-                border: 1px solid #cbd5e1;
+                background: {theme.TEXT};
+                border: 1px solid {theme.ACCENT};
                 border-radius: 8px;
             }
             QFrame#TerminalHeader {
-                background: #111827;
+                background: {theme.TEXT};
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
             }
             QLabel#TerminalHeaderLabel {
-                color: #cbd5e1;
+                color: {theme.BACKGROUND};
                 font-size: 12px;
                 font-weight: 700;
             }
             QLabel#CommandHint {
-                color: #94a3b8;
+                color: {theme.SURFACE};
                 font-family: Menlo, Consolas, monospace;
                 font-size: 11px;
                 font-weight: 700;
             }
             QPlainTextEdit#TerminalPane {
                 border: 0;
-                border-top: 1px solid #1e293b;
+                border-top: 1px solid {theme.ACCENT};
                 border-radius: 0;
                 border-bottom-left-radius: 6px;
                 border-bottom-right-radius: 6px;
-                background: #020617;
-                color: #e2e8f0;
+                background: {theme.TEXT};
+                color: {theme.BACKGROUND};
                 font-family: Menlo, Consolas, monospace;
                 font-size: 13px;
                 padding: 12px;
-                selection-background-color: #2563eb;
+                selection-background-color: {theme.ACCENT};
             }
             QWidget#TerminalViewport {
-                background: #020617;
+                background: {theme.TEXT};
             }
             QPushButton {
-                border: 1px solid #c9d2df;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
                 padding: 7px 10px;
-                background: #ffffff;
-                color: #334155;
+                background: {theme.SURFACE};
+                color: {theme.TEXT};
                 font-weight: 700;
             }
             QPushButton:hover {
-                background: #f1f8f8;
-                border-color: #a8cfd0;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton:disabled {
-                color: #94a3b8;
-                background: #f1f4f8;
+                color: {theme.ACCENT};
+                background: {theme.SURFACE};
             }
             QPushButton#PrimaryButton {
-                background: #e0f2fe;
-                border-color: #7dd3fc;
-                color: #075985;
+                background: {theme.TEXT};
+                border-color: {theme.TEXT};
+                color: {theme.BACKGROUND};
             }
             QPushButton#PrimaryButton:hover {
-                background: #bae6fd;
-                border-color: #38bdf8;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             """
+            )
         )
 
 

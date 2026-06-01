@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.domain.enhancements import EnhancementSettings
 from dlc_gait_assembly.domain.trimming import TrimRange
+from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 
 
@@ -323,7 +324,7 @@ class OperationSettingsPanel(QGroupBox):
 
         title = QLabel(f"Range {index + 1}")
         title.setObjectName("RegionTitle")
-        title.setStyleSheet("color: #f97316;" if active else "")
+        title.setStyleSheet(f"color: {theme.NUMBER_ICON};" if active else "")
         duration = QLabel(f"{_format_ms(trim_range.start_ms)} - {_format_ms(trim_range.end_ms)}")
         duration.setObjectName("DimensionLabel")
         duration.setWordWrap(True)
@@ -434,7 +435,7 @@ class OperationSettingsPanel(QGroupBox):
 
         title_label = QLabel(title)
         title_label.setObjectName("RegionTitle")
-        title_label.setStyleSheet("color: #c026d3;" if kind == "invert" else "color: #334155;")
+        title_label.setStyleSheet(f"color: {theme.TOOL_2};" if kind == "invert" else f"color: {theme.TEXT};")
         dimension_label = QLabel(f'{edges["width"]} x {edges["height"]} px')
         dimension_label.setObjectName("DimensionLabel")
         delete_button = QPushButton("x")

@@ -12,9 +12,10 @@ from dlc_gait_assembly.services.alma_pipeline import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALMA_ROOT = PROJECT_ROOT / "DLC-Gait-Analysis-main" / "alma-master"
-ALMA_RESOURCES = ALMA_ROOT / "Resources"
 REAL_ALMA_PARAMETERS_CSV = PROJECT_ROOT / "tests" / "Demo_Mouse_Treadmill_30cm_s_650000_filtered_parameters.csv"
-DLC_COORDINATE_CSV = ALMA_RESOURCES / "Demo_Mouse_Treadmill_30cm_s_650000_filtered.csv"
+DLC_COORDINATE_CSV = PROJECT_ROOT / "tests" / "Demo_Mouse_Treadmill_30cm_s_650000_filtered.csv"
+EDGE_CASE_REAL_ALMA_PARAMETERS_CSV = PROJECT_ROOT / "tests" / "alma_edge_cases_filtered_parameters.csv"
+EDGE_CASE_DLC_COORDINATE_CSV = PROJECT_ROOT / "tests" / "alma_edge_cases_filtered.csv"
 
 
 def test_pixels_per_cm_from_calibration_map_uses_overall_value(tmp_path):
@@ -65,13 +66,25 @@ def test_pixels_per_cm_from_calibration_map_can_use_view_axis_average(tmp_path):
 
 
 def test_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path):
-    import pandas as pd
-    from pandas.testing import assert_frame_equal
+    _assert_generated_parameters_match_real_alma(
+        tmp_path,
+        input_csv=DLC_COORDINATE_CSV,
+        expected_parameters_csv=REAL_ALMA_PARAMETERS_CSV,
+        settings=_spontaneous_manual_50_px_per_cm_settings(),
+    )
 
-    assert REAL_ALMA_PARAMETERS_CSV.exists(), f"Missing real ALMA output fixture: {REAL_ALMA_PARAMETERS_CSV}"
-    assert DLC_COORDINATE_CSV.exists(), f"Missing DLC coordinate input fixture: {DLC_COORDINATE_CSV}"
 
-    settings = AlmaSettings(
+def test_edge_case_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path):
+    _assert_generated_parameters_match_real_alma(
+        tmp_path,
+        input_csv=EDGE_CASE_DLC_COORDINATE_CSV,
+        expected_parameters_csv=EDGE_CASE_REAL_ALMA_PARAMETERS_CSV,
+        settings=_spontaneous_manual_50_px_per_cm_settings(),
+    )
+
+
+def _spontaneous_manual_50_px_per_cm_settings() -> AlmaSettings:
+    return AlmaSettings(
         analysis_type="Spontaneous walking",
         frame_rate=120.0,
         filter_cutoff=6.0,
@@ -89,16 +102,30 @@ def test_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_pat
         generate_stickplot=False,
     )
 
-    results = run_alma_gait_analysis([DLC_COORDINATE_CSV], tmp_path, settings, ALMA_ROOT)
-    actual_output = tmp_path / f"{DLC_COORDINATE_CSV.stem}_parameters.csv"
+
+def _assert_generated_parameters_match_real_alma(
+    tmp_path: Path,
+    *,
+    input_csv: Path,
+    expected_parameters_csv: Path,
+    settings: AlmaSettings,
+) -> None:
+    import pandas as pd
+    from pandas.testing import assert_frame_equal
+
+    assert expected_parameters_csv.exists(), f"Missing real ALMA output fixture: {expected_parameters_csv}"
+    assert input_csv.exists(), f"Missing DLC coordinate input fixture: {input_csv}"
+
+    results = run_alma_gait_analysis([input_csv], tmp_path, settings, ALMA_ROOT)
+    actual_output = tmp_path / f"{input_csv.stem}_parameters.csv"
 
     assert len(results) == 1
     assert actual_output in results[0].output_files
     assert actual_output.exists()
-    _assert_csv_text_equal(actual_output, REAL_ALMA_PARAMETERS_CSV)
+    _assert_csv_text_equal(actual_output, expected_parameters_csv)
 
     actual = pd.read_csv(actual_output)
-    expected = pd.read_csv(REAL_ALMA_PARAMETERS_CSV)
+    expected = pd.read_csv(expected_parameters_csv)
     assert list(actual.columns) == list(expected.columns)
     assert_frame_equal(
         actual,

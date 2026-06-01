@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from PySide6.QtCore import QSize, QTimer, Qt
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.domain.trimming import TrimRange
 from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
+from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 from dlc_gait_assembly.gui.video_editor.settings_panel import OperationSettingsPanel
 from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
@@ -167,10 +168,10 @@ class VideoEditorWidget(QWidget):
         tool_row = QHBoxLayout()
         tool_row.setSpacing(8)
         tool_row.addWidget(QLabel("Operations"))
-        self.crop_tool_button = _make_tool_button("Crop", "#475569")
-        self.invert_tool_button = _make_tool_button("Upside-Down", "#c026d3")
-        self.enhancements_tool_button = _make_tool_button("Enhancements", "#0891b2")
-        self.trim_tool_button = _make_tool_button("Trim", "#f97316")
+        self.crop_tool_button = _make_tool_button("Crop", theme.TOOL_3)
+        self.invert_tool_button = _make_tool_button("Upside-Down", theme.TOOL_2)
+        self.enhancements_tool_button = _make_tool_button("Enhancements", theme.TOOL_1)
+        self.trim_tool_button = _make_tool_button("Trim", theme.NUMBER_ICON)
         self.crop_tool_button.setChecked(True)
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
@@ -226,101 +227,111 @@ class VideoEditorWidget(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
-            """
+            theme.stylesheet(
+                """
             QMainWindow, QWidget {
-                background: #f7f8fa;
-                color: #111827;
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT};
                 font-size: 13px;
             }
             QLabel {
                 background: transparent;
             }
             QGroupBox {
-                border: 1px solid #d8dee8;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 6px;
-                margin-top: 10px;
-                padding: 10px 8px 8px 8px;
-                background: #ffffff;
+                margin-top: 18px;
+                padding: 16px 10px 10px 10px;
+                background: {theme.PANEL};
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-                color: #374151;
+                subcontrol-position: top left;
+                left: 5px;
+                padding: 0 3px;
+                color: {theme.TEXT};
                 font-weight: 600;
                 background: transparent;
             }
             QScrollArea#OperationSettingsScroll,
             QScrollArea#OperationSettingsScroll > QWidget,
             QWidget#OperationSettingsContent {
-                background: #ffffff;
+                background: {theme.PANEL};
                 border: 0;
             }
             QPushButton {
-                border: 1px solid #c9d2df;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
                 padding: 7px 10px;
-                background: #ffffff;
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT};
             }
             QPushButton:hover {
-                background: #f1f8f8;
-                border-color: #a8cfd0;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton:disabled {
-                color: #94a3b8;
-                background: #f1f4f8;
+                color: {theme.ACCENT};
+                background: {theme.SURFACE};
             }
             QPushButton#AddFilesButton {
-                background: #f0f8f6;
-                border-color: #b9ddd4;
-                color: #23524c;
+                background: {theme.SURFACE};
+                border-color: {theme.ACCENT};
+                color: {theme.TEXT};
                 font-weight: 650;
             }
             QPushButton#AddFilesButton:hover {
-                background: #e6f2ef;
-                border-color: #7bbcaf;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#AddFolderButton {
-                background: #f1f6fb;
-                border-color: #bed0e5;
-                color: #2b4a6f;
+                background: {theme.SURFACE};
+                border-color: {theme.ACCENT};
+                color: {theme.TEXT};
                 font-weight: 650;
             }
             QPushButton#AddFolderButton:hover {
-                background: #e8f1f9;
-                border-color: #8eaccd;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#RemoveButton,
             QPushButton#DeleteButton {
-                background: #fff1f1;
-                border-color: #e8b9b9;
-                color: #8f2d2d;
+                background: {theme.TEXT};
+                border-color: {theme.TEXT};
+                color: {theme.BACKGROUND};
                 font-weight: 700;
             }
             QPushButton#RemoveButton:hover,
             QPushButton#DeleteButton:hover {
-                background: #fbe6e6;
-                border-color: #d98282;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#ClearButton {
-                background: #fff6ec;
-                border-color: #e6c7a3;
-                color: #81532b;
+                background: {theme.TEXT};
+                border-color: {theme.TEXT};
+                color: {theme.BACKGROUND};
                 font-weight: 700;
             }
             QPushButton#ClearButton:hover {
-                background: #f9ecd9;
-                border-color: #d7a66f;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#PrimaryButton {
-                background: #0f766e;
-                border-color: #0f766e;
-                color: white;
+                background: {theme.TEXT};
+                border-color: {theme.TEXT};
+                color: {theme.BACKGROUND};
                 font-weight: 700;
                 padding: 10px;
             }
             QPushButton#PrimaryButton:hover {
-                background: #0b6962;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#TinyResetButton {
                 border-radius: 4px;
@@ -336,12 +347,12 @@ class VideoEditorWidget(QWidget):
                 min-height: 18px;
                 max-height: 18px;
                 background: transparent;
-                color: #a33a3a;
+                color: {theme.TEXT};
                 font-weight: 800;
             }
             QPushButton#InlineDeleteButton:hover {
-                background: #f7e4e4;
-                color: #7f1d1d;
+                background: {theme.TEXT};
+                color: {theme.BACKGROUND};
             }
             QPushButton#CreateRegionButton,
             QPushButton#CreateCropRegionButton,
@@ -351,36 +362,36 @@ class VideoEditorWidget(QWidget):
                 font-weight: 650;
             }
             QPushButton#CreateCropRegionButton {
-                background: #f2f5f8;
-                border-color: #c6d0dc;
-                color: #334155;
+                background: {theme.BACKGROUND};
+                border-color: {theme.ACCENT};
+                color: {theme.TEXT};
             }
             QPushButton#CreateInvertRegionButton {
-                background: #f8f1fb;
-                border-color: #d8b8e7;
-                color: #68407b;
+                background: {theme.SURFACE};
+                border-color: {theme.ACCENT};
+                color: {theme.TEXT};
             }
             QPushButton#CreateTrimRangeButton {
-                background: #fff6ec;
-                border-color: #e6c7a3;
-                color: #81532b;
+                background: {theme.SURFACE};
+                border-color: {theme.ACCENT};
+                color: {theme.TEXT};
             }
             QPushButton#ResetButton,
             QPushButton#CreateRegionButton {
-                background: #eef7f7;
-                border-color: #badada;
-                color: #275f63;
+                background: {theme.SURFACE};
+                border-color: {theme.ACCENT};
+                color: {theme.TEXT};
             }
             QFrame#OperationsBar {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 6px;
-                background: #ffffff;
+                background: {theme.PANEL};
             }
             QToolButton {
-                border: 1px solid #c9d2df;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
                 padding: 7px 10px;
-                background: #ffffff;
+                background: {theme.SURFACE};
                 font-weight: 600;
             }
             QLabel#TitleLabel {
@@ -392,87 +403,93 @@ class VideoEditorWidget(QWidget):
                 font-weight: 700;
             }
             QLabel#SettingsPlaceholder {
-                color: #64748b;
+                color: {theme.TEXT};
                 font-size: 12px;
             }
             QFrame#RegionSettings {
-                border: 1px solid #d8dee8;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
-                background: #ffffff;
+                background: {theme.SURFACE};
             }
             QLabel#RegionTitle {
                 font-weight: 700;
                 font-size: 10px;
             }
             QLabel#DimensionLabel {
-                color: #64748b;
+                color: {theme.TEXT};
                 font-size: 9px;
             }
             QSpinBox {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 4px;
-                background: #ffffff;
+                background: {theme.SURFACE};
                 padding: 0 2px;
                 font-size: 10px;
             }
             QDoubleSpinBox {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 4px;
-                background: #ffffff;
+                background: {theme.SURFACE};
                 padding: 0 2px;
                 font-size: 10px;
             }
             QComboBox, QLineEdit {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 4px;
-                background: #ffffff;
+                background: {theme.SURFACE};
                 padding: 5px 6px;
             }
             QFrame#EnhancementSettings {
-                border: 1px solid #d8dee8;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
-                background: #ffffff;
+                background: {theme.SURFACE};
             }
             QSlider#EnhancementSlider::groove:horizontal {
-                height: 4px;
-                border-radius: 2px;
-                background: #dbe3ee;
+                height: 7px;
+                border-radius: 3px;
+                background: {theme.SOFT};
+                border: 1px solid {theme.TEXT};
             }
             QSlider#EnhancementSlider::handle:horizontal {
-                width: 10px;
-                margin: -4px 0;
-                border-radius: 5px;
-                background: #0891b2;
+                width: 16px;
+                margin: -6px 0;
+                border-radius: 8px;
+                background: {theme.SOFT};
+                border: 2px solid {theme.TEXT};
+            }
+            QSlider#EnhancementSlider::handle:horizontal:hover {
+                background: {theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)};
             }
             QListWidget {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
-                background: white;
-                alternate-background-color: #f8fafc;
-                selection-background-color: #c7eeee;
-                selection-color: #0f172a;
+                background: {theme.SURFACE};
+                alternate-background-color: {theme.SURFACE};
+                selection-background-color: {theme.ACCENT};
+                selection-color: {theme.TEXT};
                 font-size: 9px;
             }
             QListWidget::item {
                 padding: 1px 3px;
             }
             QGraphicsView {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 6px;
-                background: #111827;
+                background: {theme.TEXT};
             }
             QProgressBar {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
-                background: white;
+                background: {theme.SURFACE};
                 height: 16px;
                 text-align: center;
             }
             QProgressBar::chunk {
-                background: #00a6a6;
+                background: {theme.TEXT};
                 border-radius: 4px;
             }
             """
+            )
         )
 
     def _add_videos(self) -> None:
@@ -906,10 +923,7 @@ class VideoEditorWidget(QWidget):
 def _make_tool_button(text: str, color: str) -> QToolButton:
     button = QToolButton()
     button.setText(text)
-    button.setIcon(_dot_icon(color))
-    button.setIconSize(QSize(12, 12))
     button.setCheckable(True)
-    button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
     button.setStyleSheet(_tool_button_style(color))
     return button
 
@@ -917,51 +931,35 @@ def _make_tool_button(text: str, color: str) -> QToolButton:
 def _tool_button_style(color: str) -> str:
     return f"""
         QToolButton {{
-            background: {_mix_hex(color, "#ffffff", 0.94)};
-            border: 1px solid {_mix_hex(color, "#ffffff", 0.74)};
-            color: #263241;
+            background: {theme.mix_hex(color, theme.BACKGROUND, 0.82)};
+            border: 1px solid {theme.mix_hex(color, theme.BACKGROUND, 0.50)};
+            color: {theme.TEXT};
             border-radius: 5px;
             padding: 7px 10px;
             font-weight: 700;
         }}
         QToolButton:hover {{
-            background: {_mix_hex(color, "#ffffff", 0.90)};
-            border-color: {_mix_hex(color, "#ffffff", 0.48)};
+            background: {theme.mix_hex(color, theme.BACKGROUND, 0.48)};
+            border: 2px solid {theme.TEXT};
+            padding: 6px 9px;
         }}
         QToolButton:checked {{
-            background: {_mix_hex(color, "#ffffff", 0.84)};
-            border: 1px solid {_mix_hex(color, "#ffffff", 0.28)};
-            color: #111827;
+            background: {theme.mix_hex(color, theme.BACKGROUND, 0.12)};
+            border: 3px solid {theme.TEXT};
+            color: {theme.TEXT};
+            padding: 5px 8px;
+        }}
+        QToolButton:checked:hover {{
+            background: {theme.mix_hex(color, theme.BACKGROUND, 0.06)};
+            border: 3px solid {theme.TEXT};
+            padding: 5px 8px;
         }}
         QToolButton:disabled {{
-            background: #eef1f5;
-            border-color: #d8dee8;
-            color: #94a3b8;
+            background: {theme.SURFACE};
+            border-color: {theme.ACCENT};
+            color: {theme.TEXT};
         }}
     """
-
-
-def _mix_hex(color: str, base: str, base_weight: float) -> str:
-    foreground = QColor(color)
-    background = QColor(base)
-    weight = max(0.0, min(1.0, base_weight))
-    red = round(foreground.red() * (1.0 - weight) + background.red() * weight)
-    green = round(foreground.green() * (1.0 - weight) + background.green() * weight)
-    blue = round(foreground.blue() * (1.0 - weight) + background.blue() * weight)
-    return f"#{red:02x}{green:02x}{blue:02x}"
-
-
-def _dot_icon(color: str) -> QIcon:
-    pixmap = QPixmap(16, 16)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(color))
-    painter.drawEllipse(2, 2, 12, 12)
-    painter.end()
-    return QIcon(pixmap)
-
 
 class ExportSettingsDialog(QDialog):
     def __init__(self, video_count: int, default_output_root: Path, parent=None):

@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.services.alma_pipeline import (
     AlmaSettings,
     default_alma_root,
@@ -92,7 +93,7 @@ class GaitAnalysisWidget(QWidget):
         root.addWidget(splitter)
 
         left_panel = QWidget()
-        left_panel.setMinimumWidth(430)
+        left_panel.setMinimumWidth(520)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(10)
@@ -282,6 +283,7 @@ class GaitAnalysisWidget(QWidget):
         right_layout.addWidget(self.progress)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
+        self.log.setMaximumHeight(190)
         right_layout.addWidget(self.log, 1)
 
         mapping_box = QGroupBox("Body Part Mapping")
@@ -320,9 +322,9 @@ class GaitAnalysisWidget(QWidget):
 
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([470, 810])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([640, 640])
 
     def _connect_signals(self) -> None:
         self.add_file_button.clicked.connect(self._add_file)
@@ -581,27 +583,29 @@ class GaitAnalysisWidget(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
-            """
+            theme.stylesheet(
+                """
             QWidget {
-                background: #f7f8fa;
-                color: #111827;
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT};
                 font-size: 13px;
             }
             QLabel {
                 background: transparent;
             }
             QGroupBox {
-                border: 1px solid #d8dee8;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 6px;
-                margin-top: 10px;
-                padding: 10px 8px 8px 8px;
-                background: #ffffff;
+                margin-top: 18px;
+                padding: 16px 10px 10px 10px;
+                background: {theme.PANEL};
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-                color: #374151;
+                subcontrol-position: top left;
+                left: 5px;
+                padding: 0 3px;
+                color: {theme.TEXT};
                 font-weight: 600;
                 background: transparent;
             }
@@ -614,44 +618,47 @@ class GaitAnalysisWidget(QWidget):
                 font-weight: 700;
             }
             QLabel#MutedLabel {
-                color: #64748b;
+                color: {theme.TEXT};
                 font-size: 12px;
             }
             QPushButton {
-                border: 1px solid #c9d2df;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
                 padding: 7px 10px;
-                background: #ffffff;
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT};
                 font-weight: 650;
             }
             QPushButton:hover {
-                background: #f1f8f8;
-                border-color: #a8cfd0;
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QPushButton#PrimaryButton {
-                background: #1d4ed8;
-                border-color: #1d4ed8;
-                color: #ffffff;
+                background: {theme.TEXT};
+                border-color: {theme.TEXT};
+                color: {theme.BACKGROUND};
                 font-weight: 800;
                 padding: 10px;
             }
             QListWidget, QTextEdit, QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
-                background: #ffffff;
+                background: {theme.SURFACE};
                 padding: 5px 6px;
             }
             QProgressBar {
-                border: 1px solid #cfd7e3;
+                border: 1px solid {theme.ACCENT};
                 border-radius: 5px;
-                background: #ffffff;
+                background: {theme.SURFACE};
                 height: 16px;
             }
             QProgressBar::chunk {
                 border-radius: 4px;
-                background: #2563eb;
+                background: {theme.TEXT};
             }
             """
+            )
         )
 
 

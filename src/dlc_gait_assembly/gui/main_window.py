@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.gait_analysis.window import GaitAnalysisWidget
+from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
@@ -63,7 +64,7 @@ class ToolSpec:
     enabled: bool = False
     description: str = ""
     status: str = "Coming soon"
-    accent: str = "#94a3b8"
+    accent: str = theme.NUMBER_ICON
 
 
 TOOL_SPECS = [
@@ -74,7 +75,7 @@ TOOL_SPECS = [
         True,
         description="Set measurement references and check spatial scale.",
         status="Ready",
-        accent="#065f46",
+        accent=theme.NUMBER_ICON,
     ),
     ToolSpec(
         "video_processing",
@@ -83,7 +84,7 @@ TOOL_SPECS = [
         True,
         "Prepare videos, trims, crops, enhancements, and H.264 export.",
         "Ready",
-        "#0f766e",
+        theme.NUMBER_ICON,
     ),
     ToolSpec(
         "deeplabcut",
@@ -92,7 +93,7 @@ TOOL_SPECS = [
         True,
         description="Train, evaluate, and analyze pose estimation projects.",
         status="Ready",
-        accent="#0369a1",
+        accent=theme.NUMBER_ICON,
     ),
     ToolSpec(
         "gait_parameter_analysis",
@@ -101,13 +102,13 @@ TOOL_SPECS = [
         True,
         description="Assemble stride, stance, swing, and gait outputs.",
         status="Ready",
-        accent="#1d4ed8",
+        accent=theme.NUMBER_ICON,
     ),
     ToolSpec(
         "pca_random_forest",
         "PCA and Random Forest Analysis",
         description="Reduce gait features and build classification models.",
-        accent="#6d28d9",
+        accent=theme.NUMBER_ICON,
     ),
 ]
 
@@ -349,22 +350,23 @@ class MainMenuWidget(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
-            """
+            theme.stylesheet(
+                """
             QWidget {
-                background: #ffffff;
-                color: #172033;
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT};
                 font-size: 13px;
             }
             QLabel {
                 background: transparent;
             }
             QFrame#MenuStage {
-                background: #ffffff;
-                border: 1px solid #d8dee8;
+                background: {theme.PANEL};
+                border: 1px solid {theme.ACCENT};
                 border-radius: 8px;
             }
             QLabel#MainMenuTitle {
-                color: #0f172a;
+                color: {theme.TEXT};
                 font-size: 34px;
                 font-weight: 800;
             }
@@ -373,26 +375,26 @@ class MainMenuWidget(QWidget):
                 border: 0;
             }
             QLabel#WorkflowConnector {
-                color: #8aa0b6;
+                color: {theme.ACCENT};
                 font-size: 22px;
                 font-weight: 800;
                 min-width: 18px;
             }
             QFrame#WorkflowStep {
-                background: #f8fafc;
-                border: 1px solid #d6dee9;
+                background: {theme.SURFACE};
+                border: 1px solid {theme.ACCENT};
                 border-radius: 7px;
             }
             QFrame#WorkflowStep[enabledStep="true"]:hover {
-                background: #eefbfc;
-                border-color: #0891b2;
+                background: {theme.SURFACE};
+                border-color: {theme.TEXT};
             }
             QFrame#WorkflowStep[enabledStep="false"] {
-                background: #eef1f5;
-                border-color: #dbe1ea;
+                background: {theme.SURFACE};
+                border-color: {theme.ACCENT};
             }
             QLabel#StepIndex {
-                color: #ffffff;
+                color: {theme.BACKGROUND};
                 border-radius: 18px;
                 font-size: 15px;
                 font-weight: 700;
@@ -402,24 +404,25 @@ class MainMenuWidget(QWidget):
                 max-height: 36px;
             }
             QLabel#StepIndex[enabledStep="false"] {
-                color: #9aa5b5;
+                color: {theme.TEXT};
             }
             QLabel#StepTitle {
-                color: #111827;
+                color: {theme.TEXT};
                 font-size: 17px;
                 font-weight: 700;
             }
             QLabel#StepTitle[enabledStep="false"] {
-                color: #94a3b8;
+                color: {theme.ACCENT};
             }
             QLabel#StepDescription {
-                color: #526173;
+                color: {theme.TEXT};
                 font-size: 11px;
             }
             QLabel#StepDescription[enabledStep="false"] {
-                color: #9aa5b5;
+                color: {theme.ACCENT};
             }
             """
+            )
         )
 
 class WorkflowStep(QFrame):
@@ -447,7 +450,7 @@ class WorkflowStep(QFrame):
         number.setObjectName("StepIndex")
         number.setProperty("enabledStep", spec.enabled)
         number.setAlignment(Qt.AlignCenter)
-        number.setStyleSheet(f"background: {spec.accent if spec.enabled else '#d6dee9'};")
+        number.setStyleSheet(f"background: {spec.accent if spec.enabled else theme.SURFACE};")
         root.addWidget(number, 0, Qt.AlignLeft)
 
         title = QLabel(spec.label)
