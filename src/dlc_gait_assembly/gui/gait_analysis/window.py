@@ -57,6 +57,7 @@ BODY_PART_ALIASES = {
 class GaitAnalysisWidget(QWidget):
     def __init__(self):
         super().__init__()
+        self.setObjectName("GaitAnalysisWidget")
         self._project_root = find_project_root(__file__)
         self._alma_root = default_alma_root(self._project_root)
         self._selected_files: list[Path] = []
@@ -585,7 +586,7 @@ class GaitAnalysisWidget(QWidget):
         self.setStyleSheet(
             theme.stylesheet(
                 """
-            QWidget {
+            QWidget#GaitAnalysisWidget {
                 background: {theme.BACKGROUND};
                 color: {theme.TEXT};
                 font-size: 13px;
@@ -640,6 +641,11 @@ class GaitAnalysisWidget(QWidget):
                 color: {theme.BACKGROUND};
                 font-weight: 800;
                 padding: 10px;
+            }
+            QPushButton#PrimaryButton:hover {
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
+                color: {theme.TEXT};
             }
             QListWidget, QTextEdit, QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
                 border: 1px solid {theme.ACCENT};

@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSlider,
     QSplitter,
     QToolButton,
     QVBoxLayout,
@@ -28,6 +27,7 @@ from dlc_gait_assembly.domain.calibration import CalibrationReport, calculate_ca
 from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationPreviewView
+from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
 from dlc_gait_assembly.services.output_documents import write_calibration_conversion_export
 from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
 
@@ -43,6 +43,7 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 class ManualCalibrationWidget(QWidget):
     def __init__(self):
         super().__init__()
+        self.setObjectName("ManualCalibrationWidget")
         self._project_root = find_project_root(__file__)
         self._capture = None
         self._current_media: Path | None = None
@@ -168,7 +169,7 @@ class ManualCalibrationWidget(QWidget):
         timeline_row = QHBoxLayout()
         self.time_label = QLabel("00:00.000 / 00:00.000")
         self.time_label.setMinimumWidth(180)
-        self.timeline = QSlider(Qt.Horizontal)
+        self.timeline = TrimTimelineSlider()
         self.timeline.setRange(0, 0)
         self.timeline.setEnabled(False)
         timeline_row.addWidget(self.time_label)
@@ -199,7 +200,7 @@ class ManualCalibrationWidget(QWidget):
         self.setStyleSheet(
             theme.stylesheet(
                 """
-            QWidget {
+            QWidget#ManualCalibrationWidget {
                 background: {theme.BACKGROUND};
                 color: {theme.TEXT};
                 font-size: 13px;
@@ -311,17 +312,6 @@ class ManualCalibrationWidget(QWidget):
                 border-radius: 4px;
                 background: {theme.SURFACE};
                 padding: 4px 6px;
-            }
-            QSlider::groove:horizontal {
-                height: 5px;
-                border-radius: 2px;
-                background: {theme.SURFACE};
-            }
-            QSlider::handle:horizontal {
-                width: 13px;
-                margin: -5px 0;
-                border-radius: 6px;
-                background: {theme.TEXT};
             }
             """
             )

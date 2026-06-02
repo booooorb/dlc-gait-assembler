@@ -77,6 +77,12 @@ class DeepLabCutWidget(QWidget):
         toolbar_layout.addWidget(title_block)
         toolbar_layout.addStretch(1)
 
+        self.status_indicator = QLabel()
+        self.status_indicator.setObjectName("StatusDot")
+        self.status_indicator.setProperty("statusState", "ready")
+        self.status_indicator.setFixedSize(10, 10)
+        toolbar_layout.addWidget(self.status_indicator)
+
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("StatusPill")
         self.status_label.setProperty("running", False)
@@ -192,11 +198,17 @@ class DeepLabCutWidget(QWidget):
     def _set_running(self, running: bool) -> None:
         self.launch_button.setEnabled(not running)
         self.launch_button.setText("Running..." if running else "Launch DeepLabCut")
-        self.status_label.setText("Running" if running else "Ready")
+        self._set_status("Running" if running else "Ready", "running" if running else "ready")
         self.status_label.setProperty("running", running)
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
         self._terminal.set_process_running(running)
+
+    def _set_status(self, text: str, state: str = "other") -> None:
+        self.status_label.setText(text)
+        self.status_indicator.setProperty("statusState", state)
+        self.status_indicator.style().unpolish(self.status_indicator)
+        self.status_indicator.style().polish(self.status_indicator)
 
     def _read_stdout(self) -> None:
         if self._process is None:
@@ -205,17 +217,19 @@ class DeepLabCutWidget(QWidget):
         self._terminal.append_output(output)
 
     def _on_process_started(self) -> None:
-        self.status_label.setText("Running")
+        self._set_status("Running", "running")
 
     def _on_process_error(self, error: QProcess.ProcessError) -> None:
         self._terminal.append_output(f"\nProcess error: {self._process.errorString() if self._process else error}\n")
-        self.status_label.setText("Launch failed.")
         if error == QProcess.FailedToStart:
             if self._process is not None:
                 self._process.deleteLater()
             self._process = None
             self._set_running(False)
+            self._set_status("Launch failed.", "error")
             self._terminal.append_prompt(self._cwd)
+        else:
+            self._set_status("Process error.", "error")
 
     def _on_process_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         if exit_status == QProcess.NormalExit:
@@ -277,6 +291,24 @@ class DeepLabCutWidget(QWidget):
                 background: transparent;
                 border: 0;
                 color: {theme.TEXT};
+            }
+            QLabel#StatusDot {
+                background: {theme.STATUS_OTHER};
+                border: 1px solid {theme.TEXT};
+                border-radius: 5px;
+                min-width: 10px;
+                max-width: 10px;
+                min-height: 10px;
+                max-height: 10px;
+            }
+            QLabel#StatusDot[statusState="ready"] {
+                background: {theme.STATUS_READY};
+            }
+            QLabel#StatusDot[statusState="running"] {
+                background: {theme.STATUS_RUNNING};
+            }
+            QLabel#StatusDot[statusState="error"] {
+                background: {theme.STATUS_ERROR};
             }
             QFrame#TerminalFrame {
                 background: {theme.TEXT};

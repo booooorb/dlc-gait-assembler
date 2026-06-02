@@ -56,6 +56,12 @@ PANEL = "#DDDDDD"
 SOFT = "#F79B72"
 BORDER = "#C9D1D6"
 TEXT = "#2A4759"
+CONNECTOR = "#708a9a"
+STATUS_READY = "#2FA84F"
+STATUS_RUNNING = "#2D7DD2"
+STATUS_ERROR = "#C3110C"
+STATUS_OTHER = "#D6A813"
+STEP_NUMBER_COLORS = ("#280905", "#740A03", "#C3110C", "#E6501B", "#F79B72")
 
 TOOL_1 = ACTIVE_PALETTE.tool_1
 TOOL_2 = ACTIVE_PALETTE.tool_2
@@ -89,13 +95,19 @@ def mix_hex(foreground_hex: str, background_hex: str, background_weight: float) 
 
 def stylesheet(template: str) -> str:
     return (
-        template.replace("{theme.BACKGROUND}", BACKGROUND)
+        template.replace("{theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)}", mix_hex(SOFT, SURFACE, 0.35))
+        .replace("{theme.BACKGROUND}", BACKGROUND)
         .replace("{theme.SURFACE}", SURFACE)
         .replace("{theme.PANEL}", PANEL)
         .replace("{theme.SOFT}", SOFT)
         .replace("{theme.BORDER}", BORDER)
         .replace("{theme.ACCENT}", ACCENT)
         .replace("{theme.TEXT}", TEXT)
+        .replace("{theme.CONNECTOR}", CONNECTOR)
+        .replace("{theme.STATUS_READY}", STATUS_READY)
+        .replace("{theme.STATUS_RUNNING}", STATUS_RUNNING)
+        .replace("{theme.STATUS_ERROR}", STATUS_ERROR)
+        .replace("{theme.STATUS_OTHER}", STATUS_OTHER)
         .replace("{theme.TOOL_1}", TOOL_1)
         .replace("{theme.TOOL_2}", TOOL_2)
         .replace("{theme.TOOL_3}", TOOL_3)

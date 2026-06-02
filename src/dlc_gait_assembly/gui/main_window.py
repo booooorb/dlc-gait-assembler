@@ -31,8 +31,8 @@ from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWid
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
 
-TRANSITION_CONTROL_FADE_MS = 460
-TRANSITION_CONTROL_STAGGER_MS = 32
+TRANSITION_CONTROL_FADE_MS = 220
+TRANSITION_CONTROL_STAGGER_MS = 14
 MAIN_MENU_STAGE_WIDTH = 1180
 WORKFLOW_PATH_WIDTH = 1112
 WORKFLOW_STEP_WIDTH = 192
@@ -75,7 +75,7 @@ TOOL_SPECS = [
         True,
         description="Set measurement references and check spatial scale.",
         status="Ready",
-        accent=theme.NUMBER_ICON,
+        accent=theme.STEP_NUMBER_COLORS[0],
     ),
     ToolSpec(
         "video_processing",
@@ -84,7 +84,7 @@ TOOL_SPECS = [
         True,
         "Prepare videos, trims, crops, enhancements, and H.264 export.",
         "Ready",
-        theme.NUMBER_ICON,
+        theme.STEP_NUMBER_COLORS[1],
     ),
     ToolSpec(
         "deeplabcut",
@@ -93,7 +93,7 @@ TOOL_SPECS = [
         True,
         description="Train, evaluate, and analyze pose estimation projects.",
         status="Ready",
-        accent=theme.NUMBER_ICON,
+        accent=theme.STEP_NUMBER_COLORS[2],
     ),
     ToolSpec(
         "gait_parameter_analysis",
@@ -102,13 +102,13 @@ TOOL_SPECS = [
         True,
         description="Assemble stride, stance, swing, and gait outputs.",
         status="Ready",
-        accent=theme.NUMBER_ICON,
+        accent=theme.STEP_NUMBER_COLORS[3],
     ),
     ToolSpec(
         "pca_random_forest",
         "PCA and Random Forest Analysis",
         description="Reduce gait features and build classification models.",
-        accent=theme.NUMBER_ICON,
+        accent=theme.STEP_NUMBER_COLORS[4],
     ),
 ]
 
@@ -295,6 +295,7 @@ class MainMenuWidget(QWidget):
 
     def __init__(self, tools: list[ToolSpec]):
         super().__init__()
+        self.setObjectName("MainMenuWidget")
         self._tools = tools
         self._build_ui()
         self._apply_style()
@@ -352,7 +353,7 @@ class MainMenuWidget(QWidget):
         self.setStyleSheet(
             theme.stylesheet(
                 """
-            QWidget {
+            QWidget#MainMenuWidget {
                 background: {theme.BACKGROUND};
                 color: {theme.TEXT};
                 font-size: 13px;
@@ -375,7 +376,7 @@ class MainMenuWidget(QWidget):
                 border: 0;
             }
             QLabel#WorkflowConnector {
-                color: {theme.ACCENT};
+                color: {theme.CONNECTOR};
                 font-size: 22px;
                 font-weight: 800;
                 min-width: 18px;

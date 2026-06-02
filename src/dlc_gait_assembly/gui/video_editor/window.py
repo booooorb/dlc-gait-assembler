@@ -447,7 +447,7 @@ class VideoEditorWidget(QWidget):
             QSlider#EnhancementSlider::groove:horizontal {
                 height: 7px;
                 border-radius: 3px;
-                background: {theme.SOFT};
+                background: {theme.TEXT};
                 border: 1px solid {theme.TEXT};
             }
             QSlider#EnhancementSlider::handle:horizontal {
