@@ -47,6 +47,9 @@ class AlmaRunResult:
 
 
 def default_alma_root(project_root: Path) -> Path:
+    imported_root = project_root / "alma-import"
+    if imported_root.exists():
+        return imported_root
     return project_root / "DLC-Gait-Analysis-main" / "alma-master"
 
 

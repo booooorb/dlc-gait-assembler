@@ -10,14 +10,6 @@ from dlc_gait_assembly.services.alma_pipeline import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ALMA_ROOT = PROJECT_ROOT / "DLC-Gait-Analysis-main" / "alma-master"
-REAL_ALMA_PARAMETERS_CSV = PROJECT_ROOT / "tests" / "Demo_Mouse_Treadmill_30cm_s_650000_filtered_parameters.csv"
-DLC_COORDINATE_CSV = PROJECT_ROOT / "tests" / "Demo_Mouse_Treadmill_30cm_s_650000_filtered.csv"
-EDGE_CASE_REAL_ALMA_PARAMETERS_CSV = PROJECT_ROOT / "tests" / "alma_edge_cases_filtered_parameters.csv"
-EDGE_CASE_DLC_COORDINATE_CSV = PROJECT_ROOT / "tests" / "alma_edge_cases_filtered.csv"
-
-
 def test_pixels_per_cm_from_calibration_map_uses_overall_value(tmp_path):
     map_path = tmp_path / "conversion_factor_map.json"
     map_path.write_text(
@@ -65,20 +57,22 @@ def test_pixels_per_cm_from_calibration_map_can_use_view_axis_average(tmp_path):
     assert source == "view 1"
 
 
-def test_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path):
+def test_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path, alma_root, alma_fixtures_dir):
     _assert_generated_parameters_match_real_alma(
         tmp_path,
-        input_csv=DLC_COORDINATE_CSV,
-        expected_parameters_csv=REAL_ALMA_PARAMETERS_CSV,
+        alma_root=alma_root,
+        input_csv=alma_fixtures_dir / "Demo_Mouse_Treadmill_30cm_s_650000_filtered.csv",
+        expected_parameters_csv=alma_fixtures_dir / "Demo_Mouse_Treadmill_30cm_s_650000_filtered_parameters.csv",
         settings=_spontaneous_manual_50_px_per_cm_settings(),
     )
 
 
-def test_edge_case_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path):
+def test_edge_case_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path, alma_root, alma_fixtures_dir):
     _assert_generated_parameters_match_real_alma(
         tmp_path,
-        input_csv=EDGE_CASE_DLC_COORDINATE_CSV,
-        expected_parameters_csv=EDGE_CASE_REAL_ALMA_PARAMETERS_CSV,
+        alma_root=alma_root,
+        input_csv=alma_fixtures_dir / "alma_edge_cases_filtered.csv",
+        expected_parameters_csv=alma_fixtures_dir / "alma_edge_cases_filtered_parameters.csv",
         settings=_spontaneous_manual_50_px_per_cm_settings(),
     )
 
@@ -106,6 +100,7 @@ def _spontaneous_manual_50_px_per_cm_settings() -> AlmaSettings:
 def _assert_generated_parameters_match_real_alma(
     tmp_path: Path,
     *,
+    alma_root: Path,
     input_csv: Path,
     expected_parameters_csv: Path,
     settings: AlmaSettings,
@@ -116,7 +111,7 @@ def _assert_generated_parameters_match_real_alma(
     assert expected_parameters_csv.exists(), f"Missing real ALMA output fixture: {expected_parameters_csv}"
     assert input_csv.exists(), f"Missing DLC coordinate input fixture: {input_csv}"
 
-    results = run_alma_gait_analysis([input_csv], tmp_path, settings, ALMA_ROOT)
+    results = run_alma_gait_analysis([input_csv], tmp_path, settings, alma_root)
     actual_output = tmp_path / f"{input_csv.stem}_parameters.csv"
 
     assert len(results) == 1

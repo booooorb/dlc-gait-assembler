@@ -17,9 +17,9 @@ from dlc_gait_assembly.video_processing import (
 )
 
 
-FIXTURE_VIDEO = Path(__file__).with_name("2019_09_19_RW_DRUGS_23.2099782.20190919151537.mp4")
 FPS_TOLERANCE = 0.01
 PSNR_MINIMUM_DB = 32.0
+VIDEO_FIXTURE_NAME = "2019_09_19_RW_DRUGS_23.2099782.20190919151537.mp4"
 
 
 @dataclass(frozen=True)
@@ -32,13 +32,14 @@ class VideoMetadata:
     stts_entries: tuple[tuple[int, int], ...]
 
 
-def test_regional_inversion_preserves_timing_resolution_and_quality(tmp_path):
-    cv2, np = _require_video_stack()
+def test_regional_inversion_preserves_timing_resolution_and_quality(tmp_path, video_fixtures_dir):
+    fixture_video = _fixture_video(video_fixtures_dir)
+    cv2, np = _require_video_stack(fixture_video)
     edit_rect = NormalizedRect(0.1, 0.1, 0.2, 0.2)
-    source = _read_video_metadata(FIXTURE_VIDEO, cv2)
+    source = _read_video_metadata(fixture_video, cv2)
 
     result = process_video(
-        FIXTURE_VIDEO,
+        fixture_video,
         tmp_path,
         ProcessingOptions(invert_enabled=True, invert_rects=(edit_rect,)),
     )
@@ -52,17 +53,18 @@ def test_regional_inversion_preserves_timing_resolution_and_quality(tmp_path):
     assert len(output.stts_entries) == 1
 
     for frame_index in _sample_frame_indices(source.frame_count):
-        original_frame = _read_frame(FIXTURE_VIDEO, frame_index, cv2)
+        original_frame = _read_frame(fixture_video, frame_index, cv2)
         output_frame = _read_frame(result.output_path, frame_index, cv2)
         psnr = _masked_psnr(original_frame, output_frame, edit_rect, np)
         assert psnr >= PSNR_MINIMUM_DB
 
 
-def test_h264_mp4_transcode_preserves_timing_resolution_and_quality(tmp_path):
-    cv2, np = _require_video_stack()
-    source = _read_video_metadata(FIXTURE_VIDEO, cv2)
+def test_h264_mp4_transcode_preserves_timing_resolution_and_quality(tmp_path, video_fixtures_dir):
+    fixture_video = _fixture_video(video_fixtures_dir)
+    cv2, np = _require_video_stack(fixture_video)
+    source = _read_video_metadata(fixture_video, cv2)
 
-    result = process_video(FIXTURE_VIDEO, tmp_path, ProcessingOptions())
+    result = process_video(fixture_video, tmp_path, ProcessingOptions())
     output = _read_video_metadata(result.output_path, cv2)
 
     assert result.output_path.suffix == ".mp4"
@@ -74,19 +76,20 @@ def test_h264_mp4_transcode_preserves_timing_resolution_and_quality(tmp_path):
     assert len(output.stts_entries) == 1
 
     for frame_index in _sample_frame_indices(source.frame_count):
-        original_frame = _read_frame(FIXTURE_VIDEO, frame_index, cv2)
+        original_frame = _read_frame(fixture_video, frame_index, cv2)
         output_frame = _read_frame(result.output_path, frame_index, cv2)
         assert _psnr(original_frame, output_frame, np) >= PSNR_MINIMUM_DB
 
 
-def test_crop_preserves_timing_and_uses_expected_resolution(tmp_path):
-    cv2, _np = _require_video_stack()
+def test_crop_preserves_timing_and_uses_expected_resolution(tmp_path, video_fixtures_dir):
+    fixture_video = _fixture_video(video_fixtures_dir)
+    cv2, _np = _require_video_stack(fixture_video)
     crop_rect = NormalizedRect(0.1, 0.1, 0.8, 0.8)
-    source = _read_video_metadata(FIXTURE_VIDEO, cv2)
+    source = _read_video_metadata(fixture_video, cv2)
     expected_crop = normalized_to_pixel_rect(crop_rect, source.width, source.height)
 
     result = process_video(
-        FIXTURE_VIDEO,
+        fixture_video,
         tmp_path,
         ProcessingOptions(crop_enabled=True, crop_rect=crop_rect),
     )
@@ -100,9 +103,10 @@ def test_crop_preserves_timing_and_uses_expected_resolution(tmp_path):
     assert len(output.stts_entries) == 1
 
 
-def test_trim_preserves_resolution_and_fps_while_matching_requested_duration(tmp_path):
-    cv2, _np = _require_video_stack()
-    source = _read_video_metadata(FIXTURE_VIDEO, cv2)
+def test_trim_preserves_resolution_and_fps_while_matching_requested_duration(tmp_path, video_fixtures_dir):
+    fixture_video = _fixture_video(video_fixtures_dir)
+    cv2, _np = _require_video_stack(fixture_video)
+    source = _read_video_metadata(fixture_video, cv2)
     trim_ranges = (
         TrimRange(1000, 3000),
         TrimRange(4000, 5500),
@@ -111,7 +115,7 @@ def test_trim_preserves_resolution_and_fps_while_matching_requested_duration(tmp
     expected_frames = round(expected_duration * source.fps)
 
     result = process_video(
-        FIXTURE_VIDEO,
+        fixture_video,
         tmp_path,
         ProcessingOptions(trim_ranges=trim_ranges),
     )
@@ -125,9 +129,13 @@ def test_trim_preserves_resolution_and_fps_while_matching_requested_duration(tmp
     assert len(output.stts_entries) == 1
 
 
-def _require_video_stack():
-    if not FIXTURE_VIDEO.exists():
-        pytest.skip(f"Missing video fixture: {FIXTURE_VIDEO}")
+def _fixture_video(video_fixtures_dir: Path) -> Path:
+    return video_fixtures_dir / VIDEO_FIXTURE_NAME
+
+
+def _require_video_stack(fixture_video: Path):
+    if not fixture_video.exists():
+        pytest.skip(f"Missing video fixture: {fixture_video}")
     if shutil.which("ffmpeg") is None:
         pytest.skip("ffmpeg is required for video processing integration tests.")
 
