@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, QTimer, Qt, Signal
+from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
@@ -33,11 +35,14 @@ from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
 TRANSITION_CONTROL_FADE_MS = 220
 TRANSITION_CONTROL_STAGGER_MS = 14
+TRANSITION_CONTROL_RISE_PX = 12
 MAIN_MENU_STAGE_WIDTH = 1180
 WORKFLOW_PATH_WIDTH = 1112
 WORKFLOW_STEP_WIDTH = 192
 WORKFLOW_STEP_HEIGHT = 190
 WORKFLOW_CONNECTOR_WIDTH = 18
+MAIN_MENU_LOGO_HEIGHT = 38
+MAIN_MENU_LOGO_MAX_WIDTH = 150
 
 ANIMATED_CONTROL_TYPES = (
     QAbstractButton,
@@ -122,6 +127,7 @@ class MainWindow(QMainWindow):
         self._active_tool_id: str | None = None
         self._did_initial_reveal = False
         self._transition_animations: list[QPropertyAnimation] = []
+        self._transition_positions: dict[QWidget, QPoint] = {}
         self._tool_widgets: dict[str, QWidget] = {}
         self._stack = QStackedWidget()
         self._main_menu = MainMenuWidget(TOOL_SPECS)
@@ -212,6 +218,7 @@ class MainWindow(QMainWindow):
         for animation in self._transition_animations:
             animation.stop()
         self._transition_animations.clear()
+        self._restore_transition_positions()
 
         self._stack.setCurrentWidget(widget)
         self._clear_opacity_effects(widget)
@@ -228,18 +235,34 @@ class MainWindow(QMainWindow):
                 effect = QGraphicsOpacityEffect(target)
                 target.setGraphicsEffect(effect)
             effect.setOpacity(0.0)
+            end_pos = QPoint(target.pos())
+            start_pos = QPoint(end_pos.x(), end_pos.y() + TRANSITION_CONTROL_RISE_PX)
+            self._transition_positions[target] = end_pos
+            target.move(start_pos)
 
-            animation = QPropertyAnimation(effect, b"opacity", self)
-            animation.setDuration(TRANSITION_CONTROL_FADE_MS)
-            animation.setStartValue(0.0)
-            animation.setEndValue(1.0)
-            animation.setEasingCurve(QEasingCurve.InOutCubic)
-            animation.finished.connect(
+            opacity_animation = QPropertyAnimation(effect, b"opacity", self)
+            opacity_animation.setDuration(TRANSITION_CONTROL_FADE_MS)
+            opacity_animation.setStartValue(0.0)
+            opacity_animation.setEndValue(1.0)
+            opacity_animation.setEasingCurve(QEasingCurve.OutCubic)
+            opacity_animation.finished.connect(
                 lambda target=target, effect=effect: self._finish_transition_effect(target, effect)
             )
-            animation.finished.connect(lambda animation=animation: self._clear_transition_animation(animation))
-            self._transition_animations.append(animation)
-            QTimer.singleShot(index * TRANSITION_CONTROL_STAGGER_MS, animation.start)
+            opacity_animation.finished.connect(lambda animation=opacity_animation: self._clear_transition_animation(animation))
+
+            rise_animation = QPropertyAnimation(target, b"pos", self)
+            rise_animation.setDuration(TRANSITION_CONTROL_FADE_MS)
+            rise_animation.setStartValue(start_pos)
+            rise_animation.setEndValue(end_pos)
+            rise_animation.setEasingCurve(QEasingCurve.OutCubic)
+            rise_animation.finished.connect(lambda target=target: self._finish_transition_position(target))
+            rise_animation.finished.connect(lambda animation=rise_animation: self._clear_transition_animation(animation))
+
+            self._transition_animations.append(opacity_animation)
+            self._transition_animations.append(rise_animation)
+            delay_ms = index * TRANSITION_CONTROL_STAGGER_MS
+            QTimer.singleShot(delay_ms, opacity_animation.start)
+            QTimer.singleShot(delay_ms, rise_animation.start)
 
     def _transition_targets(self, widget: QWidget) -> list[QWidget]:
         targets: list[QWidget] = []
@@ -272,6 +295,20 @@ class MainWindow(QMainWindow):
         target.updateGeometry()
         target.update()
 
+    def _finish_transition_position(self, target: QWidget) -> None:
+        end_pos = self._transition_positions.pop(target, None)
+        if end_pos is not None:
+            target.move(end_pos)
+            target.updateGeometry()
+            target.update()
+
+    def _restore_transition_positions(self) -> None:
+        for target, end_pos in list(self._transition_positions.items()):
+            target.move(end_pos)
+            target.updateGeometry()
+            target.update()
+        self._transition_positions.clear()
+
     def _repaint_current_widget(self) -> None:
         widget = self._stack.currentWidget()
         if widget is not None:
@@ -303,8 +340,17 @@ class MainMenuWidget(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(44, 34, 44, 42)
-        root.setSpacing(26)
+        root.setSpacing(18)
         root.addStretch(1)
+
+        logo_row = QHBoxLayout()
+        logo_row.setContentsMargins(0, 0, 0, 0)
+        logo_row.setSpacing(22)
+        logo_row.addStretch(1)
+        logo_row.addWidget(_main_menu_logo_label("choforcelab.png"))
+        logo_row.addWidget(_main_menu_logo_label("NERVES_Logo.png"))
+        logo_row.addStretch(1)
+        root.addLayout(logo_row)
 
         stage = QFrame()
         stage.setObjectName("MenuStage")
@@ -371,6 +417,9 @@ class MainMenuWidget(QWidget):
                 font-size: 34px;
                 font-weight: 800;
             }
+            QLabel#MainMenuLogo {
+                background: transparent;
+            }
             QFrame#WorkflowPath {
                 background: transparent;
                 border: 0;
@@ -425,6 +474,27 @@ class MainMenuWidget(QWidget):
             """
             )
         )
+
+
+def _main_menu_logo_label(filename: str) -> QLabel:
+    label = QLabel()
+    label.setObjectName("MainMenuLogo")
+    label.setAlignment(Qt.AlignCenter)
+    path = Path(__file__).resolve().parents[3] / "assets" / "images" / filename
+    pixmap = QPixmap(str(path))
+    if not pixmap.isNull():
+        scale = max(1.0, QGuiApplication.primaryScreen().devicePixelRatio() if QGuiApplication.primaryScreen() is not None else 1.0)
+        scaled = pixmap.scaled(
+            round(MAIN_MENU_LOGO_MAX_WIDTH * scale),
+            round(MAIN_MENU_LOGO_HEIGHT * scale),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        scaled.setDevicePixelRatio(scale)
+        label.setPixmap(scaled)
+        label.setFixedSize(round(scaled.width() / scale), round(scaled.height() / scale))
+    return label
+
 
 class WorkflowStep(QFrame):
     clicked = Signal(str)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from dlc_gait_assembly.domain.calibration import (
     CalibrationPoint,
     CalibrationStick,
@@ -97,17 +99,33 @@ def test_calibration_report_can_use_euclidean_segment_lengths():
     assert euclidean_report.view_axis[0].mean_conversion_factor == 1 / 500
 
 
+def test_calibration_report_uses_custom_marker_interval_units():
+    sticks = [CalibrationStick("x", 1, CalibrationPoint(0, 0), CalibrationPoint(100, 0), ())]
+
+    cm_report = calculate_calibration_report(sticks, tau_percent=2.0, units_per_marker_interval=5.0, measurement_unit="cm")
+    inch_report = calculate_calibration_report(sticks, tau_percent=2.0, units_per_marker_interval=2.0, measurement_unit="inches")
+
+    assert cm_report.view_axis[0].mean_conversion_factor == 5 / 100
+    assert inch_report.view_axis[0].mean_conversion_factor == 5.08 / 100
+    assert inch_report.measurement_unit == "in"
+    assert inch_report.centimeters_per_marker_interval == 5.08
+
+
 def test_calibration_export_writes_conversion_map_and_report(tmp_path):
     sticks = _consistent_three_view_sticks()
-    report = calculate_calibration_report(sticks, tau_percent=2.0)
+    report = calculate_calibration_report(sticks, tau_percent=2.0, units_per_marker_interval=2.0, measurement_unit="inches")
 
     paths = write_calibration_conversion_export(tmp_path, sticks, report)
 
     payload = json.loads(paths["map"].read_text(encoding="utf-8"))
     assert paths["report"].exists()
-    assert payload["conversion_factor_map"]["views"]["1"]["recommended_x_centimeters_per_pixel"] == 0.01
+    assert payload["conversion_factor_map"]["views"]["1"]["recommended_x_centimeters_per_pixel"] == pytest.approx(5.08 / 100)
+    assert payload["conversion_factor_map"]["marker_interval"]["unit"] == "in"
+    assert payload["conversion_factor_map"]["marker_interval"]["centimeters"] == 5.08
     assert payload["sticks"][0]["name"] == "xline_view1"
+    assert payload["sticks"][0]["segment_pixel_lengths"] == [100.0, 100.0, 100.0]
     assert "x_cm = x_px" in paths["report"].read_text(encoding="utf-8")
+    assert "Marker gap: 2 inches (5.08 cm)" in paths["report"].read_text(encoding="utf-8")
 
 
 def _consistent_three_view_sticks() -> list[CalibrationStick]:

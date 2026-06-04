@@ -4,7 +4,7 @@ from math import hypot
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QPushButton
 
 from dlc_gait_assembly.domain.calibration import CalibrationPoint, CalibrationStick
 from dlc_gait_assembly.gui import theme
@@ -55,6 +55,12 @@ class CalibrationPreviewView(QGraphicsView):
         self._right_delete_target: DeleteTarget | None = None
         self._right_press_view_pos: QPoint | None = None
         self._fit_pending = False
+        self._reset_zoom_button = QPushButton("Reset", self.viewport())
+        self._reset_zoom_button.setObjectName("PreviewResetZoomButton")
+        self._reset_zoom_button.setToolTip("Reset zoom")
+        self._reset_zoom_button.setFixedSize(52, 24)
+        self._reset_zoom_button.clicked.connect(self.reset_zoom)
+        self._reset_zoom_button.hide()
 
     def set_frame(self, image: QImage | None) -> None:
         if image is None or image.isNull():
@@ -64,6 +70,7 @@ class CalibrationPreviewView(QGraphicsView):
             self._remove_stick_items()
             self._sticks.clear()
             self._location_failure_markers.clear()
+            self._update_reset_zoom_button()
             self.sticks_changed.emit()
             return
 
@@ -131,9 +138,11 @@ class CalibrationPreviewView(QGraphicsView):
         self._zoom = 1.0
         if not self._image_bounds.isNull():
             self._schedule_fit_to_view()
+        self._update_reset_zoom_button()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._position_reset_zoom_button()
         if self._zoom <= 1.001 and not self._image_bounds.isNull():
             self._schedule_fit_to_view()
 
@@ -170,7 +179,22 @@ class CalibrationPreviewView(QGraphicsView):
 
         self.scale(factor, factor)
         self._zoom = new_zoom
+        self._update_reset_zoom_button()
         event.accept()
+
+    def _update_reset_zoom_button(self) -> None:
+        visible = not self._image_bounds.isNull() and self._zoom > 1.001
+        self._reset_zoom_button.setVisible(visible)
+        if visible:
+            self._position_reset_zoom_button()
+            self._reset_zoom_button.raise_()
+
+    def _position_reset_zoom_button(self) -> None:
+        margin = 10
+        self._reset_zoom_button.move(
+            max(margin, self.viewport().width() - self._reset_zoom_button.width() - margin),
+            max(margin, self.viewport().height() - self._reset_zoom_button.height() - margin),
+        )
 
     def mousePressEvent(self, event) -> None:
         pos = _event_pos(event)

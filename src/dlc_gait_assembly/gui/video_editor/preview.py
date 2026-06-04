@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from dlc_gait_assembly.domain.enhancements import EnhancementSettings
 from dlc_gait_assembly.domain.regions import CropRegion, NormalizedRect
@@ -249,7 +249,7 @@ class RegionPreviewView(QGraphicsView):
         self._drag_target: str | int | None = None
         self._crop_items: dict[int, RegionRectItem] = {}
         self._invert_items: dict[int, RegionRectItem] = {}
-        self._shade_items: list[QGraphicsRectItem] = []
+        self._shade_items: list[QGraphicsPathItem] = []
         self._enhancements = EnhancementSettings()
         self._enhancement_zoom = 1.0
         self._fit_pending = False
@@ -748,7 +748,7 @@ class RegionPreviewView(QGraphicsView):
                     self._image_bounds,
                     self._on_item_changed,
                     self.delete_region,
-                    fill_alpha=56,
+                    fill_alpha=0,
                 )
                 self._scene.addItem(item)
                 self._crop_items[region_id] = item
@@ -786,6 +786,24 @@ class RegionPreviewView(QGraphicsView):
         for item in self._shade_items:
             self._scene.removeItem(item)
         self._shade_items.clear()
+
+        usable_crops = [region for region in self._crop_norms.values() if region.is_usable()]
+        if not usable_crops or self._image_bounds.isNull():
+            return
+
+        shade_path = QPainterPath()
+        shade_path.setFillRule(Qt.OddEvenFill)
+        shade_path.addRect(self._image_bounds)
+        for region in usable_crops:
+            shade_path.addRect(self._normalized_to_scene_rect(region).intersected(self._image_bounds))
+
+        item = QGraphicsPathItem(shade_path)
+        item.setPen(QPen(Qt.NoPen))
+        item.setBrush(QColor(0, 0, 0, 112))
+        item.setZValue(2)
+        item.setAcceptedMouseButtons(Qt.NoButton)
+        self._scene.addItem(item)
+        self._shade_items.append(item)
 
     def _remove_region_items(self) -> None:
         for item in [*self._crop_items.values(), *self._invert_items.values(), *self._shade_items]:

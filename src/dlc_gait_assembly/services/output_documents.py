@@ -204,6 +204,7 @@ def _calibration_report_markdown(
         "",
         f"Recommended scope: `{conversion_map['recommended_scope']}`",
         f"Recommendation: {report.recommendation}",
+        f"Marker gap: {_marker_interval_label(report)}",
         "",
         "## Overall",
         "",
@@ -232,7 +233,7 @@ def _calibration_report_markdown(
     lines.extend(["", "## Calibration Sticks", ""])
     for stick in sticks:
         lines.append(
-            f"- {stick.name}: {len(stick.centimeter_pixel_lengths())} measured 1 cm segment(s), "
+            f"- {stick.name}: {len(stick.segment_pixel_lengths())} measured {_marker_interval_label(report)} interval(s), "
             f"markers at {', '.join(f'{position:.4f}' for position in stick.ordered_marker_positions())}"
         )
 
@@ -247,6 +248,7 @@ def _stick_to_dict(stick: CalibrationStick) -> dict:
         "start": {"x": stick.start.x, "y": stick.start.y},
         "end": {"x": stick.end.x, "y": stick.end.y},
         "marker_positions": list(stick.marker_positions),
+        "segment_pixel_lengths": list(stick.segment_pixel_lengths()),
         "centimeter_pixel_lengths": list(stick.centimeter_pixel_lengths()),
     }
 
@@ -309,6 +311,12 @@ def _format_optional(value: float | None) -> str:
     if value is None:
         return "--"
     return f"{value:.8f}"
+
+
+def _marker_interval_label(report: CalibrationReport) -> str:
+    if report.measurement_unit == "in":
+        return f"{report.units_per_marker_interval:g} inches ({report.centimeters_per_marker_interval:g} cm)"
+    return f"{report.units_per_marker_interval:g} cm"
 
 
 def _status(value: bool | None) -> str:

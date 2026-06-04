@@ -39,7 +39,7 @@ class CalibrationStick:
     def marker_points(self) -> tuple[CalibrationPoint, ...]:
         return tuple(self.start.interpolate(self.end, position) for position in self.ordered_marker_positions())
 
-    def centimeter_pixel_lengths(self, use_euclidean: bool = False) -> tuple[float, ...]:
+    def segment_pixel_lengths(self, use_euclidean: bool = False) -> tuple[float, ...]:
         points = self.marker_points()
         lengths: list[float] = []
         for first, second in zip(points, points[1:]):
@@ -54,6 +54,9 @@ class CalibrationStick:
             if pixel_length > 0 and isfinite(pixel_length):
                 lengths.append(pixel_length)
         return tuple(lengths)
+
+    def centimeter_pixel_lengths(self, use_euclidean: bool = False) -> tuple[float, ...]:
+        return self.segment_pixel_lengths(use_euclidean)
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,9 @@ class ViewCalibration:
 @dataclass(frozen=True)
 class CalibrationReport:
     tau_percent: float
+    measurement_unit: str
+    units_per_marker_interval: float
+    centimeters_per_marker_interval: float
     view_axis: tuple[ViewAxisCalibration, ...]
     views: tuple[ViewCalibration, ...]
     overall_mean: float | None
@@ -131,6 +137,11 @@ def build_conversion_factor_map(report: CalibrationReport) -> dict:
             "output": "centimeters",
             "conversion_factor": "centimeters_per_pixel",
         },
+        "marker_interval": {
+            "value": report.units_per_marker_interval,
+            "unit": report.measurement_unit,
+            "centimeters": report.centimeters_per_marker_interval,
+        },
         "coordinate_system": {
             "origin": "top-left pixel origin",
             "x_direction": "right",
@@ -156,9 +167,19 @@ def calculate_calibration_report(
     sticks: list[CalibrationStick],
     tau_percent: float = 2.0,
     use_euclidean_lengths: bool = False,
+    units_per_marker_interval: float = 1.0,
+    measurement_unit: str = "cm",
 ) -> CalibrationReport:
     tau_percent = max(0.0, float(tau_percent))
-    view_axis_stats = _calculate_view_axis_stats(sticks, tau_percent, use_euclidean_lengths)
+    measurement_unit = _normalized_measurement_unit(measurement_unit)
+    units_per_marker_interval = max(0.000001, float(units_per_marker_interval))
+    centimeters_per_marker_interval = _centimeters_per_marker_interval(units_per_marker_interval, measurement_unit)
+    view_axis_stats = _calculate_view_axis_stats(
+        sticks,
+        tau_percent,
+        use_euclidean_lengths,
+        centimeters_per_marker_interval,
+    )
     view_stats = _calculate_view_stats(view_axis_stats, tau_percent)
     overall_mean = _mean([view.view_mean for view in view_stats])
 
@@ -173,6 +194,9 @@ def calculate_calibration_report(
 
     return CalibrationReport(
         tau_percent=tau_percent,
+        measurement_unit=measurement_unit,
+        units_per_marker_interval=units_per_marker_interval,
+        centimeters_per_marker_interval=centimeters_per_marker_interval,
         view_axis=view_axis_stats,
         views=view_stats,
         overall_mean=overall_mean,
@@ -188,12 +212,13 @@ def _calculate_view_axis_stats(
     sticks: list[CalibrationStick],
     tau_percent: float,
     use_euclidean_lengths: bool,
+    centimeters_per_marker_interval: float,
 ) -> tuple[ViewAxisCalibration, ...]:
     grouped: dict[tuple[int, Axis], list[float]] = {}
     for stick in sticks:
         key = (stick.view_index, stick.axis)
-        for pixel_length in stick.centimeter_pixel_lengths(use_euclidean_lengths):
-            grouped.setdefault(key, []).append(1.0 / pixel_length)
+        for pixel_length in stick.segment_pixel_lengths(use_euclidean_lengths):
+            grouped.setdefault(key, []).append(centimeters_per_marker_interval / pixel_length)
 
     stats: list[ViewAxisCalibration] = []
     for (view_index, axis), conversion_factors in sorted(grouped.items()):
@@ -311,7 +336,7 @@ def _recommendation(
     view_passed: bool | None,
 ) -> str:
     if location_passed is None:
-        return "Add calibration sticks and centimeter markers before interpreting calibration."
+        return "Add calibration sticks and markers before interpreting calibration."
     if location_passed is False:
         return "Location-dependent distortion detected. Recapture if possible or use geometric calibration."
     if axis_passed is False and view_passed is False:
@@ -323,3 +348,16 @@ def _recommendation(
     if axis_passed is None or view_passed is None:
         return "More paired x/y view measurements are needed for all SOP checks."
     return "All checks pass. A shared pixel-to-centimeter factor is acceptable."
+
+
+def _normalized_measurement_unit(unit: str) -> str:
+    normalized = unit.strip().lower()
+    if normalized in {"in", "inch", "inches"}:
+        return "in"
+    return "cm"
+
+
+def _centimeters_per_marker_interval(value: float, unit: str) -> float:
+    if unit == "in":
+        return value * 2.54
+    return value

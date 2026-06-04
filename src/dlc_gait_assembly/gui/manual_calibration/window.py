@@ -8,6 +8,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -176,8 +177,8 @@ class ManualCalibrationWidget(QWidget):
         self.x_tool_button.setToolTip("X calibration stick")
         self.y_tool_button = _make_tool_button("Y-Calibration Stick", theme.TOOL_2)
         self.y_tool_button.setToolTip("Y calibration stick")
-        self.cm_tool_button = _make_tool_button("Centimeter Marker", theme.TOOL_1)
-        self.cm_tool_button.setToolTip("Centimeter marker")
+        self.cm_tool_button = _make_tool_button("Marker", theme.TOOL_1)
+        self.cm_tool_button.setToolTip("Calibration marker")
         self.x_tool_button.setChecked(True)
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
@@ -187,12 +188,27 @@ class ManualCalibrationWidget(QWidget):
         tool_buttons_row.addWidget(self.x_tool_button)
         tool_buttons_row.addWidget(self.y_tool_button)
         tool_buttons_row.addWidget(self.cm_tool_button)
+        self.marker_gap_frame = QFrame()
+        self.marker_gap_frame.setObjectName("MarkerGapInline")
+        marker_row = QHBoxLayout(self.marker_gap_frame)
+        marker_row.setContentsMargins(6, 2, 6, 2)
+        marker_row.setSpacing(5)
+        marker_row.addWidget(QLabel("Marker Gap"))
+        self.marker_interval_spin = QDoubleSpinBox()
+        self.marker_interval_spin.setRange(0.000001, 100000.0)
+        self.marker_interval_spin.setDecimals(4)
+        self.marker_interval_spin.setSingleStep(1.0)
+        self.marker_interval_spin.setValue(1.0)
+        self.marker_interval_spin.setMaximumWidth(92)
+        self.marker_interval_spin.setToolTip("Measurement represented by the distance between two adjacent markers.")
+        marker_row.addWidget(self.marker_interval_spin)
+        self.marker_unit_combo = QComboBox()
+        self.marker_unit_combo.addItems(["cm", "inches"])
+        self.marker_unit_combo.setMaximumWidth(82)
+        self.marker_unit_combo.setToolTip("Measurement unit for the marker gap.")
+        marker_row.addWidget(self.marker_unit_combo)
+        tool_buttons_row.addWidget(self.marker_gap_frame)
         tool_buttons_row.addStretch(1)
-        self.reset_zoom_button = QPushButton("Reset")
-        self.reset_zoom_button.setObjectName("ResetButton")
-        self.reset_zoom_button.setToolTip("Reset zoom")
-        self.reset_zoom_button.setMaximumWidth(52)
-        tool_buttons_row.addWidget(self.reset_zoom_button, 0)
         tools_layout.addLayout(tool_buttons_row, 1)
         self.settings_frame = QFrame()
         self.settings_frame.setObjectName("InlineSettings")
@@ -247,9 +263,10 @@ class ManualCalibrationWidget(QWidget):
         self.x_tool_button.clicked.connect(lambda: self._set_active_tool("x"))
         self.y_tool_button.clicked.connect(lambda: self._set_active_tool("y"))
         self.cm_tool_button.clicked.connect(lambda: self._set_active_tool("cm"))
-        self.reset_zoom_button.clicked.connect(self.preview.reset_zoom)
         self.tau_spin.valueChanged.connect(self._update_calibration_results)
         self.euclidean_lengths_checkbox.toggled.connect(self._update_calibration_results)
+        self.marker_interval_spin.valueChanged.connect(self._update_calibration_results)
+        self.marker_unit_combo.currentTextChanged.connect(self._update_calibration_results)
         self.preview.sticks_changed.connect(self._on_preview_sticks_changed)
         self.preview.stick_delete_requested.connect(self._confirm_delete_calibration_stick)
         self.timeline.valueChanged.connect(self._timeline_changed)
@@ -382,11 +399,30 @@ class ManualCalibrationWidget(QWidget):
                 border-radius: 5px;
                 background: {theme.BACKGROUND};
             }
+            QFrame#MarkerGapInline {
+                border: 1px solid {theme.ACCENT};
+                border-radius: 5px;
+                background: {theme.BACKGROUND};
+            }
+            QPushButton#PreviewResetZoomButton {
+                background: {theme.BACKGROUND};
+                border: 1px solid {theme.TEXT};
+                border-radius: 5px;
+                color: {theme.TEXT};
+                font-size: 10px;
+                font-weight: 700;
+                padding: 2px 5px;
+            }
+            QPushButton#PreviewResetZoomButton:hover {
+                background: {theme.SOFT};
+                color: {theme.TEXT};
+            }
             QGraphicsView {
                 border: 1px solid {theme.ACCENT};
                 border-radius: 6px;
                 background: {theme.TEXT};
             }
+            QComboBox,
             QDoubleSpinBox {
                 border: 1px solid {theme.ACCENT};
                 border-radius: 4px;
@@ -636,7 +672,7 @@ class ManualCalibrationWidget(QWidget):
         if QMessageBox.question(
             self,
             "Clear calibration?",
-            "Remove all calibration sticks and centimeter markers from this frame?",
+            "Remove all calibration sticks and markers from this frame?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
@@ -650,7 +686,7 @@ class ManualCalibrationWidget(QWidget):
         if QMessageBox.question(
             self,
             "Delete calibration stick?",
-            f"Delete {label} and all of its centimeter markers?",
+            f"Delete {label} and all of its markers?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
@@ -675,6 +711,8 @@ class ManualCalibrationWidget(QWidget):
             sticks,
             self.tau_spin.value() if hasattr(self, "tau_spin") else 2.0,
             self.euclidean_lengths_checkbox.isChecked() if hasattr(self, "euclidean_lengths_checkbox") else False,
+            self.marker_interval_spin.value() if hasattr(self, "marker_interval_spin") else 1.0,
+            self.marker_unit_combo.currentText() if hasattr(self, "marker_unit_combo") else "cm",
         )
         if hasattr(self, "preview") and not self._loading_media:
             self._update_location_failure_highlights(report)
@@ -684,7 +722,13 @@ class ManualCalibrationWidget(QWidget):
 
     def _export_conversion_map(self) -> None:
         sticks = self._all_calibration_sticks()
-        report = calculate_calibration_report(sticks, self.tau_spin.value(), self.euclidean_lengths_checkbox.isChecked())
+        report = calculate_calibration_report(
+            sticks,
+            self.tau_spin.value(),
+            self.euclidean_lengths_checkbox.isChecked(),
+            self.marker_interval_spin.value(),
+            self.marker_unit_combo.currentText(),
+        )
         if not report.view_axis:
             QMessageBox.information(self, "No calibration data", "Create calibration sticks before exporting a conversion map.")
             return
@@ -752,13 +796,20 @@ class ManualCalibrationWidget(QWidget):
         markers_by_stick: dict[str, set[int]] = {}
         tau_percent = self.tau_spin.value()
         use_euclidean = self.euclidean_lengths_checkbox.isChecked()
+        centimeters_per_marker_interval = self.marker_interval_spin.value() * (2.54 if self.marker_unit_combo.currentText().lower().startswith("inch") else 1.0)
 
         for stick in self.preview.calibration_sticks():
             stat = stats_by_stick.get((stick.view_index, stick.axis))
             if stat is None or stat.location_passed is not False or stat.mean_conversion_factor is None:
                 continue
 
-            failed_markers = _failed_location_marker_indices(stick, stat.mean_conversion_factor, tau_percent, use_euclidean)
+            failed_markers = _failed_location_marker_indices(
+                stick,
+                stat.mean_conversion_factor,
+                tau_percent,
+                use_euclidean,
+                centimeters_per_marker_interval,
+            )
             if failed_markers:
                 markers_by_stick[_stick_key(stick.axis, stick.view_index)] = failed_markers
 
@@ -788,16 +839,18 @@ def _report_to_html(report: CalibrationReport) -> str:
     if not report.view_axis:
         return (
             f"<p style='color:{theme.TEXT};'>Create an x calibration stick, a y calibration stick, "
-            "and add centimeter markers. Stick endpoints already count as CM markers.</p>"
+            "and add markers. Stick endpoints already count as markers.</p>"
             f"<p><b>Tau:</b> {report.tau_percent:.2f}%</p>"
         )
 
+    interval_label = _marker_interval_label(report)
     parts = [
         f"<p><b>Overall:</b> {_status_text(report.overall_passed)}<br>"
         f"<span style='color:{theme.TEXT};'>{report.recommendation}</span></p>",
         f"<p><b>Tau:</b> {report.tau_percent:.2f}% &nbsp; "
-        f"<b>Axis threshold:</b> {2.0 * report.tau_percent:.2f}%</p>",
-        "<p><b>Measured 1 cm segments</b></p>",
+        f"<b>Axis threshold:</b> {2.0 * report.tau_percent:.2f}%<br>"
+        f"<b>Marker gap:</b> {interval_label}</p>",
+        f"<p><b>Measured {interval_label} intervals</b></p>",
         "<table cellspacing='0' cellpadding='3'>",
         "<tr><th align='left'>Stick</th><th align='right'>Segments</th><th align='right'>Mean px/cm</th><th align='right'>s cm/px</th></tr>",
     ]
@@ -863,11 +916,19 @@ def _percent(value: float | None) -> str:
     return f"{value:.2f}%"
 
 
+def _marker_interval_label(report: CalibrationReport) -> str:
+    unit = "inches" if report.measurement_unit == "in" else "cm"
+    if report.measurement_unit == "in":
+        return f"{report.units_per_marker_interval:g} {unit} ({report.centimeters_per_marker_interval:g} cm)"
+    return f"{report.units_per_marker_interval:g} {unit}"
+
+
 def _failed_location_marker_indices(
     stick: CalibrationStick,
     mean_conversion_factor: float,
     tau_percent: float,
     use_euclidean_lengths: bool,
+    centimeters_per_marker_interval: float,
 ) -> set[int]:
     if mean_conversion_factor <= 0 or not isfinite(mean_conversion_factor):
         return set()
@@ -880,7 +941,7 @@ def _failed_location_marker_indices(
         if pixel_length <= 0 or not isfinite(pixel_length):
             continue
 
-        conversion_factor = 1.0 / pixel_length
+        conversion_factor = centimeters_per_marker_interval / pixel_length
         delta_percent = abs((conversion_factor - mean_conversion_factor) / mean_conversion_factor) * 100.0
         if delta_percent > worst_delta:
             worst_delta = delta_percent
