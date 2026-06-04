@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QDoubleSpinBox,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -151,8 +152,16 @@ class OperationSettingsPanel(QGroupBox):
             return regions
 
         if self._active_tool == "crop":
-            if snapshot["crop"] is not None:
-                regions.append({"kind": "crop", "id": None, "title": "Crop", "edges": snapshot["crop"]})
+            for index, region in enumerate(snapshot.get("crops", []), start=1):
+                regions.append(
+                    {
+                        "kind": "crop",
+                        "id": region["id"],
+                        "title": f"Crop {index}",
+                        "name": region["name"],
+                        "edges": region,
+                    }
+                )
             return regions
 
         for index, region in enumerate(snapshot["inverts"], start=1):
@@ -169,7 +178,7 @@ class OperationSettingsPanel(QGroupBox):
 
     def _empty_state_text(self) -> str:
         if self._active_tool == "crop":
-            return "No crop region."
+            return "No crop regions."
         return "No upside-down regions."
 
     def _rebuild_enhancement_settings(self) -> None:
@@ -373,7 +382,7 @@ class OperationSettingsPanel(QGroupBox):
         if self._active_tool == "enhancements":
             return False
         if self._active_tool == "crop":
-            return snapshot["crop"] is None
+            return True
         return True
 
     def _update_controls(self, regions: list[dict]) -> None:
@@ -385,6 +394,11 @@ class OperationSettingsPanel(QGroupBox):
 
             edges = region["edges"]
             controls["dimension"].setText(f'{edges["width"]} x {edges["height"]} px')
+            name_edit = controls.get("name")
+            if name_edit is not None and not name_edit.hasFocus():
+                name_edit.blockSignals(True)
+                name_edit.setText(region.get("name", region["title"]))
+                name_edit.blockSignals(False)
             for field, spin in controls["spins"].items():
                 spin.blockSignals(True)
                 spin.setValue(edges[field])
@@ -446,6 +460,16 @@ class OperationSettingsPanel(QGroupBox):
         layout.addWidget(dimension_label, 0, 2, Qt.AlignRight)
         layout.addWidget(delete_button, 0, 3, Qt.AlignRight)
 
+        row_offset = 1
+        name_edit = None
+        if kind == "crop":
+            layout.addWidget(QLabel("Name"), 1, 0)
+            name_edit = QLineEdit(edges.get("name", title))
+            name_edit.setToolTip("Cropped region name used in output filenames when multiple crop regions exist")
+            name_edit.textChanged.connect(lambda text, rid=region_id: self._apply_crop_name(rid, text))
+            layout.addWidget(name_edit, 1, 1, 1, 3)
+            row_offset = 2
+
         spins: dict[str, QSpinBox] = {}
         fields = [
             ("left", "Left", image_width),
@@ -453,7 +477,7 @@ class OperationSettingsPanel(QGroupBox):
             ("right", "Right", image_width),
             ("bottom", "Bottom", image_height),
         ]
-        positions = [(1, 0), (1, 2), (2, 0), (2, 2)]
+        positions = [(row_offset, 0), (row_offset, 2), (row_offset + 1, 0), (row_offset + 1, 2)]
 
         for (field, label, maximum), (row, column) in zip(fields, positions):
             layout.addWidget(QLabel(label), row, column)
@@ -470,7 +494,7 @@ class OperationSettingsPanel(QGroupBox):
                 lambda _value, k=kind, rid=region_id, controls=spins: self._apply_region_edges(k, rid, controls)
             )
 
-        self._controls[(kind, region_id)] = {"spins": spins, "dimension": dimension_label}
+        self._controls[(kind, region_id)] = {"spins": spins, "dimension": dimension_label, "name": name_edit}
         self._content_layout.addWidget(frame)
 
     def _apply_region_edges(self, kind: str, region_id: int | None, controls: dict[str, QSpinBox]) -> None:
@@ -491,15 +515,20 @@ class OperationSettingsPanel(QGroupBox):
         bottom = min(bottom, image_height)
 
         if kind == "crop":
-            self._preview.set_crop_pixel_edges(left, top, right, bottom)
+            self._preview.set_crop_pixel_edges(left, top, right, bottom, region_id)
         elif region_id is not None:
             self._preview.set_invert_pixel_edges(region_id, left, top, right, bottom)
 
     def _delete_region(self, kind: str, region_id: int | None) -> None:
-        if kind == "crop":
-            self._preview.delete_region("crop")
+        if kind == "crop" and region_id is not None:
+            self._preview.delete_region(f"crop:{region_id}")
         elif region_id is not None:
             self._preview.delete_region(f"invert:{region_id}")
+
+    def _apply_crop_name(self, region_id: int | None, name: str) -> None:
+        if self._building or region_id is None:
+            return
+        self._preview.set_crop_region_name(region_id, name)
 
 
 def _format_ms(ms: int) -> str:

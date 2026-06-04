@@ -52,7 +52,14 @@ class VideoEditorWidget(QWidget):
         self._capture = None
         self._current_video: Path | None = None
         self._duration_ms = 0
+        self._fps = 0.0
+        self._frame_count = 0
         self._loading_slider = False
+        self._pending_frame_ms: int | None = None
+        self._frame_load_timer = QTimer(self)
+        self._frame_load_timer.setSingleShot(True)
+        self._frame_load_timer.setInterval(35)
+        self._frame_load_timer.timeout.connect(self._load_pending_frame)
         self._processing_thread: VideoProcessingThread | None = None
         self._processing_errors: list[str] = []
         self._processing_failures: list[tuple[str, str]] = []
@@ -82,6 +89,9 @@ class VideoEditorWidget(QWidget):
 
     def release_resources(self) -> None:
         self._release_capture()
+        self._duration_ms = 0
+        if hasattr(self, "preview"):
+            self.preview.set_frame(None)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -216,6 +226,7 @@ class VideoEditorWidget(QWidget):
         self.trim_tool_button.clicked.connect(lambda: self._set_active_tool("trim"))
         self.process_button.clicked.connect(self._process_all_videos)
         self.timeline.valueChanged.connect(self._timeline_changed)
+        self.timeline.sliderReleased.connect(self._flush_pending_frame)
         self.timeline.trim_active_changed.connect(self._on_trim_active_changed)
         self.timeline.trim_range_changed.connect(self._on_trim_range_changed)
         self.preview.operation_enabled_requested.connect(self._enable_operation_from_preview)
@@ -485,7 +496,7 @@ class VideoEditorWidget(QWidget):
                 text-align: center;
             }
             QProgressBar::chunk {
-                background: {theme.TEXT};
+                background: #F79B72;
                 border-radius: 4px;
             }
             """
@@ -615,9 +626,9 @@ class VideoEditorWidget(QWidget):
         requested_ms = self.timeline.value()
         self._capture = capture
         self._current_video = path
-        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        self._duration_ms = int((frame_count / fps) * 1000) if fps > 0 and frame_count > 0 else 0
+        self._fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        self._frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        self._duration_ms = int((self._frame_count / self._fps) * 1000) if self._fps > 0 and self._frame_count > 0 else 0
         self.preview_title.setText(path.name)
         self.timeline.setRange(0, max(0, self._duration_ms))
         self.timeline.setSingleStep(100)
@@ -630,13 +641,38 @@ class VideoEditorWidget(QWidget):
     def _timeline_changed(self, value: int) -> None:
         if self._loading_slider:
             return
-        self._load_frame_at(value)
+        self._queue_frame_at(value)
+
+    def _queue_frame_at(self, ms: int) -> None:
+        self._pending_frame_ms = int(ms)
+        if self.timeline.isSliderDown():
+            if not self._frame_load_timer.isActive():
+                self._frame_load_timer.start()
+            return
+
+        self._flush_pending_frame()
+
+    def _flush_pending_frame(self) -> None:
+        self._frame_load_timer.stop()
+        self._load_pending_frame()
+
+    def _load_pending_frame(self) -> None:
+        if self._pending_frame_ms is None:
+            return
+
+        ms = self._pending_frame_ms
+        self._pending_frame_ms = None
+        self._load_frame_at(ms)
 
     def _load_frame_at(self, ms: int) -> None:
         if self._capture is None or cv2 is None:
             return
 
-        self._capture.set(cv2.CAP_PROP_POS_MSEC, float(ms))
+        if self._fps > 0 and self._frame_count > 0:
+            frame_index = max(0, min(self._frame_count - 1, int(round((ms / 1000.0) * self._fps))))
+            self._capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        else:
+            self._capture.set(cv2.CAP_PROP_POS_MSEC, float(ms))
         ok, frame = self._capture.read()
         if not ok:
             frame_count = int(self._capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
@@ -649,7 +685,7 @@ class VideoEditorWidget(QWidget):
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         height, width, channels = rgb.shape
-        image = QImage(rgb.data, width, height, channels * width, QImage.Format_RGB888).copy()
+        image = QImage(rgb.data, width, height, channels * width, QImage.Format_RGB888)
         self.preview.set_frame(image)
         self.time_label.setText(f"{_format_ms(ms)} / {_format_ms(self._duration_ms)}")
 
@@ -780,8 +816,8 @@ class VideoEditorWidget(QWidget):
             return
 
         options = ProcessingOptions(
-            crop_enabled=self.preview.crop_region() is not None,
-            crop_rect=self.preview.crop_region(),
+            crop_enabled=bool(self.preview.crop_regions()),
+            crop_regions=self.preview.crop_regions(),
             invert_enabled=bool(self.preview.invert_regions()),
             invert_rects=tuple(self.preview.invert_regions()),
             enhancements=self.preview.enhancement_settings(),
@@ -826,9 +862,10 @@ class VideoEditorWidget(QWidget):
     def _on_file_started(self, index: int, total: int, name: str) -> None:
         self.progress.setFormat(f"{index} / {total}")
 
-    def _on_file_finished(self, input_path: str, output_path: str) -> None:
+    def _on_file_finished(self, input_path: str, output_paths) -> None:
         self.progress.setValue(self.progress.value() + 1)
-        self._processing_outputs.append((input_path, output_path))
+        for output_path in output_paths:
+            self._processing_outputs.append((input_path, str(output_path)))
 
     def _on_file_failed(self, input_path: str, message: str) -> None:
         self.progress.setValue(self.progress.value() + 1)
@@ -914,10 +951,15 @@ class VideoEditorWidget(QWidget):
         return output_root
 
     def _release_capture(self) -> None:
+        if hasattr(self, "_frame_load_timer"):
+            self._frame_load_timer.stop()
+        self._pending_frame_ms = None
         if self._capture is not None:
             self._capture.release()
             self._capture = None
         self._current_video = None
+        self._fps = 0.0
+        self._frame_count = 0
 
 
 def _make_tool_button(text: str, color: str) -> QToolButton:

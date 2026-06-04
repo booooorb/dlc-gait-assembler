@@ -36,5 +36,11 @@ class PixelRect:
     height: int
 
 
+@dataclass(frozen=True)
+class CropRegion:
+    name: str
+    rect: NormalizedRect
+
+
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))

@@ -15,6 +15,7 @@ DeleteTarget = tuple[str, str | int]
 _X_COLOR = QColor(theme.TOOL_3)
 _Y_COLOR = QColor(theme.TOOL_2)
 _CM_COLOR = QColor(theme.TOOL_1)
+_LOCATION_FAIL_COLOR = QColor(theme.STATUS_ERROR)
 _ACTIVE_Z = 8.0
 _BASE_Z = 5.0
 _MAX_ZOOM = 32.0
@@ -46,6 +47,7 @@ class CalibrationPreviewView(QGraphicsView):
         self._zoom = 1.0
         self._sticks: dict[str, CalibrationStick] = {}
         self._stick_items: dict[str, CalibrationStickItem] = {}
+        self._location_failure_markers: dict[str, set[int]] = {}
         self._drag_start: QPointF | None = None
         self._drag_start_view_pos: QPoint | None = None
         self._drag_axis: str | None = None
@@ -61,17 +63,26 @@ class CalibrationPreviewView(QGraphicsView):
             self._scene.setSceneRect(QRectF())
             self._remove_stick_items()
             self._sticks.clear()
+            self._location_failure_markers.clear()
             self.sticks_changed.emit()
             return
 
-        copied = image.copy()
-        self._image_bounds = QRectF(0, 0, copied.width(), copied.height())
-        self._scene.setSceneRect(self._image_bounds)
-        self._image_item.setPixmap(QPixmap.fromImage(copied))
+        same_size = (
+            not self._image_bounds.isNull()
+            and int(round(self._image_bounds.width())) == image.width()
+            and int(round(self._image_bounds.height())) == image.height()
+        )
+        self._image_bounds = QRectF(0, 0, image.width(), image.height())
+        if not same_size:
+            self._scene.setSceneRect(self._image_bounds)
+        self._image_item.setPixmap(QPixmap.fromImage(image))
         self._image_item.setPos(0, 0)
         self._sync_items()
-        self.reset_zoom()
-        self.sticks_changed.emit()
+        if same_size:
+            if self._zoom <= 1.001:
+                self._schedule_fit_to_view()
+        else:
+            self.reset_zoom()
 
     def set_mode(self, mode: str) -> None:
         if mode not in {"x", "y", "cm"}:
@@ -82,6 +93,7 @@ class CalibrationPreviewView(QGraphicsView):
     def clear_calibration(self) -> None:
         self._remove_stick_items()
         self._sticks.clear()
+        self._location_failure_markers.clear()
         self._drag_start = None
         self._drag_start_view_pos = None
         self._drag_axis = None
@@ -93,10 +105,22 @@ class CalibrationPreviewView(QGraphicsView):
     def calibration_sticks(self) -> list[CalibrationStick]:
         return sorted(self._sticks.values(), key=lambda stick: (stick.view_index, stick.axis))
 
+    def set_calibration_sticks(self, sticks: list[CalibrationStick] | tuple[CalibrationStick, ...]) -> None:
+        self._remove_stick_items()
+        self._sticks = {_stick_key(stick.axis, stick.view_index): stick for stick in sticks}
+        self._location_failure_markers = {key: markers for key, markers in self._location_failure_markers.items() if key in self._sticks}
+        self._sync_items()
+        self.sticks_changed.emit()
+
+    def set_location_failure_markers(self, markers_by_stick: dict[str, set[int]] | dict[str, tuple[int, ...]]) -> None:
+        self._location_failure_markers = {key: set(markers) for key, markers in markers_by_stick.items() if key in self._sticks}
+        self._sync_items()
+
     def delete_stick(self, key: str) -> None:
         if key not in self._sticks:
             return
         self._sticks.pop(key)
+        self._location_failure_markers.pop(key, None)
         item = self._stick_items.pop(key, None)
         if item is not None:
             self._scene.removeItem(item)
@@ -271,6 +295,7 @@ class CalibrationPreviewView(QGraphicsView):
             else:
                 item.set_bounds(self._image_bounds)
                 item.set_stick(stick)
+            item.set_location_failure_marker_indices(self._location_failure_markers.get(key, set()))
 
     def _remove_stick_items(self) -> None:
         for item in self._stick_items.values():
@@ -375,6 +400,7 @@ class CalibrationStickItem(QGraphicsItem):
         self._bounds = QRectF(bounds)
         self._on_changed = on_changed
         self._drag_mode: str | int | None = None
+        self._location_failure_marker_indices: set[int] = set()
         self._press_pos = QPointF()
         self._press_stick = stick
         self.setZValue(_BASE_Z)
@@ -393,6 +419,10 @@ class CalibrationStickItem(QGraphicsItem):
 
     def set_bounds(self, bounds: QRectF) -> None:
         self._bounds = QRectF(bounds)
+
+    def set_location_failure_marker_indices(self, marker_indices: set[int]) -> None:
+        self._location_failure_marker_indices = set(marker_indices)
+        self.update()
 
     def boundingRect(self) -> QRectF:
         start = _to_qpoint(self._stick.start)
@@ -427,11 +457,13 @@ class CalibrationStickItem(QGraphicsItem):
         painter.setPen(QPen(color, line_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         painter.drawLine(start, end)
 
-        for point in [start, end]:
-            self._paint_handle(painter, point, color, radius, scale)
+        ordered_markers = self._marker_qpoints(include_ends=True)
+        end_marker_index = len(ordered_markers) - 1
+        self._paint_handle(painter, start, color, radius, scale, 0 in self._location_failure_marker_indices)
+        self._paint_handle(painter, end, color, radius, scale, end_marker_index in self._location_failure_marker_indices)
 
-        for marker_point in self._marker_qpoints(include_ends=False):
-            self._paint_handle(painter, marker_point, _CM_COLOR, radius * 0.88, scale)
+        for marker_index, marker_point in enumerate(self._marker_qpoints(include_ends=False), start=1):
+            self._paint_handle(painter, marker_point, _CM_COLOR, radius * 0.88, scale, marker_index in self._location_failure_marker_indices)
 
         self._paint_label(painter, color, start, end)
         painter.restore()
@@ -581,10 +613,19 @@ class CalibrationStickItem(QGraphicsItem):
         painter.setPen(color)
         painter.drawText(rect, Qt.AlignCenter, text)
 
-    def _paint_handle(self, painter: QPainter, point: QPointF, color: QColor, radius: float, scale: float) -> None:
+    def _paint_handle(self, painter: QPainter, point: QPointF, color: QColor, radius: float, scale: float, failed: bool = False) -> None:
         cross = max(radius * 2.2, 8.0 / scale)
         halo_pen_width = max(1.2, 2.1 / scale)
         mark_pen_width = max(0.8, 1.0 / scale)
+
+        if failed:
+            painter.setBrush(Qt.NoBrush)
+            for multiplier, alpha in ((6.0, 54), (4.2, 92), (2.7, 150)):
+                glow = QColor(_LOCATION_FAIL_COLOR)
+                glow.setAlpha(alpha)
+                glow_radius = max(radius * multiplier, multiplier * 3.0 / scale)
+                painter.setPen(QPen(glow, max(1.6, 2.4 / scale)))
+                painter.drawEllipse(point, glow_radius, glow_radius)
 
         painter.setPen(QPen(QColor(theme.BACKGROUND), halo_pen_width))
         painter.setBrush(color)

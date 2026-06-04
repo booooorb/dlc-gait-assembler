@@ -78,10 +78,10 @@ def _video_processing_manifest(
     trim_ranges_by_path: dict[str, tuple[TrimRange, ...]],
     generated_at: datetime,
 ) -> dict:
-    output_by_input = {
-        str(Path(input_path).expanduser().resolve()): str(Path(output_path).expanduser().resolve())
-        for input_path, output_path in outputs
-    }
+    outputs_by_input: dict[str, list[str]] = {}
+    for input_path, output_path in outputs:
+        key = str(Path(input_path).expanduser().resolve())
+        outputs_by_input.setdefault(key, []).append(str(Path(output_path).expanduser().resolve()))
     failure_by_input = {str(Path(input_path).expanduser().resolve()): message for input_path, message in failures}
     trims_by_input = {
         str(Path(input_path).expanduser().resolve()): ranges for input_path, ranges in trim_ranges_by_path.items()
@@ -90,10 +90,12 @@ def _video_processing_manifest(
     files = []
     for path in video_paths:
         input_path = str(Path(path).expanduser().resolve())
+        output_paths = outputs_by_input.get(input_path, [])
         files.append(
             {
                 "input": input_path,
-                "output": output_by_input.get(input_path),
+                "output": output_paths[0] if output_paths else None,
+                "outputs": output_paths,
                 "status": "failed" if input_path in failure_by_input else "completed",
                 "error": failure_by_input.get(input_path),
                 "trim_ranges": [_trim_to_dict(trim) for trim in trims_by_input.get(input_path, ())],
@@ -109,7 +111,11 @@ def _video_processing_manifest(
             "preset": options.preset,
         },
         "operations": {
-            "crop": _rect_to_dict(options.crop_rect) if options.crop_enabled and options.crop_rect else None,
+            "crop": _rect_to_dict(options.effective_crop_regions()[0].rect) if options.effective_crop_regions() else None,
+            "crop_regions": [
+                {"name": region.name, "rect": _rect_to_dict(region.rect)}
+                for region in options.effective_crop_regions()
+            ],
             "invert_regions": [_rect_to_dict(rect) for rect in options.effective_invert_rects()]
             if options.invert_enabled
             else [],
@@ -118,7 +124,8 @@ def _video_processing_manifest(
         },
         "counts": {
             "requested": len(video_paths),
-            "completed": len(outputs),
+            "completed": len(video_paths) - len(failures),
+            "outputs": len(outputs),
             "failed": len(failures),
         },
         "files": files,
@@ -140,7 +147,7 @@ def _video_processing_summary_markdown(manifest: dict) -> str:
         "",
         "## Operations",
         "",
-        f"- Crop: {_format_rect(operations['crop'])}",
+        f"- Crop: {_format_crop_operation(operations)}",
         f"- Upside-down regions: {len(operations['invert_regions'])}",
         f"- Enhancements: {_format_enhancements(operations['enhancements'])}",
         "- Trim: stored per video below",
@@ -153,8 +160,13 @@ def _video_processing_summary_markdown(manifest: dict) -> str:
         lines.append(f"### {Path(file_info['input']).name}")
         lines.append("")
         lines.append(f"- Input: `{file_info['input']}`")
-        if file_info["output"]:
+        output_paths = file_info.get("outputs") or ([file_info["output"]] if file_info["output"] else [])
+        if len(output_paths) == 1:
             lines.append(f"- Output: `{file_info['output']}`")
+        elif output_paths:
+            lines.append("- Outputs:")
+            for output_path in output_paths:
+                lines.append(f"  - `{output_path}`")
         lines.append(f"- Status: {file_info['status']}")
         if file_info["error"]:
             lines.append(f"- Error: {file_info['error']}")
@@ -271,6 +283,15 @@ def _format_rect(rect: dict | None) -> str:
     if rect is None:
         return "none"
     return f"x={rect['x']:.4f}, y={rect['y']:.4f}, width={rect['width']:.4f}, height={rect['height']:.4f}"
+
+
+def _format_crop_operation(operations: dict) -> str:
+    crop_regions = operations.get("crop_regions") or []
+    if not crop_regions:
+        return "none"
+    if len(crop_regions) == 1:
+        return _format_rect(crop_regions[0]["rect"])
+    return ", ".join(f"{region['name']} ({_format_rect(region['rect'])})" for region in crop_regions)
 
 
 def _format_enhancements(settings: dict) -> str:

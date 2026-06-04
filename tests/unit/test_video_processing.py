@@ -1,12 +1,18 @@
+from pathlib import Path
+
 from dlc_gait_assembly.video_processing import (
+    CropRegion,
     EnhancementSettings,
     NormalizedRect,
     ProcessingOptions,
     TrimRange,
+    VideoInfo,
     build_filter_graph,
     normalized_to_pixel_rect,
     output_path_for_input,
+    process_video_outputs,
 )
+from dlc_gait_assembly.services import ffmpeg as ffmpeg_module
 from dlc_gait_assembly.services.ffmpeg import build_processing_command
 from dlc_gait_assembly.services.output_documents import write_video_processing_session_documents
 
@@ -25,6 +31,15 @@ def test_build_filter_graph_with_crop_and_invert():
         "[base_0][flipped_0]overlay=480:270[v_inverted_0];"
         "[v_inverted_0]crop=1536:864:192:108,format=yuv420p[vout]"
     )
+
+
+def test_build_filter_graph_uses_single_named_crop_region():
+    options = ProcessingOptions(
+        crop_enabled=True,
+        crop_regions=(CropRegion("Front Paw", NormalizedRect(0.1, 0.1, 0.8, 0.8)),),
+    )
+
+    assert build_filter_graph(1920, 1080, options) == "[0:v]crop=1536:864:192:108,format=yuv420p[vout]"
 
 
 def test_build_filter_graph_with_multiple_invert_regions():
@@ -189,6 +204,58 @@ def test_output_path_converts_non_mp4_inputs_to_mp4(tmp_path):
     assert output_path.name == "clip_processed.mp4"
 
 
+def test_output_path_appends_crop_region_name_only_when_requested(tmp_path):
+    input_path = tmp_path / "clip.mp4"
+    input_path.write_bytes(b"not a real video")
+
+    single_region_output = output_path_for_input(input_path, tmp_path, "Front Paw", include_crop_region_name=False)
+    multi_region_output = output_path_for_input(input_path, tmp_path, "Front Paw", include_crop_region_name=True)
+
+    assert single_region_output.name == "clip_processed.mp4"
+    assert multi_region_output.name == "clip_processed_Front_Paw.mp4"
+
+
+def test_process_video_outputs_writes_multiple_crop_regions_to_region_folders(tmp_path, monkeypatch):
+    input_path = tmp_path / "clip.mp4"
+    input_path.write_bytes(b"not a real video")
+
+    monkeypatch.setattr(ffmpeg_module.shutil, "which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setattr(
+        ffmpeg_module,
+        "probe_video",
+        lambda path: VideoInfo(width=1000, height=800, fps=30.0, frame_count=300, duration_seconds=10.0),
+    )
+
+    def fake_run(command, capture_output=True, text=True, check=False):
+        class Completed:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Completed()
+
+    monkeypatch.setattr(ffmpeg_module.subprocess, "run", fake_run)
+
+    results = process_video_outputs(
+        input_path,
+        tmp_path / "session",
+        ProcessingOptions(
+            crop_enabled=True,
+            crop_regions=(
+                CropRegion("Front Paw", NormalizedRect(0.0, 0.0, 0.4, 0.4)),
+                CropRegion("Rear Paw", NormalizedRect(0.5, 0.0, 0.4, 0.4)),
+            ),
+        ),
+    )
+
+    assert [result.output_path.relative_to(tmp_path / "session") for result in results] == [
+        Path("Front_Paw") / "clip_processed.mp4",
+        Path("Rear_Paw") / "clip_processed.mp4",
+    ]
+    assert (tmp_path / "session" / "Front_Paw").is_dir()
+    assert (tmp_path / "session" / "Rear_Paw").is_dir()
+
+
 def test_processing_command_exports_h264_mp4(tmp_path):
     command = build_processing_command(
         ffmpeg_path="/usr/bin/ffmpeg",
@@ -221,7 +288,10 @@ def test_video_processing_session_documents_describe_outputs_and_edits(tmp_path)
 
     options = ProcessingOptions(
         crop_enabled=True,
-        crop_rect=NormalizedRect(0.1, 0.2, 0.3, 0.4),
+        crop_regions=(
+            CropRegion("Front", NormalizedRect(0.1, 0.2, 0.3, 0.4)),
+            CropRegion("Rear", NormalizedRect(0.5, 0.2, 0.3, 0.4)),
+        ),
         invert_enabled=True,
         invert_rects=(NormalizedRect(0.5, 0.5, 0.2, 0.2),),
         trim_ranges=(TrimRange(1000, 3000),),
@@ -243,5 +313,42 @@ def test_video_processing_session_documents_describe_outputs_and_edits(tmp_path)
     assert '"video_codec": "H.264"' in manifest
     assert '"container": "mp4"' in manifest
     assert '"completed": 1' in manifest
+    assert '"outputs": 1' in manifest
+    assert '"crop_regions"' in manifest
     assert "Upside-down regions: 1" in summary
+    assert "Front" in summary
+    assert "Rear" in summary
     assert "1000 ms to 3000 ms" in summary
+
+
+def test_video_processing_session_documents_keep_multiple_outputs_per_input(tmp_path):
+    input_path = tmp_path / "clip.avi"
+    output_dir = tmp_path / "session"
+    front_output = output_dir / "clip_processed_Front.mp4"
+    rear_output = output_dir / "clip_processed_Rear.mp4"
+    input_path.write_bytes(b"not a real video")
+    output_dir.mkdir()
+    front_output.write_bytes(b"not a real output")
+    rear_output.write_bytes(b"not a real output")
+
+    paths = write_video_processing_session_documents(
+        output_dir,
+        [input_path],
+        [(str(input_path), str(front_output)), (str(input_path), str(rear_output))],
+        [],
+        ProcessingOptions(
+            crop_enabled=True,
+            crop_regions=(
+                CropRegion("Front", NormalizedRect(0.1, 0.2, 0.3, 0.4)),
+                CropRegion("Rear", NormalizedRect(0.5, 0.2, 0.3, 0.4)),
+            ),
+        ),
+        {},
+    )
+
+    manifest = paths["manifest"].read_text(encoding="utf-8")
+    summary = paths["summary"].read_text(encoding="utf-8")
+    assert '"outputs": 2' in manifest
+    assert str(front_output.resolve()) in manifest
+    assert str(rear_output.resolve()) in manifest
+    assert "- Outputs:" in summary

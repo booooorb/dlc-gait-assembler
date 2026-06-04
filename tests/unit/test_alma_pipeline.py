@@ -77,6 +77,16 @@ def test_edge_case_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_c
     )
 
 
+def test_treadmill_demo_settings_match_real_alma_parameters_csv(tmp_path, alma_root, alma_fixtures_dir):
+    _assert_generated_parameters_match_real_alma(
+        tmp_path,
+        alma_root=alma_root,
+        input_csv=alma_fixtures_dir / "Demo_Mouse_Treadmill_30cm_s_650000_filtered.csv",
+        expected_parameters_csv=alma_fixtures_dir / "Treadmill(REAL)_30cm_s_650000_filtered_parameters.csv",
+        settings=_treadmill_real_alma_demo_settings(),
+    )
+
+
 def _spontaneous_manual_50_px_per_cm_settings() -> AlmaSettings:
     return AlmaSettings(
         analysis_type="Spontaneous walking",
@@ -93,6 +103,26 @@ def _spontaneous_manual_50_px_per_cm_settings() -> AlmaSettings:
         step_height_max_cm=2.0,
         stride_length_min_cm=0.0,
         stride_length_max_cm=8.0,
+        generate_stickplot=False,
+    )
+
+
+def _treadmill_real_alma_demo_settings() -> AlmaSettings:
+    return AlmaSettings(
+        analysis_type="Treadmill",
+        treadmill_speed_cm_s=30.0,
+        frame_rate=120.0,
+        calibration_method="reference",
+        reference_segment="ankle_toe",
+        reference_length_cm=1.50,
+        right_to_left="auto",
+        drag_clearance_cm=0.12,
+        drag_min_consecutive_frames=5,
+        filter_cutoff=5.0,
+        step_height_min_cm=0.0,
+        step_height_max_cm=5.0,
+        stride_length_min_cm=0.0,
+        stride_length_max_cm=20.0,
         generate_stickplot=False,
     )
 

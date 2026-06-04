@@ -4,9 +4,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
 import subprocess
+import re
 
 from dlc_gait_assembly.domain.enhancements import EnhancementSettings
-from dlc_gait_assembly.domain.regions import NormalizedRect, PixelRect
+from dlc_gait_assembly.domain.regions import CropRegion, NormalizedRect, PixelRect
 from dlc_gait_assembly.domain.trimming import TrimRange
 from dlc_gait_assembly.services.video_io import probe_video
 
@@ -15,6 +16,7 @@ from dlc_gait_assembly.services.video_io import probe_video
 class ProcessingOptions:
     crop_enabled: bool = False
     crop_rect: NormalizedRect | None = None
+    crop_regions: tuple[CropRegion, ...] = ()
     invert_enabled: bool = False
     invert_rect: NormalizedRect | None = None
     invert_rects: tuple[NormalizedRect, ...] = ()
@@ -24,9 +26,18 @@ class ProcessingOptions:
     preset: str = "slow"
 
     def has_work(self) -> bool:
-        has_crop = self.crop_enabled and self.crop_rect is not None and self.crop_rect.is_usable()
+        has_crop = bool(self.effective_crop_regions())
         has_invert = self.invert_enabled and any(rect.is_usable() for rect in self.effective_invert_rects())
         return has_crop or has_invert or self.enhancements.is_enabled() or self.has_trim()
+
+    def effective_crop_regions(self) -> tuple[CropRegion, ...]:
+        if not self.crop_enabled:
+            return ()
+        if self.crop_regions:
+            return tuple(region for region in self.crop_regions if region.rect.is_usable())
+        if self.crop_rect is not None and self.crop_rect.is_usable():
+            return (CropRegion("Crop", self.crop_rect),)
+        return ()
 
     def effective_invert_rects(self) -> tuple[NormalizedRect, ...]:
         if self.invert_rects:
@@ -44,6 +55,7 @@ class ProcessingResult:
     input_path: Path
     output_path: Path
     command: list[str]
+    crop_region_name: str | None = None
 
 
 def ffmpeg_available() -> bool:
@@ -80,6 +92,13 @@ def _has_audio_stream(input_path: Path, ffmpeg_path: str | None = None) -> bool:
 
 
 def process_video(input_path: str | Path, output_dir: str | Path, options: ProcessingOptions) -> ProcessingResult:
+    results = process_video_outputs(input_path, output_dir, options)
+    if not results:
+        raise RuntimeError("No video outputs were produced.")
+    return results[0]
+
+
+def process_video_outputs(input_path: str | Path, output_dir: str | Path, options: ProcessingOptions) -> list[ProcessingResult]:
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path is None:
         raise RuntimeError("ffmpeg was not found. Install it with conda-forge before processing videos.")
@@ -89,14 +108,71 @@ def process_video(input_path: str | Path, output_dir: str | Path, options: Proce
     output_dir.mkdir(parents=True, exist_ok=True)
 
     info = probe_video(input_path)
+    crop_regions = options.effective_crop_regions()
+    use_crop_region_folders = len(crop_regions) > 1
+    output_jobs: list[tuple[ProcessingOptions, str | None, bool]] = []
+    if crop_regions:
+        for crop_region in crop_regions:
+            output_jobs.append(
+                (
+                    ProcessingOptions(
+                        crop_enabled=True,
+                        crop_rect=crop_region.rect,
+                        invert_enabled=options.invert_enabled,
+                        invert_rect=options.invert_rect,
+                        invert_rects=options.invert_rects,
+                        enhancements=options.enhancements,
+                        trim_ranges=options.trim_ranges,
+                        crf=options.crf,
+                        preset=options.preset,
+                    ),
+                    crop_region.name,
+                    use_crop_region_folders,
+                )
+            )
+    else:
+        output_jobs.append((options, None, False))
+
+    results: list[ProcessingResult] = []
     include_trim_audio = options.has_trim() and _has_audio_stream(input_path, ffmpeg_path)
+    for job_options, crop_region_name, use_crop_region_folder in output_jobs:
+        job_output_dir = output_dir
+        if use_crop_region_folder:
+            job_output_dir = output_dir / _sanitize_output_suffix(crop_region_name or "crop")
+        result = _process_video_output(
+            ffmpeg_path,
+            input_path,
+            job_output_dir,
+            info.width,
+            info.height,
+            job_options,
+            include_trim_audio,
+            crop_region_name,
+            False,
+        )
+        results.append(result)
+
+    return results
+
+
+def _process_video_output(
+    ffmpeg_path: str,
+    input_path: Path,
+    output_dir: Path,
+    source_width: int,
+    source_height: int,
+    options: ProcessingOptions,
+    include_trim_audio: bool,
+    crop_region_name: str | None,
+    include_crop_region_name: bool,
+) -> ProcessingResult:
     filter_graph = build_filter_graph(
-        info.width,
-        info.height,
+        source_width,
+        source_height,
         options,
         include_audio=include_trim_audio,
     )
-    output_path = output_path_for_input(input_path, output_dir)
+    output_path = output_path_for_input(input_path, output_dir, crop_region_name, include_crop_region_name)
 
     command = build_processing_command(
         ffmpeg_path=ffmpeg_path,
@@ -113,7 +189,7 @@ def process_video(input_path: str | Path, output_dir: str | Path, options: Proce
         stderr = completed.stderr.strip() or completed.stdout.strip() or "ffmpeg failed without an error message."
         raise RuntimeError(stderr[-3000:])
 
-    return ProcessingResult(input_path=input_path, output_path=output_path, command=command)
+    return ProcessingResult(input_path=input_path, output_path=output_path, command=command, crop_region_name=crop_region_name)
 
 
 def build_processing_command(
@@ -195,8 +271,13 @@ def build_filter_graph(
 
     trim_ranges = _normalized_trim_ranges(options.trim_ranges)
 
-    if options.crop_enabled and options.crop_rect is not None and options.crop_rect.is_usable():
-        crop = normalized_to_pixel_rect(options.crop_rect, source_width, source_height)
+    crop_rect = options.crop_rect
+    crop_regions = options.effective_crop_regions()
+    if crop_rect is None and len(crop_regions) == 1:
+        crop_rect = crop_regions[0].rect
+
+    if options.crop_enabled and crop_rect is not None and crop_rect.is_usable():
+        crop = normalized_to_pixel_rect(crop_rect, source_width, source_height)
         if trim_ranges:
             cropped = "[v_cropped]"
             parts.append(f"{current}crop={crop.width}:{crop.height}:{crop.x}:{crop.y}{cropped}")
@@ -376,13 +457,28 @@ def _unique_output_path(path: Path) -> Path:
     raise RuntimeError(f"Could not create a unique output path for {path}")
 
 
-def output_path_for_input(input_path: str | Path, output_dir: str | Path) -> Path:
+def output_path_for_input(
+    input_path: str | Path,
+    output_dir: str | Path,
+    crop_region_name: str | None = None,
+    include_crop_region_name: bool = False,
+) -> Path:
     input_path = Path(input_path).expanduser().resolve()
     output_dir = Path(output_dir).expanduser().resolve()
-    output_path = _unique_output_path(output_dir / f"{input_path.stem}_processed.mp4")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ""
+    if include_crop_region_name:
+        suffix = f"_{_sanitize_output_suffix(crop_region_name or 'crop')}"
+    output_path = _unique_output_path(output_dir / f"{input_path.stem}_processed{suffix}.mp4")
     if output_path == input_path:
         raise RuntimeError("Refusing to overwrite the original input video.")
     return output_path
+
+
+def _sanitize_output_suffix(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    sanitized = re.sub(r"_+", "_", sanitized).strip("._-")
+    return sanitized or "crop"
 
 
 def _clamp_int(value: int, minimum: int, maximum: int) -> int:

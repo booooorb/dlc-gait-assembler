@@ -5,7 +5,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from dlc_gait_assembly.domain.enhancements import EnhancementSettings
-from dlc_gait_assembly.domain.regions import NormalizedRect
+from dlc_gait_assembly.domain.regions import CropRegion, NormalizedRect
 from dlc_gait_assembly.gui import theme
 
 try:
@@ -239,13 +239,15 @@ class RegionPreviewView(QGraphicsView):
 
         self._source_image: QImage | None = None
         self._image_bounds = QRectF()
-        self._crop_norm: NormalizedRect | None = None
+        self._crop_norms: dict[int, NormalizedRect] = {}
+        self._crop_names: dict[int, str] = {}
+        self._next_crop_id = 1
         self._invert_norms: dict[int, NormalizedRect] = {}
         self._next_invert_id = 1
         self._mode = "crop"
         self._drag_start: QPointF | None = None
         self._drag_target: str | int | None = None
-        self._crop_item: RegionRectItem | None = None
+        self._crop_items: dict[int, RegionRectItem] = {}
         self._invert_items: dict[int, RegionRectItem] = {}
         self._shade_items: list[QGraphicsRectItem] = []
         self._enhancements = EnhancementSettings()
@@ -261,10 +263,20 @@ class RegionPreviewView(QGraphicsView):
             self._emit_regions()
             return
 
+        same_size = (
+            not self._image_bounds.isNull()
+            and int(round(self._image_bounds.width())) == self._source_image.width()
+            and int(round(self._image_bounds.height())) == self._source_image.height()
+        )
         self._image_bounds = QRectF(0, 0, self._source_image.width(), self._source_image.height())
-        self._scene.setSceneRect(self._image_bounds)
+        if not same_size:
+            self._scene.setSceneRect(self._image_bounds)
         self._render()
-        self.reset_enhancement_zoom()
+        if same_size:
+            if not (self._mode == "enhancements" and self._enhancement_zoom > 1.001):
+                self._schedule_fit_to_view()
+        else:
+            self.reset_enhancement_zoom()
         self._emit_regions()
 
     def set_mode(self, mode: str) -> None:
@@ -321,17 +333,23 @@ class RegionPreviewView(QGraphicsView):
         selected_item: RegionRectItem | None = None
 
         if target_mode == "crop":
-            if self._crop_norm is not None and self._crop_norm.is_usable():
+            if self._crop_overlaps_existing(normalized):
                 return
-            self._crop_norm = normalized
+            region_id = self._next_crop_id
+            self._next_crop_id += 1
+            self._crop_norms[region_id] = normalized
+            self._crop_names[region_id] = self._default_crop_name(region_id)
         else:
             region_id = self._next_invert_id
             self._next_invert_id += 1
             self._invert_norms[region_id] = normalized
 
-        self._render()
         if target_mode == "crop":
-            selected_item = self._crop_item
+            self._refresh_region_annotations()
+        else:
+            self._render()
+        if target_mode == "crop":
+            selected_item = self._crop_items.get(region_id)
         else:
             selected_item = self._invert_items.get(region_id)
 
@@ -341,18 +359,31 @@ class RegionPreviewView(QGraphicsView):
         self._emit_regions()
 
     def delete_region(self, name: str) -> None:
-        if name == "crop":
-            self._crop_norm = None
+        if name.startswith("crop:"):
+            region_id = int(name.split(":", 1)[1])
+            self._crop_norms.pop(region_id, None)
+            self._crop_names.pop(region_id, None)
         elif name.startswith("invert:"):
             self._invert_norms.pop(int(name.split(":", 1)[1]), None)
         else:
             raise ValueError(f"Unknown operation: {name}")
 
-        self._render()
+        if name.startswith("crop:"):
+            self._refresh_region_annotations()
+        else:
+            self._render()
         self._emit_regions()
 
     def crop_region(self) -> NormalizedRect | None:
-        return self._crop_norm
+        regions = self.crop_regions()
+        return regions[0].rect if regions else None
+
+    def crop_regions(self) -> tuple[CropRegion, ...]:
+        regions = []
+        for index, (region_id, rect) in enumerate(sorted(self._crop_norms.items()), start=1):
+            if rect.is_usable():
+                regions.append(CropRegion(self._crop_names.get(region_id, f"Crop {index}"), rect))
+        return tuple(regions)
 
     def invert_regions(self) -> list[NormalizedRect]:
         return list(self._invert_norms.values())
@@ -363,11 +394,19 @@ class RegionPreviewView(QGraphicsView):
 
     def region_snapshots(self) -> dict:
         if self._image_bounds.isNull():
-            return {"width": 0, "height": 0, "crop": None, "inverts": []}
+            return {"width": 0, "height": 0, "crop": None, "crops": [], "inverts": []}
 
-        crop = None
-        if self._crop_norm is not None and self._crop_norm.is_usable():
-            crop = self._normalized_to_pixel_edges(self._crop_norm)
+        crops = []
+        for index, (region_id, region) in enumerate(sorted(self._crop_norms.items()), start=1):
+            if region.is_usable():
+                crops.append(
+                    {
+                        "id": region_id,
+                        "name": self._crop_names.get(region_id, f"Crop {index}"),
+                        **self._normalized_to_pixel_edges(region),
+                    }
+                )
+        crop = crops[0] if crops else None
 
         inverts = []
         for region_id, region in self._invert_norms.items():
@@ -378,14 +417,30 @@ class RegionPreviewView(QGraphicsView):
             "width": int(round(self._image_bounds.width())),
             "height": int(round(self._image_bounds.height())),
             "crop": crop,
+            "crops": crops,
             "inverts": inverts,
         }
 
-    def set_crop_pixel_edges(self, left: int, top: int, right: int, bottom: int) -> None:
+    def set_crop_pixel_edges(self, left: int, top: int, right: int, bottom: int, region_id: int | None = None) -> None:
         if self._image_bounds.isNull():
             return
-        self._crop_norm = self._pixel_edges_to_normalized(left, top, right, bottom)
-        self._render()
+        if region_id is None:
+            region_id = next(iter(sorted(self._crop_norms)), self._next_crop_id)
+        normalized = self._pixel_edges_to_normalized(left, top, right, bottom)
+        if self._crop_overlaps_existing(normalized, exclude_id=region_id):
+            self._refresh_region_annotations()
+            self._emit_regions()
+            return
+        self._crop_norms[region_id] = normalized
+        self._crop_names.setdefault(region_id, self._default_crop_name(region_id))
+        self._next_crop_id = max(self._next_crop_id, region_id + 1)
+        self._refresh_region_annotations()
+        self._emit_regions()
+
+    def set_crop_region_name(self, region_id: int, name: str) -> None:
+        if region_id not in self._crop_norms:
+            return
+        self._crop_names[region_id] = name.strip() or self._default_crop_name(region_id)
         self._emit_regions()
 
     def set_invert_pixel_edges(self, region_id: int, left: int, top: int, right: int, bottom: int) -> None:
@@ -455,7 +510,10 @@ class RegionPreviewView(QGraphicsView):
             self.operation_enabled_requested.emit(self._mode, True)
             self._drag_start = _clamp_point(scene_pos, self._image_bounds)
             if self._mode == "crop":
-                self._drag_target = "crop"
+                region_id = self._next_crop_id
+                self._next_crop_id += 1
+                self._crop_names[region_id] = self._default_crop_name(region_id)
+                self._drag_target = f"crop:{region_id}"
             else:
                 self._drag_target = self._next_invert_id
                 self._next_invert_id += 1
@@ -516,7 +574,7 @@ class RegionPreviewView(QGraphicsView):
             item.setZValue(_REGION_ACTIVE_Z if item is selected_item else _REGION_BASE_Z)
 
     def _region_items(self) -> list[RegionRectItem]:
-        return [item for item in [self._crop_item, *self._invert_items.values()] if item is not None]
+        return [*self._crop_items.values(), *self._invert_items.values()]
 
     def mouseMoveEvent(self, event):
         if self._drag_start is not None:
@@ -534,6 +592,10 @@ class RegionPreviewView(QGraphicsView):
         if self._drag_start is not None:
             current = _clamp_point(self.mapToScene(_event_pos(event)), self._image_bounds)
             self._update_region_from_drag(self._drag_start, current)
+            if isinstance(self._drag_target, str) and self._drag_target.startswith("crop:"):
+                region_id = int(self._drag_target.split(":", 1)[1])
+                if region_id not in self._crop_norms:
+                    self._crop_names.pop(region_id, None)
             self._drag_start = None
             self._drag_target = None
             self._emit_regions()
@@ -548,36 +610,51 @@ class RegionPreviewView(QGraphicsView):
             return
 
         normalized = self._scene_rect_to_normalized(rect)
-        if self._drag_target == "crop":
-            self._crop_norm = normalized
+        if isinstance(self._drag_target, str) and self._drag_target.startswith("crop:"):
+            region_id = int(self._drag_target.split(":", 1)[1])
+            if self._crop_overlaps_existing(normalized, exclude_id=region_id):
+                return
+            self._crop_norms[region_id] = normalized
+            self._refresh_region_annotations()
         elif isinstance(self._drag_target, int):
             self._invert_norms[self._drag_target] = normalized
-
-        self._render()
+            self._render()
         self._emit_regions()
 
     def _default_region_rect(self, mode: str) -> QRectF:
         bounds = self._image_bounds
-        scale = 0.62 if mode == "crop" else 0.26
+        scale = 0.42 if mode == "crop" else 0.26
         width = min(bounds.width(), max(24.0, bounds.width() * scale))
         height = min(bounds.height(), max(24.0, bounds.height() * scale))
 
         offset_step = min(bounds.width(), bounds.height()) * 0.05
-        offset = 0.0
-        if mode == "invert":
-            offset = offset_step * (len(self._invert_norms) % 6)
+        existing_count = len(self._crop_norms) if mode == "crop" else len(self._invert_norms)
+        for attempt in range(36):
+            offset = offset_step * ((existing_count + attempt) % 6)
+            column = (existing_count + attempt) % 3
+            row = ((existing_count + attempt) // 3) % 3
+            left = bounds.left() + (bounds.width() - width) * (column / 2.0) + offset
+            top = bounds.top() + (bounds.height() - height) * (row / 2.0) + offset
+            left = _clamp_float(left, bounds.left(), bounds.right() - width)
+            top = _clamp_float(top, bounds.top(), bounds.bottom() - height)
+            rect = QRectF(left, top, width, height).intersected(bounds)
+            if mode != "crop" or not self._crop_overlaps_existing(self._scene_rect_to_normalized(rect)):
+                return rect
 
-        left = bounds.center().x() - width / 2 + offset
-        top = bounds.center().y() - height / 2 + offset
-        left = _clamp_float(left, bounds.left(), bounds.right() - width)
-        top = _clamp_float(top, bounds.top(), bounds.bottom() - height)
+        left = bounds.center().x() - width / 2
+        top = bounds.center().y() - height / 2
         return QRectF(left, top, width, height).intersected(bounds)
 
     def _on_item_changed(self, name: str, scene_rect: QRectF) -> None:
         normalized = self._scene_rect_to_normalized(scene_rect)
-        if name == "crop":
-            self._crop_norm = normalized
-            self._update_crop_shade()
+        if name.startswith("crop:"):
+            region_id = int(name.split(":", 1)[1])
+            if self._crop_overlaps_existing(normalized, exclude_id=region_id):
+                self._refresh_region_annotations()
+                self._emit_regions()
+                return
+            self._crop_norms[region_id] = normalized
+            self._refresh_region_annotations()
         elif name.startswith("invert:"):
             self._invert_norms[int(name.split(":", 1)[1])] = normalized
             self._refresh_pixmap()
@@ -585,6 +662,9 @@ class RegionPreviewView(QGraphicsView):
 
     def _render(self) -> None:
         self._refresh_pixmap()
+        self._refresh_region_annotations()
+
+    def _refresh_region_annotations(self) -> None:
         self._sync_region_items()
         self._update_crop_shade()
         self._set_annotation_visibility(self._mode != "enhancements")
@@ -653,13 +733,27 @@ class RegionPreviewView(QGraphicsView):
         return QImage(output.data, width, height, width * 3, QImage.Format_RGB888).copy()
 
     def _sync_region_items(self) -> None:
-        self._crop_item = self._sync_one_item(
-            self._crop_item,
-            "crop",
-            theme.color(theme.BACKGROUND, 210),
-            self._crop_norm,
-            fill_alpha=0,
-        )
+        for region_id in list(self._crop_items):
+            if region_id not in self._crop_norms or not self._crop_norms[region_id].is_usable():
+                self._scene.removeItem(self._crop_items.pop(region_id))
+
+        for region_id, region in self._crop_norms.items():
+            if not region.is_usable() or self._image_bounds.isNull():
+                continue
+            item = self._crop_items.get(region_id)
+            if item is None:
+                item = RegionRectItem(
+                    f"crop:{region_id}",
+                    theme.color(theme.TEXT, 230),
+                    self._image_bounds,
+                    self._on_item_changed,
+                    self.delete_region,
+                    fill_alpha=56,
+                )
+                self._scene.addItem(item)
+                self._crop_items[region_id] = item
+            item.set_bounds(self._image_bounds)
+            item.set_scene_rect(self._normalized_to_scene_rect(region))
 
         for region_id in list(self._invert_items):
             if region_id not in self._invert_norms or not self._invert_norms[region_id].is_usable():
@@ -688,61 +782,16 @@ class RegionPreviewView(QGraphicsView):
         for item in self._shade_items:
             item.setVisible(visible)
 
-    def _sync_one_item(
-        self,
-        item: RegionRectItem | None,
-        name: str,
-        color: QColor,
-        region: NormalizedRect | None,
-        fill_alpha: int = 36,
-    ) -> RegionRectItem | None:
-        if region is None or not region.is_usable() or self._image_bounds.isNull():
-            if item is not None:
-                self._scene.removeItem(item)
-            return None
-
-        if item is None:
-            item = RegionRectItem(name, color, self._image_bounds, self._on_item_changed, self.delete_region, fill_alpha)
-            self._scene.addItem(item)
-
-        item.set_bounds(self._image_bounds)
-        item.set_scene_rect(self._normalized_to_scene_rect(region))
-        return item
-
     def _update_crop_shade(self) -> None:
         for item in self._shade_items:
             self._scene.removeItem(item)
         self._shade_items.clear()
 
-        if self._crop_norm is None or not self._crop_norm.is_usable():
-            return
-
-        crop = self._normalized_to_scene_rect(self._crop_norm).intersected(self._image_bounds)
-        bounds = self._image_bounds
-        shade_rects = [
-            QRectF(bounds.left(), bounds.top(), bounds.width(), crop.top() - bounds.top()),
-            QRectF(bounds.left(), crop.bottom(), bounds.width(), bounds.bottom() - crop.bottom()),
-            QRectF(bounds.left(), crop.top(), crop.left() - bounds.left(), crop.height()),
-            QRectF(crop.right(), crop.top(), bounds.right() - crop.right(), crop.height()),
-        ]
-        brush = theme.color(theme.TEXT, 82)
-
-        for rect in shade_rects:
-            if rect.width() <= 0 or rect.height() <= 0:
-                continue
-            item = QGraphicsRectItem(rect)
-            item.setPen(QPen(Qt.NoPen))
-            item.setBrush(brush)
-            item.setZValue(2)
-            item.setAcceptedMouseButtons(Qt.NoButton)
-            self._scene.addItem(item)
-            self._shade_items.append(item)
-
     def _remove_region_items(self) -> None:
-        for item in [self._crop_item, *self._invert_items.values(), *self._shade_items]:
+        for item in [*self._crop_items.values(), *self._invert_items.values(), *self._shade_items]:
             if item is not None:
                 self._scene.removeItem(item)
-        self._crop_item = None
+        self._crop_items.clear()
         self._invert_items.clear()
         self._shade_items.clear()
 
@@ -798,7 +847,23 @@ class RegionPreviewView(QGraphicsView):
         ).clamped()
 
     def _emit_regions(self) -> None:
-        self.regions_changed.emit(self._crop_norm, self.invert_regions())
+        self.regions_changed.emit(self.crop_region(), self.invert_regions())
+
+    def _crop_overlaps_existing(self, candidate: NormalizedRect, exclude_id: int | None = None) -> bool:
+        if self._image_bounds.isNull() or not candidate.is_usable():
+            return False
+
+        candidate_rect = self._normalized_to_scene_rect(candidate)
+        for region_id, region in self._crop_norms.items():
+            if region_id == exclude_id or not region.is_usable():
+                continue
+            intersection = candidate_rect.intersected(self._normalized_to_scene_rect(region))
+            if intersection.width() > 0.5 and intersection.height() > 0.5:
+                return True
+        return False
+
+    def _default_crop_name(self, region_id: int) -> str:
+        return f"Crop {region_id}"
 
 
 def _event_pos(event) -> QPoint:

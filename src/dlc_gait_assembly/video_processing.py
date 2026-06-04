@@ -1,7 +1,7 @@
 """Compatibility exports for the original video_processing module."""
 
 from dlc_gait_assembly.domain.enhancements import EnhancementSettings
-from dlc_gait_assembly.domain.regions import NormalizedRect, PixelRect
+from dlc_gait_assembly.domain.regions import CropRegion, NormalizedRect, PixelRect
 from dlc_gait_assembly.domain.trimming import TrimRange
 from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS, VideoInfo
 from dlc_gait_assembly.services.ffmpeg import (
@@ -13,12 +13,14 @@ from dlc_gait_assembly.services.ffmpeg import (
     normalized_to_pixel_rect,
     output_path_for_input,
     process_video,
+    process_video_outputs,
 )
 from dlc_gait_assembly.services.project_paths import make_session_output_dir
 from dlc_gait_assembly.services.video_io import is_supported_video, probe_video
 
 __all__ = [
     "NormalizedRect",
+    "CropRegion",
     "PixelRect",
     "EnhancementSettings",
     "TrimRange",
@@ -35,4 +37,5 @@ __all__ = [
     "output_path_for_input",
     "probe_video",
     "process_video",
+    "process_video_outputs",
 ]
