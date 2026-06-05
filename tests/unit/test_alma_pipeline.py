@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from dlc_gait_assembly.services.alma_pipeline import (
+from dlc_gait_assembly.services.pipeline.alma import (
     AlmaSettings,
     pixels_per_cm_from_calibration_map,
     run_alma_gait_analysis,

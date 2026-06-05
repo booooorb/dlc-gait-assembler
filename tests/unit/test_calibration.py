@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from dlc_gait_assembly.domain.calibration import (
+from dlc_gait_assembly.services.domain.calibration import (
     CalibrationPoint,
     CalibrationStick,
     build_conversion_factor_map,

@@ -6,7 +6,7 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QPushButton
 
-from dlc_gait_assembly.domain.calibration import CalibrationPoint, CalibrationStick
+from dlc_gait_assembly.services.domain.calibration import CalibrationPoint, CalibrationStick
 from dlc_gait_assembly.gui import theme
 
 

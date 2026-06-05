@@ -8,7 +8,7 @@ import struct
 
 import pytest
 
-from dlc_gait_assembly.video_processing import (
+from dlc_gait_assembly.services.video_processing import (
     NormalizedRect,
     ProcessingOptions,
     TrimRange,

@@ -27,18 +27,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dlc_gait_assembly.domain.trimming import TrimRange
-from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
+from dlc_gait_assembly.services.domain.trimming import TrimRange
+from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 from dlc_gait_assembly.gui.video_editor.settings_panel import OperationSettingsPanel
 from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
 from dlc_gait_assembly.gui.video_editor.workers import VideoProcessingThread
-from dlc_gait_assembly.services.ffmpeg import ProcessingOptions, ffmpeg_available
+from dlc_gait_assembly.services.video_processing import ProcessingOptions, ffmpeg_available
 from dlc_gait_assembly.services.output_documents import write_video_processing_session_documents
 from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
-from dlc_gait_assembly.services.video_io import is_supported_video
+from dlc_gait_assembly.services.video_processing import is_supported_video
 
 try:
     import cv2

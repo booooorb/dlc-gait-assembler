@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dlc_gait_assembly.domain.calibration import CalibrationReport, CalibrationStick, calculate_calibration_report
-from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
+from dlc_gait_assembly.services.domain.calibration import CalibrationReport, CalibrationStick, calculate_calibration_report
+from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationPreviewView
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip

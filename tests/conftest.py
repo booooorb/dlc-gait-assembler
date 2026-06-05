@@ -13,7 +13,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from dlc_gait_assembly.services.alma_pipeline import default_alma_root
+from dlc_gait_assembly.services.pipeline.alma import default_alma_root
 
 
 @pytest.fixture(scope="session")

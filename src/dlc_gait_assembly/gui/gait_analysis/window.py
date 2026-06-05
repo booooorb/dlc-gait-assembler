@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, install_wheel_value_guard, set_tooltip
-from dlc_gait_assembly.services.alma_pipeline import (
+from dlc_gait_assembly.services.pipeline.alma import (
     AlmaSettings,
     default_alma_root,
     load_alma_config_defaults,
@@ -39,9 +39,9 @@ from dlc_gait_assembly.services.alma_pipeline import (
     run_alma_gait_analysis,
     settings_from_alma_config,
 )
-from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
+from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.project_paths import find_project_root
-from dlc_gait_assembly.services.video_io import probe_video
+from dlc_gait_assembly.services.video_processing import probe_video
 
 
 STANDARD_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")

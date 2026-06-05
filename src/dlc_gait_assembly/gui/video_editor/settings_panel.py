@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dlc_gait_assembly.domain.enhancements import EnhancementSettings
-from dlc_gait_assembly.domain.trimming import TrimRange
+from dlc_gait_assembly.services.domain.enhancements import EnhancementSettings
+from dlc_gait_assembly.services.domain.trimming import TrimRange
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import set_tooltip
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView

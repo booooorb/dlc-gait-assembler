@@ -5,8 +5,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from dlc_gait_assembly.domain.trimming import TrimRange
-from dlc_gait_assembly.services.ffmpeg import ProcessingOptions, process_video_outputs
+from dlc_gait_assembly.services.domain.trimming import TrimRange
+from dlc_gait_assembly.services.video_processing import ProcessingOptions, process_video_outputs
 
 
 class VideoProcessingThread(QThread):

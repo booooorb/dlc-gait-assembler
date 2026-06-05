@@ -180,7 +180,7 @@ def _run_alma_gait_analysis_external(
         env = os.environ.copy()
         env["DLC_GAIT_ALMA_PIPELINE_CHILD"] = "1"
         env.setdefault("MPLCONFIGDIR", str(_temporary_dir() / "matplotlib"))
-        src_path = str(Path(__file__).resolve().parents[2])
+        src_path = str(Path(__file__).resolve().parents[3])
         env["PYTHONPATH"] = src_path if not env.get("PYTHONPATH") else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
 
         if progress_callback is not None:
@@ -487,7 +487,7 @@ def _main() -> None:
     if len(sys.argv) == 3 and sys.argv[1] == "--run-request":
         _run_request(Path(sys.argv[2]))
         return
-    raise SystemExit("Usage: alma_pipeline.py --run-request REQUEST_JSON")
+    raise SystemExit("Usage: alma.py --run-request REQUEST_JSON")
 
 
 if __name__ == "__main__":

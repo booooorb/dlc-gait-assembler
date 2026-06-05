@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from dlc_gait_assembly.video_processing import (
+from dlc_gait_assembly.services import video_processing as video_processing_module
+from dlc_gait_assembly.services.video_processing import (
     CropRegion,
     EnhancementSettings,
     NormalizedRect,
@@ -12,8 +13,7 @@ from dlc_gait_assembly.video_processing import (
     output_path_for_input,
     process_video_outputs,
 )
-from dlc_gait_assembly.services import ffmpeg as ffmpeg_module
-from dlc_gait_assembly.services.ffmpeg import build_processing_command
+from dlc_gait_assembly.services.video_processing import build_processing_command
 from dlc_gait_assembly.services.output_documents import write_video_processing_session_documents
 
 
@@ -219,9 +219,9 @@ def test_process_video_outputs_writes_multiple_crop_regions_to_region_folders(tm
     input_path = tmp_path / "clip.mp4"
     input_path.write_bytes(b"not a real video")
 
-    monkeypatch.setattr(ffmpeg_module.shutil, "which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setattr(video_processing_module.shutil, "which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
     monkeypatch.setattr(
-        ffmpeg_module,
+        video_processing_module,
         "probe_video",
         lambda path: VideoInfo(width=1000, height=800, fps=30.0, frame_count=300, duration_seconds=10.0),
     )
@@ -234,7 +234,7 @@ def test_process_video_outputs_writes_multiple_crop_regions_to_region_folders(tm
 
         return Completed()
 
-    monkeypatch.setattr(ffmpeg_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(video_processing_module.subprocess, "run", fake_run)
 
     results = process_video_outputs(
         input_path,

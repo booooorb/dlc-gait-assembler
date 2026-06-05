@@ -4,8 +4,8 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
-from dlc_gait_assembly.domain.enhancements import EnhancementSettings
-from dlc_gait_assembly.domain.regions import CropRegion, NormalizedRect
+from dlc_gait_assembly.services.domain.enhancements import EnhancementSettings
+from dlc_gait_assembly.services.domain.regions import CropRegion, NormalizedRect
 from dlc_gait_assembly.gui import theme
 
 try:
