@@ -30,6 +30,7 @@ from dlc_gait_assembly.domain.calibration import CalibrationReport, CalibrationS
 from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationPreviewView
+from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
 from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
 from dlc_gait_assembly.services.output_documents import write_calibration_conversion_export
 from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
@@ -64,6 +65,7 @@ class ManualCalibrationWidget(QWidget):
         self._frame_load_timer.timeout.connect(self._load_pending_frame)
 
         self._build_ui()
+        self._install_shortcuts()
         self._connect_signals()
         self._apply_style()
         self._update_calibration_results()
@@ -110,13 +112,13 @@ class ManualCalibrationWidget(QWidget):
         media_buttons.setSpacing(6)
         self.open_media_button = QPushButton("Add")
         self.open_media_button.setObjectName("OpenMediaButton")
-        self.open_media_button.setToolTip("Add calibration images or videos")
+        set_tooltip(self.open_media_button, "Add calibration images or videos.", "Ctrl+O")
         self.remove_media_button = QPushButton("Remove")
         self.remove_media_button.setObjectName("RemoveButton")
-        self.remove_media_button.setToolTip("Remove selected calibration files")
+        set_tooltip(self.remove_media_button, "Remove selected calibration files.", "Ctrl+Backspace")
         self.clear_calibration_button = QPushButton("Clear")
         self.clear_calibration_button.setObjectName("ClearButton")
-        self.clear_calibration_button.setToolTip("Clear calibration markers for the current file")
+        set_tooltip(self.clear_calibration_button, "Clear calibration markers for the current file.", "Ctrl+L")
         media_buttons.addWidget(self.open_media_button, 1)
         media_buttons.addWidget(self.remove_media_button, 1)
         media_buttons.addWidget(self.clear_calibration_button, 1)
@@ -174,11 +176,11 @@ class ManualCalibrationWidget(QWidget):
         tool_buttons_row.setContentsMargins(0, 0, 0, 0)
         tool_buttons_row.setSpacing(6)
         self.x_tool_button = _make_tool_button("X-Calibration Stick", theme.TOOL_3)
-        self.x_tool_button.setToolTip("X calibration stick")
+        set_tooltip(self.x_tool_button, "Draw an x-axis calibration stick.", "Ctrl+1")
         self.y_tool_button = _make_tool_button("Y-Calibration Stick", theme.TOOL_2)
-        self.y_tool_button.setToolTip("Y calibration stick")
+        set_tooltip(self.y_tool_button, "Draw a y-axis calibration stick.", "Ctrl+2")
         self.cm_tool_button = _make_tool_button("Marker", theme.TOOL_1)
-        self.cm_tool_button.setToolTip("Calibration marker")
+        set_tooltip(self.cm_tool_button, "Add calibration markers to a stick.", "Ctrl+3")
         self.x_tool_button.setChecked(True)
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
@@ -200,12 +202,12 @@ class ManualCalibrationWidget(QWidget):
         self.marker_interval_spin.setSingleStep(1.0)
         self.marker_interval_spin.setValue(1.0)
         self.marker_interval_spin.setMaximumWidth(92)
-        self.marker_interval_spin.setToolTip("Measurement represented by the distance between two adjacent markers.")
+        set_tooltip(self.marker_interval_spin, "Measurement represented by the distance between two adjacent markers.")
         marker_row.addWidget(self.marker_interval_spin)
         self.marker_unit_combo = QComboBox()
         self.marker_unit_combo.addItems(["cm", "inches"])
         self.marker_unit_combo.setMaximumWidth(82)
-        self.marker_unit_combo.setToolTip("Measurement unit for the marker gap.")
+        set_tooltip(self.marker_unit_combo, "Measurement unit for the marker gap.")
         marker_row.addWidget(self.marker_unit_combo)
         tool_buttons_row.addWidget(self.marker_gap_frame)
         tool_buttons_row.addStretch(1)
@@ -227,11 +229,12 @@ class ManualCalibrationWidget(QWidget):
         self.tau_spin.setSuffix("%")
         self.tau_spin.setValue(2.0)
         self.tau_spin.setMaximumWidth(82)
-        self.tau_spin.setToolTip("Margin of calibration error")
+        set_tooltip(self.tau_spin, "Margin of calibration error.")
         margin_row.addWidget(self.tau_spin)
         settings_layout.addLayout(margin_row)
         self.euclidean_lengths_checkbox = QCheckBox("Euclidian Distance")
-        self.euclidean_lengths_checkbox.setToolTip("Measure each marker segment as the full distance between two points instead of only x/y axis distance.")
+        self.euclidean_lengths_checkbox.setChecked(True)
+        set_tooltip(self.euclidean_lengths_checkbox, "Measure each marker segment as the full distance between two points instead of only x/y axis distance.", "Ctrl+E")
         settings_layout.addWidget(self.euclidean_lengths_checkbox)
         tools_layout.addWidget(self.settings_frame, 0, Qt.AlignTop)
         right_layout.addWidget(tools_bar)
@@ -254,6 +257,17 @@ class ManualCalibrationWidget(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([390, 890])
+
+    def _install_shortcuts(self) -> None:
+        self._shortcuts = [
+            add_shortcut(self, "Ctrl+O", self._open_media),
+            add_shortcut(self, "Ctrl+Backspace", self._remove_selected_media),
+            add_shortcut(self, "Ctrl+L", self._clear_calibration),
+            add_shortcut(self, "Ctrl+1", lambda: self._activate_tool_button(self.x_tool_button, "x")),
+            add_shortcut(self, "Ctrl+2", lambda: self._activate_tool_button(self.y_tool_button, "y")),
+            add_shortcut(self, "Ctrl+3", lambda: self._activate_tool_button(self.cm_tool_button, "cm")),
+            add_shortcut(self, "Ctrl+E", self.euclidean_lengths_checkbox.toggle),
+        ]
 
     def _connect_signals(self) -> None:
         self.open_media_button.clicked.connect(self._open_media)
@@ -697,6 +711,10 @@ class ManualCalibrationWidget(QWidget):
     def _set_active_tool(self, name: str) -> None:
         self.preview.set_mode(name)
 
+    def _activate_tool_button(self, button: QToolButton, name: str) -> None:
+        button.setChecked(True)
+        self._set_active_tool(name)
+
     def _on_preview_sticks_changed(self) -> None:
         if self._loading_media:
             return
@@ -904,10 +922,10 @@ def _report_to_html(report: CalibrationReport) -> str:
 
 def _status_text(value: bool | None) -> str:
     if value is True:
-        return f"<span style='color:{theme.ACCENT}; font-weight:700;'>PASS</span>"
+        return f"<span style='color:{theme.STATUS_READY}; font-weight:700;'>PASS</span>"
     if value is False:
         return f"<span style='color:{theme.STATUS_ERROR}; font-weight:700;'>FAIL</span>"
-    return f"<span style='color:{theme.SURFACE}; font-weight:700;'>NEEDS DATA</span>"
+    return "<span style='color:#000000; font-weight:700;'>NEEDS DATA</span>"
 
 
 def _percent(value: float | None) -> str:

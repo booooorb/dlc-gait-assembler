@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from dlc_gait_assembly.domain.enhancements import EnhancementSettings
 from dlc_gait_assembly.domain.trimming import TrimRange
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.shared.interaction import set_tooltip
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 
 
@@ -194,10 +195,12 @@ class OperationSettingsPanel(QGroupBox):
 
         reset_button = QPushButton("Reset Enhancements")
         reset_button.setObjectName("ResetButton")
+        set_tooltip(reset_button, "Restore all enhancement settings to their defaults.")
         reset_button.clicked.connect(self._reset_enhancements)
         self._content_layout.addWidget(reset_button)
         zoom_reset_button = QPushButton("Reset Preview Zoom")
         zoom_reset_button.setObjectName("ResetButton")
+        set_tooltip(zoom_reset_button, "Return the enhancement preview to fit-to-window zoom.")
         zoom_reset_button.clicked.connect(lambda _checked=False: self._preview.reset_enhancement_zoom())
         self._content_layout.addWidget(zoom_reset_button)
         self._content_layout.addStretch(1)
@@ -231,11 +234,12 @@ class OperationSettingsPanel(QGroupBox):
         spin.setKeyboardTracking(False)
         spin.setValue(current_value)
         spin.setMaximumWidth(62)
+        set_tooltip(spin, f"Set {title.lower()} numerically.")
         spin.valueChanged.connect(lambda _value: self._apply_enhancement_settings(source="spin"))
         label_row.addWidget(spin)
         reset_button = QPushButton("R")
         reset_button.setObjectName("TinyResetButton")
-        reset_button.setToolTip(f"Reset {title}")
+        set_tooltip(reset_button, f"Reset {title}.")
         reset_button.clicked.connect(lambda _checked=False, name=field: self._reset_enhancement_field(name))
         label_row.addWidget(reset_button)
         layout.addLayout(label_row)
@@ -244,6 +248,7 @@ class OperationSettingsPanel(QGroupBox):
         slider.setObjectName("EnhancementSlider")
         slider.setRange(minimum, maximum)
         slider.setValue(round(current_value * scale))
+        set_tooltip(slider, f"Adjust {title.lower()}.")
         slider.valueChanged.connect(lambda _value: self._apply_enhancement_settings(source="slider"))
         layout.addWidget(slider)
 
@@ -311,11 +316,13 @@ class OperationSettingsPanel(QGroupBox):
 
         add_button = QPushButton("Add Trim Range")
         add_button.setObjectName("CreateTrimRangeButton")
+        set_tooltip(add_button, "Add another trim range for the selected video.")
         add_button.clicked.connect(lambda _checked=False: self.trim_range_added.emit())
         self._content_layout.addWidget(add_button)
 
         reset_button = QPushButton("Reset Video Trim")
         reset_button.setObjectName("ResetButton")
+        set_tooltip(reset_button, "Reset the selected video to one full-length trim range.")
         reset_button.clicked.connect(lambda _checked=False: self.trim_ranges_reset.emit())
         self._content_layout.addWidget(reset_button)
 
@@ -342,6 +349,8 @@ class OperationSettingsPanel(QGroupBox):
 
         start_spin = self._make_trim_spinbox(trim_range.start_ms)
         end_spin = self._make_trim_spinbox(trim_range.end_ms)
+        set_tooltip(start_spin, "Start time for this trim range, in milliseconds.")
+        set_tooltip(end_spin, "End time for this trim range, in milliseconds.")
         start_spin.valueChanged.connect(lambda _value, idx=index: self._apply_trim_spins(idx, start_spin, end_spin))
         end_spin.valueChanged.connect(lambda _value, idx=index: self._apply_trim_spins(idx, start_spin, end_spin))
         start_spin.editingFinished.connect(lambda idx=index: self.trim_active_range_changed.emit(idx))
@@ -354,6 +363,7 @@ class OperationSettingsPanel(QGroupBox):
 
         delete_button = QPushButton("Delete")
         delete_button.setObjectName("DeleteButton")
+        set_tooltip(delete_button, f"Delete trim range {index + 1}.")
         delete_button.clicked.connect(lambda _checked=False, idx=index: self.trim_range_deleted.emit(idx))
         layout.addWidget(delete_button, 3, 0, 1, 2)
 
@@ -428,6 +438,7 @@ class OperationSettingsPanel(QGroupBox):
 
         button = QPushButton(text)
         button.setObjectName(object_name)
+        set_tooltip(button, f"Create a default {text.lower()}.")
         button.clicked.connect(lambda: self._preview.create_default_region(self._active_tool))
         self._content_layout.addWidget(button)
 
@@ -454,7 +465,7 @@ class OperationSettingsPanel(QGroupBox):
         dimension_label.setObjectName("DimensionLabel")
         delete_button = QPushButton("x")
         delete_button.setObjectName("InlineDeleteButton")
-        delete_button.setToolTip(f"Delete {title}")
+        set_tooltip(delete_button, f"Delete {title}.")
         delete_button.clicked.connect(lambda _checked=False, k=kind, rid=region_id: self._delete_region(k, rid))
         layout.addWidget(title_label, 0, 0, 1, 2)
         layout.addWidget(dimension_label, 0, 2, Qt.AlignRight)
@@ -465,7 +476,7 @@ class OperationSettingsPanel(QGroupBox):
         if kind == "crop":
             layout.addWidget(QLabel("Name"), 1, 0)
             name_edit = QLineEdit(edges.get("name", title))
-            name_edit.setToolTip("Cropped region name used in output filenames when multiple crop regions exist")
+            set_tooltip(name_edit, "Cropped region name used in output filenames when multiple crop regions exist.")
             name_edit.textChanged.connect(lambda text, rid=region_id: self._apply_crop_name(rid, text))
             layout.addWidget(name_edit, 1, 1, 1, 3)
             row_offset = 2
@@ -486,6 +497,7 @@ class OperationSettingsPanel(QGroupBox):
             spin.setKeyboardTracking(False)
             spin.setValue(edges[field])
             spin.setMinimumWidth(48)
+            set_tooltip(spin, f"{label} edge of this {kind} region, in pixels.")
             spins[field] = spin
             layout.addWidget(spin, row, column + 1)
 

@@ -30,6 +30,7 @@ from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.gait_analysis.window import GaitAnalysisWidget
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
+from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
 
@@ -112,7 +113,10 @@ TOOL_SPECS = [
     ToolSpec(
         "pca_random_forest",
         "PCA and Random Forest Analysis",
+        PcaRandomForestWidget,
+        True,
         description="Reduce gait features and build classification models.",
+        status="Ready",
         accent=theme.STEP_NUMBER_COLORS[4],
     ),
 ]
@@ -467,6 +471,7 @@ class MainMenuWidget(QWidget):
             QLabel#StepDescription {
                 color: {theme.TEXT};
                 font-size: 11px;
+                font-weight: 500;
             }
             QLabel#StepDescription[enabledStep="false"] {
                 color: {theme.ACCENT};
@@ -508,19 +513,22 @@ class WorkflowStep(QFrame):
         self.setFixedSize(WORKFLOW_STEP_WIDTH, WORKFLOW_STEP_HEIGHT)
         if spec.enabled:
             self.setCursor(Qt.PointingHandCursor)
+            if spec.description:
+                self.setToolTip(spec.description)
         else:
             self.setToolTip("Not available yet.")
         self._build_ui(index, spec)
 
     def _build_ui(self, index: int, spec: ToolSpec) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(12)
+        root.setContentsMargins(16, 15, 16, 15)
+        root.setSpacing(10)
 
         number = QLabel(str(index))
         number.setObjectName("StepIndex")
         number.setProperty("enabledStep", spec.enabled)
         number.setAlignment(Qt.AlignCenter)
+        number.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         number.setStyleSheet(f"background: {spec.accent if spec.enabled else theme.SURFACE};")
         root.addWidget(number, 0, Qt.AlignLeft)
 
@@ -528,12 +536,14 @@ class WorkflowStep(QFrame):
         title.setObjectName("StepTitle")
         title.setProperty("enabledStep", spec.enabled)
         title.setWordWrap(True)
+        title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         root.addWidget(title)
 
         description = QLabel(spec.description)
         description.setObjectName("StepDescription")
         description.setProperty("enabledStep", spec.enabled)
         description.setWordWrap(True)
+        description.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         root.addWidget(description)
         root.addStretch(1)
 

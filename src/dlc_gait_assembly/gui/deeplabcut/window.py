@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
 
 
 DEEPLABCUT_DOCS_URL = "https://deeplabcut.github.io/DeepLabCut/"
@@ -35,6 +36,7 @@ class DeepLabCutWidget(QWidget):
         self._process: QProcess | None = None
         self._cwd = Path.cwd()
         self._build_ui()
+        self._install_shortcuts()
         self._connect_signals()
         self._apply_style()
         self._terminal.write_intro(self._cwd)
@@ -77,25 +79,37 @@ class DeepLabCutWidget(QWidget):
         toolbar_layout.addWidget(title_block)
         toolbar_layout.addStretch(1)
 
+        status_group = QWidget()
+        status_group.setObjectName("StatusGroup")
+        status_layout = QHBoxLayout(status_group)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(4)
+
         self.status_indicator = QLabel()
         self.status_indicator.setObjectName("StatusDot")
         self.status_indicator.setProperty("statusState", "ready")
-        self.status_indicator.setFixedSize(10, 10)
-        toolbar_layout.addWidget(self.status_indicator)
+        self.status_indicator.setFixedSize(8, 8)
+        status_layout.addWidget(self.status_indicator)
 
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("StatusPill")
         self.status_label.setProperty("running", False)
-        toolbar_layout.addWidget(self.status_label)
+        status_layout.addWidget(self.status_label)
+        toolbar_layout.addWidget(status_group)
 
         self.launch_button = QPushButton("Launch DeepLabCut")
         self.launch_button.setObjectName("PrimaryButton")
+        set_tooltip(self.launch_button, "Launch DeepLabCut from the DEEPLABCUT conda environment.", "Ctrl+R")
         toolbar_layout.addWidget(self.launch_button)
 
         self.install_docs_button = QPushButton("Install")
         self.user_docs_button = QPushButton("Docs")
         self.github_button = QPushButton("GitHub")
         self.paper_button = QPushButton("Paper")
+        set_tooltip(self.install_docs_button, "Open the DeepLabCut installation guide.", "Ctrl+I")
+        set_tooltip(self.user_docs_button, "Open the DeepLabCut documentation.", "Ctrl+D")
+        set_tooltip(self.github_button, "Open the DeepLabCut GitHub repository.", "Ctrl+G")
+        set_tooltip(self.paper_button, "Open the DeepLabCut protocol paper.", "Ctrl+P")
         toolbar_layout.addWidget(self.install_docs_button)
         toolbar_layout.addWidget(self.user_docs_button)
         toolbar_layout.addWidget(self.github_button)
@@ -126,6 +140,15 @@ class DeepLabCutWidget(QWidget):
         self._terminal = TerminalPane()
         terminal_layout.addWidget(self._terminal, 1)
         root.addWidget(terminal_frame, 1)
+
+    def _install_shortcuts(self) -> None:
+        self._shortcuts = [
+            add_shortcut(self, "Ctrl+R", lambda: self._terminal.submit_command(DEEPLABCUT_LAUNCH_COMMAND)),
+            add_shortcut(self, "Ctrl+I", lambda: _open_url(DEEPLABCUT_INSTALL_URL)),
+            add_shortcut(self, "Ctrl+D", lambda: _open_url(DEEPLABCUT_DOCS_URL)),
+            add_shortcut(self, "Ctrl+G", lambda: _open_url(DEEPLABCUT_GITHUB_URL)),
+            add_shortcut(self, "Ctrl+P", lambda: _open_url(DEEPLABCUT_PAPER_URL)),
+        ]
 
     def _connect_signals(self) -> None:
         self.launch_button.clicked.connect(lambda: self._terminal.submit_command(DEEPLABCUT_LAUNCH_COMMAND))
@@ -266,6 +289,9 @@ class DeepLabCutWidget(QWidget):
             QWidget#TitleBlock {
                 background: transparent;
             }
+            QWidget#StatusGroup {
+                background: transparent;
+            }
             QLabel {
                 background: transparent;
             }
@@ -294,12 +320,12 @@ class DeepLabCutWidget(QWidget):
             }
             QLabel#StatusDot {
                 background: {theme.STATUS_OTHER};
-                border: 1px solid {theme.TEXT};
-                border-radius: 5px;
-                min-width: 10px;
-                max-width: 10px;
-                min-height: 10px;
-                max-height: 10px;
+                border: 0;
+                border-radius: 4px;
+                min-width: 8px;
+                max-width: 8px;
+                min-height: 8px;
+                max-height: 8px;
             }
             QLabel#StatusDot[statusState="ready"] {
                 background: {theme.STATUS_READY};

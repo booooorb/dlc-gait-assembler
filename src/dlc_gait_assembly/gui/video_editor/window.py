@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from dlc_gait_assembly.domain.trimming import TrimRange
 from dlc_gait_assembly.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 from dlc_gait_assembly.gui.video_editor.settings_panel import OperationSettingsPanel
 from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
@@ -72,6 +73,7 @@ class VideoEditorWidget(QWidget):
         self._active_trim_range_by_video: dict[str, int] = {}
 
         self._build_ui()
+        self._install_shortcuts()
         self._connect_signals()
         self._apply_style()
         self._update_process_state()
@@ -122,12 +124,16 @@ class VideoEditorWidget(QWidget):
         button_row = QHBoxLayout()
         self.add_videos_button = QPushButton("Add Files")
         self.add_videos_button.setObjectName("AddFilesButton")
+        set_tooltip(self.add_videos_button, "Add video files to the processing list.", "Ctrl+O")
         self.add_folder_button = QPushButton("Add Folder")
         self.add_folder_button.setObjectName("AddFolderButton")
+        set_tooltip(self.add_folder_button, "Add every supported video in a folder.", "Ctrl+Shift+O")
         self.remove_videos_button = QPushButton("Remove")
         self.remove_videos_button.setObjectName("RemoveButton")
+        set_tooltip(self.remove_videos_button, "Remove selected videos from the list.", "Ctrl+Backspace")
         self.clear_videos_button = QPushButton("Clear")
         self.clear_videos_button.setObjectName("ClearButton")
+        set_tooltip(self.clear_videos_button, "Clear the uploaded video list.", "Ctrl+L")
         button_row.addWidget(self.add_videos_button)
         button_row.addWidget(self.add_folder_button)
         button_row.addWidget(self.remove_videos_button)
@@ -151,6 +157,7 @@ class VideoEditorWidget(QWidget):
 
         self.process_button = QPushButton("Process Files")
         self.process_button.setObjectName("PrimaryButton")
+        set_tooltip(self.process_button, "Process the uploaded videos with the selected operations.", "Ctrl+R")
         left_layout.addWidget(self.process_button)
 
         self.progress = QProgressBar()
@@ -182,6 +189,10 @@ class VideoEditorWidget(QWidget):
         self.invert_tool_button = _make_tool_button("Upside-Down", theme.TOOL_2)
         self.enhancements_tool_button = _make_tool_button("Enhancements", theme.TOOL_1)
         self.trim_tool_button = _make_tool_button("Trim", theme.NUMBER_ICON)
+        set_tooltip(self.crop_tool_button, "Create or edit crop regions.", "Ctrl+1")
+        set_tooltip(self.invert_tool_button, "Create or edit upside-down overlay regions.", "Ctrl+2")
+        set_tooltip(self.enhancements_tool_button, "Adjust preview and export enhancement settings.", "Ctrl+3")
+        set_tooltip(self.trim_tool_button, "Create or edit trim ranges.", "Ctrl+4")
         self.crop_tool_button.setChecked(True)
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
@@ -476,12 +487,16 @@ class VideoEditorWidget(QWidget):
                 border-radius: 5px;
                 background: {theme.SURFACE};
                 alternate-background-color: {theme.SURFACE};
-                selection-background-color: {theme.ACCENT};
+                selection-background-color: #F79B72;
                 selection-color: {theme.TEXT};
                 font-size: 9px;
             }
             QListWidget::item {
                 padding: 1px 3px;
+            }
+            QListWidget::item:selected {
+                background: #F79B72;
+                color: {theme.TEXT};
             }
             QGraphicsView {
                 border: 1px solid {theme.ACCENT};
@@ -502,6 +517,19 @@ class VideoEditorWidget(QWidget):
             """
             )
         )
+
+    def _install_shortcuts(self) -> None:
+        self._shortcuts = [
+            add_shortcut(self, "Ctrl+O", self._add_videos),
+            add_shortcut(self, "Ctrl+Shift+O", self._add_video_folder),
+            add_shortcut(self, "Ctrl+Backspace", self._remove_selected_videos),
+            add_shortcut(self, "Ctrl+L", self._clear_videos),
+            add_shortcut(self, "Ctrl+1", lambda: self._activate_tool_button(self.crop_tool_button, "crop")),
+            add_shortcut(self, "Ctrl+2", lambda: self._activate_tool_button(self.invert_tool_button, "invert")),
+            add_shortcut(self, "Ctrl+3", lambda: self._activate_tool_button(self.enhancements_tool_button, "enhancements")),
+            add_shortcut(self, "Ctrl+4", lambda: self._activate_tool_button(self.trim_tool_button, "trim")),
+            add_shortcut(self, "Ctrl+R", self._process_all_videos),
+        ]
 
     def _add_videos(self) -> None:
         extensions = " ".join(f"*{extension}" for extension in sorted(VIDEO_EXTENSIONS))
@@ -730,6 +758,10 @@ class VideoEditorWidget(QWidget):
         self.settings_panel.set_active_tool(name)
         self.timeline.set_trim_editing_enabled(name == "trim")
         self._refresh_trim_context()
+
+    def _activate_tool_button(self, button: QToolButton, name: str) -> None:
+        button.setChecked(True)
+        self._set_active_tool(name)
 
     def _on_trim_active_changed(self, index: int) -> None:
         if self._current_video is None:
@@ -1027,7 +1059,9 @@ class ExportSettingsDialog(QDialog):
         path_row = QHBoxLayout()
         self.output_root_edit = QLineEdit(str(default_output_root))
         self.output_root_edit.setMinimumWidth(280)
+        set_tooltip(self.output_root_edit, "Folder where processed videos and session documents will be saved.")
         browse_button = QPushButton("Browse")
+        set_tooltip(browse_button, "Choose the processed-video output folder.")
         browse_button.clicked.connect(self._browse_output_root)
         path_row.addWidget(self.output_root_edit, 1)
         path_row.addWidget(browse_button)
@@ -1035,12 +1069,14 @@ class ExportSettingsDialog(QDialog):
 
         self.codec_combo = QComboBox()
         self.codec_combo.addItem("H.264 / MP4", "h264_mp4")
+        set_tooltip(self.codec_combo, "Output container and video codec.")
         form.addRow("Format", self.codec_combo)
 
         self.quality_combo = QComboBox()
         self.quality_combo.addItem("High detail (CRF 18)", (18, "slow"))
         self.quality_combo.addItem("Maximum detail (CRF 16)", (16, "slow"))
         self.quality_combo.addItem("Balanced (CRF 20)", (20, "medium"))
+        set_tooltip(self.quality_combo, "Video quality and encode-speed preset.")
         form.addRow("Quality", self.quality_combo)
 
         layout.addLayout(form)

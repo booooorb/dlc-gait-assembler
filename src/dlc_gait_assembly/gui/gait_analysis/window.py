@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.shared.interaction import add_shortcut, install_wheel_value_guard, set_tooltip
 from dlc_gait_assembly.services.alma_pipeline import (
     AlmaSettings,
     default_alma_root,
@@ -69,6 +70,7 @@ class GaitAnalysisWidget(QWidget):
         self._bodypart_combos: dict[str, QComboBox] = {}
 
         self._build_ui()
+        self._install_interactions()
         self._connect_signals()
         self._apply_style()
         self._update_analysis_mode()
@@ -107,8 +109,11 @@ class GaitAnalysisWidget(QWidget):
         file_layout = QVBoxLayout(file_box)
         button_row = QHBoxLayout()
         self.add_file_button = QPushButton("Add CSV")
+        set_tooltip(self.add_file_button, "Add one ALMA or DeepLabCut coordinate CSV.", "Ctrl+O")
         self.add_folder_button = QPushButton("Add Folder")
+        set_tooltip(self.add_folder_button, "Add every CSV in a folder.", "Ctrl+Shift+O")
         self.clear_files_button = QPushButton("Clear")
+        set_tooltip(self.clear_files_button, "Clear the selected input CSV files.", "Ctrl+L")
         button_row.addWidget(self.add_file_button)
         button_row.addWidget(self.add_folder_button)
         button_row.addWidget(self.clear_files_button)
@@ -120,6 +125,8 @@ class GaitAnalysisWidget(QWidget):
         output_row = QHBoxLayout()
         self.output_folder_edit = QLineEdit(str(self._default_output_root()))
         self.output_folder_button = QPushButton("Output")
+        set_tooltip(self.output_folder_edit, "Folder where ALMA gait-analysis outputs will be saved.")
+        set_tooltip(self.output_folder_button, "Choose the output folder.", "Ctrl+Shift+S")
         output_row.addWidget(self.output_folder_edit, 1)
         output_row.addWidget(self.output_folder_button)
         file_layout.addLayout(output_row)
@@ -139,6 +146,8 @@ class GaitAnalysisWidget(QWidget):
         self.analysis_type_group = QButtonGroup(self)
         self.treadmill_radio = QRadioButton("Treadmill")
         self.spontaneous_radio = QRadioButton("Spontaneous walking")
+        set_tooltip(self.treadmill_radio, "Use treadmill gait-analysis settings.")
+        set_tooltip(self.spontaneous_radio, "Use spontaneous-walking gait-analysis settings.")
         self.treadmill_radio.setChecked(self._defaults.analysis_type == "Treadmill")
         self.spontaneous_radio.setChecked(self._defaults.analysis_type == "Spontaneous walking")
         self.analysis_type_group.addButton(self.treadmill_radio)
@@ -153,6 +162,9 @@ class GaitAnalysisWidget(QWidget):
         self.treadmill_speed_spin = _double_spin(0.1, 100.0, self._defaults.treadmill_speed_cm_s, 1)
         self.frame_rate_spin = _double_spin(1.0, 1000.0, self._defaults.frame_rate, 1)
         self.load_fps_button = QPushButton("Load from Video")
+        set_tooltip(self.treadmill_speed_spin, "Treadmill belt speed in centimeters per second.")
+        set_tooltip(self.frame_rate_spin, "Coordinate-video frame rate in frames per second.")
+        set_tooltip(self.load_fps_button, "Load frame rate from a video file.", "Ctrl+F")
         speed_layout.addWidget(self.treadmill_speed_label, 0, 0)
         speed_layout.addWidget(self.treadmill_speed_spin, 0, 1, 1, 2)
         speed_layout.addWidget(QLabel("Frame Rate (fps)"), 1, 0)
@@ -165,6 +177,8 @@ class GaitAnalysisWidget(QWidget):
         self.calibration_method_group = QButtonGroup(self)
         self.reference_radio = QRadioButton("Reference Body Segment (Recommended)")
         self.manual_radio = QRadioButton("Manual Pixel-to-CM Ratio")
+        set_tooltip(self.reference_radio, "Calculate scale from a tracked anatomical reference segment.")
+        set_tooltip(self.manual_radio, "Use a manually supplied pixels-per-centimeter calibration.")
         self.reference_radio.setChecked(self._defaults.calibration_method == "reference")
         self.manual_radio.setChecked(self._defaults.calibration_method == "manual")
         self.calibration_method_group.addButton(self.reference_radio)
@@ -179,6 +193,8 @@ class GaitAnalysisWidget(QWidget):
         self.reference_segment_combo.addItems(["ankle_toe (1.5cm)", "hip_knee (2.5cm)", "knee_ankle (2.0cm)", "ankle_mtp (0.8cm)"])
         self.reference_segment_combo.setCurrentText(_reference_segment_label(self._defaults.reference_segment))
         self.reference_length_spin = _double_spin(0.1, 10.0, self._defaults.reference_length_cm, 2)
+        set_tooltip(self.reference_segment_combo, "Body segment used as the reference calibration length.")
+        set_tooltip(self.reference_length_spin, "Known length of the selected reference segment in centimeters.")
         reference_layout.addWidget(QLabel("Reference Segment"), 0, 0)
         reference_layout.addWidget(self.reference_segment_combo, 0, 1)
         reference_layout.addWidget(QLabel("Segment Length (cm)"), 1, 0)
@@ -190,6 +206,8 @@ class GaitAnalysisWidget(QWidget):
         manual_layout.setContentsMargins(16, 2, 0, 0)
         self.pixels_per_cm_spin = _double_spin(1.0, 1000.0, self._defaults.pixels_per_cm or 50.0, 3)
         self.import_calibration_map_button = QPushButton("Import Calibration Map")
+        set_tooltip(self.pixels_per_cm_spin, "Manual pixel-to-centimeter ratio.")
+        set_tooltip(self.import_calibration_map_button, "Import a calibration conversion map.", "Ctrl+M")
         self.calibration_map_label = QLabel("No calibration map imported.")
         self.calibration_map_label.setObjectName("MutedLabel")
         self.calibration_map_label.setWordWrap(True)
@@ -215,6 +233,10 @@ class GaitAnalysisWidget(QWidget):
         self.drag_frames_spin = QSpinBox()
         self.drag_frames_spin.setRange(1, 10)
         self.drag_frames_spin.setValue(self._defaults.drag_min_consecutive_frames)
+        set_tooltip(self.direction_combo, "Expected walking direction, or automatic direction detection.")
+        set_tooltip(self.drag_clearance_spin, "Toe clearance threshold used by drag detection.")
+        set_tooltip(self.drag_frames_spin, "Number of consecutive frames required for drag detection.")
+        set_tooltip(self.filter_cutoff_spin, "Low-pass filter cutoff frequency in Hz.")
         movement_layout.addWidget(QLabel("Walking Direction"), 0, 0)
         movement_layout.addWidget(self.direction_combo, 0, 1)
         movement_layout.addWidget(QLabel("Drag Clearance Threshold (cm)"), 1, 0)
@@ -231,6 +253,8 @@ class GaitAnalysisWidget(QWidget):
         self.no_outlier_checkbox.setChecked(self._defaults.no_outlier_filter)
         self.dragging_filter_checkbox = QCheckBox("Dragging filter")
         self.dragging_filter_checkbox.setChecked(self._defaults.dragging_filter)
+        set_tooltip(self.no_outlier_checkbox, "Disable the spontaneous-walking outlier filter.")
+        set_tooltip(self.dragging_filter_checkbox, "Enable dragging detection/filtering for spontaneous walking.")
         spontaneous_layout.addWidget(self.no_outlier_checkbox)
         spontaneous_layout.addWidget(self.dragging_filter_checkbox)
         self.spontaneous_box = spontaneous_box
@@ -242,6 +266,10 @@ class GaitAnalysisWidget(QWidget):
         self.step_height_max_spin = _double_spin(0.0, 5.0, self._defaults.step_height_max_cm, 2)
         self.stride_length_min_spin = _double_spin(0.0, 20.0, self._defaults.stride_length_min_cm, 2)
         self.stride_length_max_spin = _double_spin(0.0, 20.0, self._defaults.stride_length_max_cm, 2)
+        set_tooltip(self.step_height_min_spin, "Minimum accepted step height in centimeters.")
+        set_tooltip(self.step_height_max_spin, "Maximum accepted step height in centimeters.")
+        set_tooltip(self.stride_length_min_spin, "Minimum accepted stride length in centimeters.")
+        set_tooltip(self.stride_length_max_spin, "Maximum accepted stride length in centimeters.")
         filter_layout.addWidget(QLabel("Step height min (cm)"), 0, 0)
         filter_layout.addWidget(self.step_height_min_spin, 0, 1)
         filter_layout.addWidget(QLabel("Step height max (cm)"), 1, 0)
@@ -259,6 +287,8 @@ class GaitAnalysisWidget(QWidget):
         self.continuous_strides_spin.setValue(self._defaults.n_continuous_strides)
         self.stickplot_checkbox = QCheckBox("Generate stickplot SVG")
         self.stickplot_checkbox.setChecked(True)
+        set_tooltip(self.continuous_strides_spin, "Number of continuous strides used for ALMA outputs.")
+        set_tooltip(self.stickplot_checkbox, "Generate an SVG stickplot output.")
         output_options_layout.addWidget(QLabel("Continuous strides"), 0, 0)
         output_options_layout.addWidget(self.continuous_strides_spin, 0, 1)
         output_options_layout.addWidget(self.stickplot_checkbox, 1, 0, 1, 2)
@@ -269,6 +299,7 @@ class GaitAnalysisWidget(QWidget):
 
         self.run_button = QPushButton("Run ALMA Gait Analysis")
         self.run_button.setObjectName("PrimaryButton")
+        set_tooltip(self.run_button, "Run ALMA gait analysis on the selected CSV files.", "Ctrl+R")
         left_layout.addWidget(self.run_button)
 
         right_panel = QWidget()
@@ -295,6 +326,9 @@ class GaitAnalysisWidget(QWidget):
         self.use_custom_mapping_checkbox = QCheckBox("Use custom mapping")
         self.reload_mapping_button = QPushButton("Load From CSV")
         self.auto_mapping_button = QPushButton("Auto Detect")
+        set_tooltip(self.use_custom_mapping_checkbox, "Manually map raw DLC labels to the expected ALMA body parts.")
+        set_tooltip(self.reload_mapping_button, "Load body-part labels from the first selected CSV.")
+        set_tooltip(self.auto_mapping_button, "Automatically match common DLC body-part labels.")
         mapping_header.addWidget(self.use_custom_mapping_checkbox)
         mapping_header.addStretch(1)
         mapping_header.addWidget(self.reload_mapping_button)
@@ -315,6 +349,7 @@ class GaitAnalysisWidget(QWidget):
             combo = QComboBox()
             combo.setMinimumWidth(130)
             combo.setEnabled(False)
+            set_tooltip(combo, f"Raw DLC label to use as {standard_bodypart}.")
             self._bodypart_combos[standard_bodypart] = combo
             mapping_grid.addWidget(label, row, column)
             mapping_grid.addWidget(combo, row, column + 1)
@@ -326,6 +361,18 @@ class GaitAnalysisWidget(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([640, 640])
+
+    def _install_interactions(self) -> None:
+        self._shortcuts = [
+            add_shortcut(self, "Ctrl+O", self._add_file),
+            add_shortcut(self, "Ctrl+Shift+O", self._add_folder),
+            add_shortcut(self, "Ctrl+L", self._clear_files),
+            add_shortcut(self, "Ctrl+Shift+S", self._select_output_folder),
+            add_shortcut(self, "Ctrl+F", self._load_frame_rate_from_video),
+            add_shortcut(self, "Ctrl+M", self._import_calibration_map),
+            add_shortcut(self, "Ctrl+R", self._run_analysis),
+        ]
+        self._wheel_value_guard = install_wheel_value_guard(self)
 
     def _connect_signals(self) -> None:
         self.add_file_button.clicked.connect(self._add_file)
