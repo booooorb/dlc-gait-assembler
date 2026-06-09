@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -9,9 +12,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QDoubleSpinBox,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSlider,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -40,6 +46,7 @@ _ENHANCEMENT_SLIDERS = [
 
 
 class OperationSettingsPanel(QGroupBox):
+    video_preview_requested = Signal(str)
     trim_active_range_changed = Signal(int)
     trim_range_changed = Signal(int, int, int)
     trim_range_added = Signal()
@@ -59,6 +66,10 @@ class OperationSettingsPanel(QGroupBox):
         self._trim_duration_ms = 0
         self._trim_ranges: list[TrimRange] = []
         self._active_trim_index = 0
+        self._video_paths: list[str] = []
+        self._choosing_horizontal_region_id: int | None = None
+        self._choice_selected_paths: set[str] = set()
+        self._choice_apply_to_all_regions = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 7, 6, 6)
@@ -81,12 +92,22 @@ class OperationSettingsPanel(QGroupBox):
         self.refresh()
 
     def set_active_tool(self, tool: str) -> None:
-        if tool not in {"crop", "invert", "enhancements", "trim"} or tool == self._active_tool:
+        if tool not in {"crop", "enhancements", "trim"} or tool == self._active_tool:
             return
 
         self._active_tool = tool
+        self._choosing_horizontal_region_id = None
         self._keys = []
         self.refresh()
+
+    def set_video_paths(self, video_paths) -> None:
+        self._video_paths = [_normalize_path(path) for path in video_paths]
+        if self._choosing_horizontal_region_id is not None:
+            self._choice_selected_paths.intersection_update(self._video_paths)
+            self._rebuild_horizontal_video_selector()
+            return
+        if self._active_tool == "crop":
+            self.refresh()
 
     def set_trim_context(
         self,
@@ -95,14 +116,27 @@ class OperationSettingsPanel(QGroupBox):
         ranges: list[TrimRange],
         active_index: int = 0,
     ) -> None:
+        normalized_duration = max(0, int(duration_ms))
+        normalized_ranges = list(ranges)
+        if (
+            self._active_tool == "trim"
+            and self._trim_video_name == video_name
+            and self._trim_duration_ms == normalized_duration
+            and self._trim_ranges == normalized_ranges
+            and self._active_trim_index == active_index
+        ):
+            return
+
         self._trim_video_name = video_name
-        self._trim_duration_ms = max(0, int(duration_ms))
-        self._trim_ranges = list(ranges)
+        self._trim_duration_ms = normalized_duration
+        self._trim_ranges = normalized_ranges
         self._active_trim_index = active_index
         if self._active_tool == "trim":
             self._rebuild_trim_settings()
 
     def refresh(self) -> None:
+        if self._choosing_horizontal_region_id is not None:
+            return
         if self._active_tool == "enhancements":
             self._rebuild_enhancement_settings()
             return
@@ -158,29 +192,17 @@ class OperationSettingsPanel(QGroupBox):
                     {
                         "kind": "crop",
                         "id": region["id"],
-                        "title": f"Crop {index}",
+                        "title": f"Region {index}",
                         "name": region["name"],
                         "edges": region,
                     }
                 )
             return regions
 
-        for index, region in enumerate(snapshot["inverts"], start=1):
-            regions.append(
-                {
-                    "kind": "invert",
-                    "id": region["id"],
-                    "title": f"Upside-Down {index}",
-                    "edges": region,
-                }
-            )
-
         return regions
 
     def _empty_state_text(self) -> str:
-        if self._active_tool == "crop":
-            return "No crop regions."
-        return "No upside-down regions."
+        return "No regions."
 
     def _rebuild_enhancement_settings(self) -> None:
         self._building = True
@@ -389,11 +411,9 @@ class OperationSettingsPanel(QGroupBox):
     def _can_create_region(self, snapshot: dict) -> bool:
         if snapshot["width"] <= 0 or snapshot["height"] <= 0:
             return False
-        if self._active_tool == "enhancements":
+        if self._active_tool in {"enhancements", "trim"}:
             return False
-        if self._active_tool == "crop":
-            return True
-        return True
+        return self._active_tool == "crop"
 
     def _update_controls(self, regions: list[dict]) -> None:
         self._building = True
@@ -409,6 +429,19 @@ class OperationSettingsPanel(QGroupBox):
                 name_edit.blockSignals(True)
                 name_edit.setText(region.get("name", region["title"]))
                 name_edit.blockSignals(False)
+            horizontal_check = controls.get("flip_horizontal")
+            if horizontal_check is not None:
+                horizontal_check.blockSignals(True)
+                horizontal_check.setChecked(edges.get("flip_horizontal", False))
+                horizontal_check.blockSignals(False)
+            vertical_check = controls.get("flip_vertical")
+            if vertical_check is not None:
+                vertical_check.blockSignals(True)
+                vertical_check.setChecked(edges.get("flip_vertical", False))
+                vertical_check.blockSignals(False)
+            video_status = controls.get("flip_horizontal_status")
+            if video_status is not None:
+                video_status.setText(self._format_horizontal_video_status(edges))
             for field, spin in controls["spins"].items():
                 spin.blockSignals(True)
                 spin.setValue(edges[field])
@@ -421,6 +454,21 @@ class OperationSettingsPanel(QGroupBox):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+                continue
+            child_layout = item.layout()
+            if child_layout is not None:
+                self._clear_child_layout(child_layout)
+
+    def _clear_child_layout(self, layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+                continue
+            child_layout = item.layout()
+            if child_layout is not None:
+                self._clear_child_layout(child_layout)
 
     def _add_placeholder(self, text: str) -> None:
         label = QLabel(text)
@@ -429,12 +477,8 @@ class OperationSettingsPanel(QGroupBox):
         self._content_layout.addWidget(label)
 
     def _add_create_region_button(self) -> None:
-        if self._active_tool == "crop":
-            text = "New Crop Region"
-            object_name = "CreateCropRegionButton"
-        else:
-            text = "New Upside-Down Region"
-            object_name = "CreateInvertRegionButton"
+        text = "New Region"
+        object_name = "CreateCropRegionButton"
 
         button = QPushButton(text)
         button.setObjectName(object_name)
@@ -460,7 +504,7 @@ class OperationSettingsPanel(QGroupBox):
 
         title_label = QLabel(title)
         title_label.setObjectName("RegionTitle")
-        title_label.setStyleSheet(f"color: {theme.TOOL_2};" if kind == "invert" else f"color: {theme.TEXT};")
+        title_label.setStyleSheet(f"color: {theme.TEXT};")
         dimension_label = QLabel(f'{edges["width"]} x {edges["height"]} px')
         dimension_label.setObjectName("DimensionLabel")
         delete_button = QPushButton("x")
@@ -473,13 +517,50 @@ class OperationSettingsPanel(QGroupBox):
 
         row_offset = 1
         name_edit = None
+        flip_horizontal_check = None
+        flip_horizontal_status = None
+        flip_vertical_check = None
         if kind == "crop":
             layout.addWidget(QLabel("Name"), 1, 0)
             name_edit = QLineEdit(edges.get("name", title))
             set_tooltip(name_edit, "Cropped region name used in output filenames when multiple crop regions exist.")
             name_edit.textChanged.connect(lambda text, rid=region_id: self._apply_crop_name(rid, text))
             layout.addWidget(name_edit, 1, 1, 1, 3)
-            row_offset = 2
+            flip_horizontal_row = QWidget()
+            flip_horizontal_layout = QHBoxLayout(flip_horizontal_row)
+            flip_horizontal_layout.setContentsMargins(0, 0, 0, 0)
+            flip_horizontal_layout.setSpacing(4)
+            flip_horizontal_check = QCheckBox("Flip horizontal")
+            flip_horizontal_check.setChecked(edges.get("flip_horizontal", False))
+            set_tooltip(flip_horizontal_check, "Flip this region horizontally during export.")
+            flip_horizontal_check.toggled.connect(
+                lambda checked, rid=region_id: self._apply_crop_flip_horizontal(rid, checked)
+            )
+            choose_button = QPushButton("Videos")
+            choose_button.setObjectName("ChooseVideosButton")
+            choose_button.setEnabled(bool(self._video_paths))
+            choose_button.setMinimumWidth(62)
+            choose_button.setMaximumWidth(76)
+            set_tooltip(choose_button, "Choose uploaded videos that should use horizontal flip for this region.")
+            choose_button.clicked.connect(lambda _checked=False, rid=region_id: self._open_horizontal_video_selector(rid))
+            flip_horizontal_status = QLabel(self._format_horizontal_video_status(edges))
+            flip_horizontal_status.setObjectName("DimensionLabel")
+            flip_horizontal_layout.addWidget(flip_horizontal_check)
+            flip_horizontal_layout.addSpacing(10)
+            flip_horizontal_layout.addWidget(choose_button)
+            flip_horizontal_layout.addSpacing(6)
+            flip_horizontal_layout.addWidget(flip_horizontal_status)
+            flip_horizontal_layout.addStretch(1)
+            layout.addWidget(flip_horizontal_row, 2, 0, 1, 4)
+
+            flip_vertical_check = QCheckBox("Flip vertical")
+            flip_vertical_check.setChecked(edges.get("flip_vertical", False))
+            set_tooltip(flip_vertical_check, "Flip this region vertically during export.")
+            flip_vertical_check.toggled.connect(
+                lambda checked, rid=region_id: self._apply_crop_flip_vertical(rid, checked)
+            )
+            layout.addWidget(flip_vertical_check, 3, 0, 1, 4)
+            row_offset = 4
 
         spins: dict[str, QSpinBox] = {}
         fields = [
@@ -506,7 +587,14 @@ class OperationSettingsPanel(QGroupBox):
                 lambda _value, k=kind, rid=region_id, controls=spins: self._apply_region_edges(k, rid, controls)
             )
 
-        self._controls[(kind, region_id)] = {"spins": spins, "dimension": dimension_label, "name": name_edit}
+        self._controls[(kind, region_id)] = {
+            "spins": spins,
+            "dimension": dimension_label,
+            "name": name_edit,
+            "flip_horizontal": flip_horizontal_check,
+            "flip_horizontal_status": flip_horizontal_status,
+            "flip_vertical": flip_vertical_check,
+        }
         self._content_layout.addWidget(frame)
 
     def _apply_region_edges(self, kind: str, region_id: int | None, controls: dict[str, QSpinBox]) -> None:
@@ -542,6 +630,166 @@ class OperationSettingsPanel(QGroupBox):
             return
         self._preview.set_crop_region_name(region_id, name)
 
+    def _apply_crop_flip_horizontal(self, region_id: int | None, enabled: bool) -> None:
+        if self._building or region_id is None:
+            return
+        self._preview.set_crop_region_flip_horizontal(region_id, enabled)
+
+    def _apply_crop_flip_vertical(self, region_id: int | None, enabled: bool) -> None:
+        if self._building or region_id is None:
+            return
+        self._preview.set_crop_region_flip_vertical(region_id, enabled)
+
+    def _open_horizontal_video_selector(self, region_id: int | None) -> None:
+        if region_id is None:
+            return
+        snapshot = self._preview.region_snapshots()
+        region = self._crop_snapshot(snapshot, region_id)
+        if region is None:
+            return
+
+        selected_paths = self._preview.crop_region_horizontal_flip_video_paths(region_id)
+        if selected_paths is None:
+            self._choice_selected_paths = set(self._video_paths) if region.get("flip_horizontal", False) else set()
+        else:
+            self._choice_selected_paths = set(selected_paths)
+        self._choice_apply_to_all_regions = False
+        self._choosing_horizontal_region_id = region_id
+        self._rebuild_horizontal_video_selector()
+
+    def _rebuild_horizontal_video_selector(self) -> None:
+        region_id = self._choosing_horizontal_region_id
+        if region_id is None:
+            return
+
+        snapshot = self._preview.region_snapshots()
+        region = self._crop_snapshot(snapshot, region_id)
+        if region is None:
+            self._choosing_horizontal_region_id = None
+            self.refresh()
+            return
+
+        self._building = True
+        self._keys = [("flip-horizontal-videos", region_id)]
+        self._controls = {}
+        self._enhancement_controls = {}
+        self._clear_layout()
+
+        header = QLabel(f"{region.get('name', 'Region')} - Flip horizontal")
+        header.setObjectName("RegionTitle")
+        self._content_layout.addWidget(header)
+
+        video_list = QListWidget()
+        video_list.setObjectName("FlipVideoList")
+        video_list.setAlternatingRowColors(True)
+        video_list.setUniformItemSizes(True)
+        video_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        video_list.blockSignals(True)
+
+        for path in self._video_paths:
+            item = QListWidgetItem(Path(path).name)
+            item.setToolTip(path)
+            item.setData(Qt.UserRole, path)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if path in self._choice_selected_paths else Qt.Unchecked)
+            video_list.addItem(item)
+
+        if video_list.count() > 0:
+            video_list.setCurrentRow(0)
+        else:
+            self._add_placeholder("No uploaded videos.")
+
+        video_list.blockSignals(False)
+        video_list.itemChanged.connect(self._on_horizontal_choice_item_changed)
+        video_list.currentItemChanged.connect(lambda current, _previous: self._preview_choice_video(current))
+        self._content_layout.addWidget(video_list, 1)
+
+        apply_to_all_check = QCheckBox("Apply to all regions and new regions")
+        apply_to_all_check.setChecked(self._choice_apply_to_all_regions)
+        set_tooltip(
+            apply_to_all_check,
+            "Use this horizontal-flip video selection for every existing region and as the default for new regions.",
+        )
+        apply_to_all_check.toggled.connect(lambda checked: self._set_apply_horizontal_choice_to_all(checked))
+        self._content_layout.addWidget(apply_to_all_check)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(8)
+        confirm_button = QPushButton("Confirm")
+        confirm_button.setObjectName("PrimaryButton")
+        confirm_button.clicked.connect(self._confirm_horizontal_video_choice)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setObjectName("ResetButton")
+        cancel_button.clicked.connect(self._cancel_horizontal_video_choice)
+        button_row.addWidget(confirm_button)
+        button_row.addWidget(cancel_button)
+        self._content_layout.addLayout(button_row)
+        self._building = False
+        self._preview_choice_video(video_list.currentItem())
+
+    def _on_horizontal_choice_item_changed(self, item: QListWidgetItem) -> None:
+        if self._building:
+            return
+        path = item.data(Qt.UserRole)
+        if item.checkState() == Qt.Checked:
+            self._choice_selected_paths.add(path)
+        else:
+            self._choice_selected_paths.discard(path)
+
+    def _preview_choice_video(self, item: QListWidgetItem | None) -> None:
+        if self._building or item is None:
+            return
+        self.video_preview_requested.emit(item.data(Qt.UserRole))
+
+    def _confirm_horizontal_video_choice(self) -> None:
+        region_id = self._choosing_horizontal_region_id
+        if region_id is None:
+            return
+        selected_paths = set(self._choice_selected_paths)
+        selection = self._selection_paths_for_preview(selected_paths)
+        if self._choice_apply_to_all_regions:
+            self._preview.apply_crop_horizontal_flip_selection_to_all_regions(
+                selection,
+                apply_to_new_regions=True,
+            )
+        else:
+            self._preview.set_crop_region_horizontal_flip_selection(region_id, selection)
+        self._cancel_horizontal_video_choice()
+
+    def _cancel_horizontal_video_choice(self) -> None:
+        self._choosing_horizontal_region_id = None
+        self._choice_selected_paths = set()
+        self._choice_apply_to_all_regions = False
+        self._keys = []
+        self.refresh()
+
+    def _set_apply_horizontal_choice_to_all(self, enabled: bool) -> None:
+        if self._building:
+            return
+        self._choice_apply_to_all_regions = bool(enabled)
+
+    def _selection_paths_for_preview(self, selected_paths: set[str]) -> frozenset[str] | None:
+        if not selected_paths:
+            return frozenset()
+        if selected_paths == set(self._video_paths):
+            return None
+        return frozenset(selected_paths)
+
+    def _crop_snapshot(self, snapshot: dict, region_id: int) -> dict | None:
+        for region in snapshot.get("crops", []):
+            if region.get("id") == region_id:
+                return region
+        return None
+
+    def _format_horizontal_video_status(self, edges: dict) -> str:
+        if not edges.get("flip_horizontal", False):
+            return "Off"
+        selected_paths = edges.get("flip_horizontal_video_paths")
+        if selected_paths is None:
+            return "All videos"
+        count = len(selected_paths)
+        return f"{count} video" if count == 1 else f"{count} videos"
+
 
 def _format_ms(ms: int) -> str:
     total_seconds, milliseconds = divmod(max(0, int(ms)), 1000)
@@ -550,3 +798,7 @@ def _format_ms(ms: int) -> str:
     if hours:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
     return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+
+def _normalize_path(path: str | Path) -> str:
+    return str(Path(path).expanduser().resolve())

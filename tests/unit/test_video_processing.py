@@ -42,6 +42,38 @@ def test_build_filter_graph_uses_single_named_crop_region():
     assert build_filter_graph(1920, 1080, options) == "[0:v]crop=1536:864:192:108,format=yuv420p[vout]"
 
 
+def test_build_filter_graph_flips_cropped_region_output():
+    options = ProcessingOptions(
+        crop_enabled=True,
+        crop_regions=(
+            CropRegion(
+                "Front Paw",
+                NormalizedRect(0.1, 0.1, 0.8, 0.8),
+                flip_horizontal=True,
+                flip_vertical=True,
+            ),
+        ),
+    )
+
+    assert build_filter_graph(1920, 1080, options) == (
+        "[0:v]crop=1536:864:192:108,hflip,vflip,format=yuv420p[vout]"
+    )
+
+
+def test_crop_region_horizontal_flip_resolves_per_input_path(tmp_path):
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    selected_region = CropRegion(
+        "Front Paw",
+        NormalizedRect(0.1, 0.1, 0.8, 0.8),
+        flip_horizontal=True,
+        flip_horizontal_video_paths=frozenset({str(first.resolve())}),
+    )
+
+    assert selected_region.resolved_for_input(first).flip_horizontal is True
+    assert selected_region.resolved_for_input(second).flip_horizontal is False
+
+
 def test_build_filter_graph_with_multiple_invert_regions():
     options = ProcessingOptions(
         invert_enabled=True,
@@ -315,7 +347,7 @@ def test_video_processing_session_documents_describe_outputs_and_edits(tmp_path)
     assert '"completed": 1' in manifest
     assert '"outputs": 1' in manifest
     assert '"crop_regions"' in manifest
-    assert "Upside-down regions: 1" in summary
+    assert "Region flips: vertical overlays: 1" in summary
     assert "Front" in summary
     assert "Rear" in summary
     assert "1000 ms to 3000 ms" in summary

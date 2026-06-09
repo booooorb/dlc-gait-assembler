@@ -59,8 +59,12 @@ class VideoEditorWidget(QWidget):
         self._pending_frame_ms: int | None = None
         self._frame_load_timer = QTimer(self)
         self._frame_load_timer.setSingleShot(True)
-        self._frame_load_timer.setInterval(35)
+        self._frame_load_timer.setInterval(85)
         self._frame_load_timer.timeout.connect(self._load_pending_frame)
+        self._trim_context_refresh_timer = QTimer(self)
+        self._trim_context_refresh_timer.setSingleShot(True)
+        self._trim_context_refresh_timer.setInterval(85)
+        self._trim_context_refresh_timer.timeout.connect(self._refresh_trim_context)
         self._processing_thread: VideoProcessingThread | None = None
         self._processing_errors: list[str] = []
         self._processing_failures: list[tuple[str, str]] = []
@@ -185,23 +189,19 @@ class VideoEditorWidget(QWidget):
         tool_row = QHBoxLayout()
         tool_row.setSpacing(8)
         tool_row.addWidget(QLabel("Operations"))
-        self.crop_tool_button = _make_tool_button("Crop", theme.TOOL_3)
-        self.invert_tool_button = _make_tool_button("Upside-Down", theme.TOOL_2)
-        self.enhancements_tool_button = _make_tool_button("Enhancements", theme.TOOL_1)
-        self.trim_tool_button = _make_tool_button("Trim", theme.NUMBER_ICON)
+        self.crop_tool_button = _make_tool_button("Regions", theme.TOOL_3)
+        self.enhancements_tool_button = _make_tool_button("Enhancements", theme.TOOL_2)
+        self.trim_tool_button = _make_tool_button("Trim", theme.TOOL_1)
         set_tooltip(self.crop_tool_button, "Create or edit crop regions.", "Ctrl+1")
-        set_tooltip(self.invert_tool_button, "Create or edit upside-down overlay regions.", "Ctrl+2")
-        set_tooltip(self.enhancements_tool_button, "Adjust preview and export enhancement settings.", "Ctrl+3")
-        set_tooltip(self.trim_tool_button, "Create or edit trim ranges.", "Ctrl+4")
+        set_tooltip(self.enhancements_tool_button, "Adjust preview and export enhancement settings.", "Ctrl+2")
+        set_tooltip(self.trim_tool_button, "Create or edit trim ranges.", "Ctrl+3")
         self.crop_tool_button.setChecked(True)
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
         self.tool_group.addButton(self.crop_tool_button)
-        self.tool_group.addButton(self.invert_tool_button)
         self.tool_group.addButton(self.enhancements_tool_button)
         self.tool_group.addButton(self.trim_tool_button)
         tool_row.addWidget(self.crop_tool_button)
-        tool_row.addWidget(self.invert_tool_button)
         tool_row.addWidget(self.enhancements_tool_button)
         tool_row.addWidget(self.trim_tool_button)
         tool_row.addStretch(1)
@@ -232,7 +232,6 @@ class VideoEditorWidget(QWidget):
         self.clear_videos_button.clicked.connect(self._clear_videos)
         self.video_list.currentItemChanged.connect(self._load_selected_video)
         self.crop_tool_button.clicked.connect(lambda: self._set_active_tool("crop"))
-        self.invert_tool_button.clicked.connect(lambda: self._set_active_tool("invert"))
         self.enhancements_tool_button.clicked.connect(lambda: self._set_active_tool("enhancements"))
         self.trim_tool_button.clicked.connect(lambda: self._set_active_tool("trim"))
         self.process_button.clicked.connect(self._process_all_videos)
@@ -246,6 +245,7 @@ class VideoEditorWidget(QWidget):
         self.settings_panel.trim_range_added.connect(self._add_trim_range)
         self.settings_panel.trim_range_deleted.connect(self._delete_trim_range)
         self.settings_panel.trim_ranges_reset.connect(self._reset_current_video_trim)
+        self.settings_panel.video_preview_requested.connect(self._select_video_by_path)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -378,8 +378,8 @@ class VideoEditorWidget(QWidget):
             }
             QPushButton#CreateRegionButton,
             QPushButton#CreateCropRegionButton,
-            QPushButton#CreateInvertRegionButton,
             QPushButton#CreateTrimRangeButton,
+            QPushButton#ChooseVideosButton,
             QPushButton#ResetButton {
                 font-weight: 650;
             }
@@ -388,14 +388,22 @@ class VideoEditorWidget(QWidget):
                 border-color: {theme.ACCENT};
                 color: {theme.TEXT};
             }
-            QPushButton#CreateInvertRegionButton {
+            QPushButton#CreateTrimRangeButton {
                 background: {theme.SURFACE};
                 border-color: {theme.ACCENT};
                 color: {theme.TEXT};
             }
-            QPushButton#CreateTrimRangeButton {
-                background: {theme.SURFACE};
-                border-color: {theme.ACCENT};
+            QPushButton#ChooseVideosButton {
+                padding: 2px 6px;
+                font-size: 10px;
+                min-height: 18px;
+                background: {theme.TEXT};
+                border-color: {theme.TEXT};
+                color: {theme.BACKGROUND};
+            }
+            QPushButton#ChooseVideosButton:hover {
+                background: {theme.SOFT};
+                border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
             QPushButton#ResetButton,
@@ -525,9 +533,8 @@ class VideoEditorWidget(QWidget):
             add_shortcut(self, "Ctrl+Backspace", self._remove_selected_videos),
             add_shortcut(self, "Ctrl+L", self._clear_videos),
             add_shortcut(self, "Ctrl+1", lambda: self._activate_tool_button(self.crop_tool_button, "crop")),
-            add_shortcut(self, "Ctrl+2", lambda: self._activate_tool_button(self.invert_tool_button, "invert")),
-            add_shortcut(self, "Ctrl+3", lambda: self._activate_tool_button(self.enhancements_tool_button, "enhancements")),
-            add_shortcut(self, "Ctrl+4", lambda: self._activate_tool_button(self.trim_tool_button, "trim")),
+            add_shortcut(self, "Ctrl+2", lambda: self._activate_tool_button(self.enhancements_tool_button, "enhancements")),
+            add_shortcut(self, "Ctrl+3", lambda: self._activate_tool_button(self.trim_tool_button, "trim")),
             add_shortcut(self, "Ctrl+R", self._process_all_videos),
         ]
 
@@ -580,20 +587,24 @@ class VideoEditorWidget(QWidget):
         added = 0
         skipped = 0
 
-        for candidate in paths:
-            path = Path(candidate).expanduser().resolve()
-            if not is_supported_video(path):
-                skipped += 1
-                continue
-            if str(path) in existing:
-                continue
+        self.video_list.setUpdatesEnabled(False)
+        try:
+            for candidate in paths:
+                path = Path(candidate).expanduser().resolve()
+                if not is_supported_video(path):
+                    skipped += 1
+                    continue
+                if str(path) in existing:
+                    continue
 
-            item = QListWidgetItem(path.name)
-            item.setToolTip(str(path))
-            item.setData(Qt.UserRole, str(path))
-            self.video_list.addItem(item)
-            existing.add(str(path))
-            added += 1
+                item = QListWidgetItem(path.name)
+                item.setToolTip(str(path))
+                item.setData(Qt.UserRole, str(path))
+                self.video_list.addItem(item)
+                existing.add(str(path))
+                added += 1
+        finally:
+            self.video_list.setUpdatesEnabled(True)
 
         if added and self.video_list.currentRow() < 0:
             self.video_list.setCurrentRow(0)
@@ -601,14 +612,19 @@ class VideoEditorWidget(QWidget):
         if skipped:
             QMessageBox.information(self, "Unsupported files skipped", f"Skipped {skipped} unsupported file(s).")
 
+        self._refresh_video_paths_context()
         self._update_process_state()
 
     def _remove_selected_videos(self) -> None:
-        for item in self.video_list.selectedItems():
-            path_key = item.data(Qt.UserRole)
-            self._trim_ranges_by_video.pop(path_key, None)
-            self._active_trim_range_by_video.pop(path_key, None)
-            self.video_list.takeItem(self.video_list.row(item))
+        self.video_list.setUpdatesEnabled(False)
+        try:
+            for item in self.video_list.selectedItems():
+                path_key = item.data(Qt.UserRole)
+                self._trim_ranges_by_video.pop(path_key, None)
+                self._active_trim_range_by_video.pop(path_key, None)
+                self.video_list.takeItem(self.video_list.row(item))
+        finally:
+            self.video_list.setUpdatesEnabled(True)
         if self.video_list.count() == 0:
             self._release_capture()
             self.preview.set_frame(None)
@@ -616,6 +632,7 @@ class VideoEditorWidget(QWidget):
             self.timeline.setRange(0, 0)
             self._refresh_trim_context()
             self.time_label.setText("00:00.000 / 00:00.000")
+        self._refresh_video_paths_context()
         self._update_process_state()
 
     def _clear_videos(self) -> None:
@@ -635,6 +652,7 @@ class VideoEditorWidget(QWidget):
         self.timeline.setRange(0, 0)
         self._refresh_trim_context()
         self.time_label.setText("00:00.000 / 00:00.000")
+        self._refresh_video_paths_context()
         self._update_process_state()
 
     def _load_selected_video(self, current: QListWidgetItem | None) -> None:
@@ -654,6 +672,7 @@ class VideoEditorWidget(QWidget):
         requested_ms = self.timeline.value()
         self._capture = capture
         self._current_video = path
+        self.preview.set_current_video_path(path)
         self._fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
         self._frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         self._duration_ms = int((self._frame_count / self._fps) * 1000) if self._fps > 0 and self._frame_count > 0 else 0
@@ -717,6 +736,22 @@ class VideoEditorWidget(QWidget):
         self.preview.set_frame(image)
         self.time_label.setText(f"{_format_ms(ms)} / {_format_ms(self._duration_ms)}")
 
+    def _select_video_by_path(self, path_text: str) -> None:
+        for index in range(self.video_list.count()):
+            item = self.video_list.item(index)
+            if item.data(Qt.UserRole) == path_text:
+                if self.video_list.currentRow() == index:
+                    if self._current_video is None or str(self._current_video) != path_text:
+                        self._load_selected_video(item)
+                else:
+                    self.video_list.setCurrentRow(index)
+                return
+
+    def _refresh_video_paths_context(self) -> None:
+        videos = self._video_paths()
+        self.preview.set_available_video_paths(videos)
+        self.settings_panel.set_video_paths(videos)
+
     def _set_timeline_value(self, value: int) -> None:
         self._loading_slider = True
         self.timeline.setValue(value)
@@ -749,9 +784,6 @@ class VideoEditorWidget(QWidget):
         if name == "crop":
             self.crop_tool_button.setChecked(True)
             self._set_active_tool("crop")
-        elif name == "invert":
-            self.invert_tool_button.setChecked(True)
-            self._set_active_tool("invert")
 
     def _set_active_tool(self, name: str) -> None:
         self.preview.set_mode(name)
@@ -781,7 +813,10 @@ class VideoEditorWidget(QWidget):
 
         index = min(max(0, index), len(ranges) - 1)
         ranges[index] = TrimRange(start_ms, end_ms).clamped(self._duration_ms)
-        self._set_current_trim_ranges(ranges, index)
+        immediate_refresh = self.sender() is not self.timeline
+        self._set_current_trim_ranges(ranges, index, refresh=immediate_refresh)
+        if not immediate_refresh:
+            self._schedule_trim_context_refresh()
 
     def _add_trim_range(self) -> None:
         if self._current_video is None or self._duration_ms <= 0:
@@ -818,7 +853,7 @@ class VideoEditorWidget(QWidget):
         self._active_trim_range_by_video.pop(key, None)
         self._refresh_trim_context()
 
-    def _set_current_trim_ranges(self, ranges: list[TrimRange], active_index: int) -> None:
+    def _set_current_trim_ranges(self, ranges: list[TrimRange], active_index: int, refresh: bool = True) -> None:
         if self._current_video is None:
             return
 
@@ -836,7 +871,12 @@ class VideoEditorWidget(QWidget):
                 self._active_trim_range_by_video[key] = normalized.index(active_trim)
             else:
                 self._active_trim_range_by_video[key] = max(0, min(active_index, len(normalized) - 1))
-        self._refresh_trim_context()
+        if refresh:
+            self._refresh_trim_context()
+
+    def _schedule_trim_context_refresh(self) -> None:
+        if not self._trim_context_refresh_timer.isActive():
+            self._trim_context_refresh_timer.start()
 
     def _is_default_trim(self, ranges: list[TrimRange]) -> bool:
         return len(ranges) == 1 and ranges[0].start_ms == 0 and ranges[0].end_ms == self._duration_ms
@@ -850,8 +890,6 @@ class VideoEditorWidget(QWidget):
         options = ProcessingOptions(
             crop_enabled=bool(self.preview.crop_regions()),
             crop_regions=self.preview.crop_regions(),
-            invert_enabled=bool(self.preview.invert_regions()),
-            invert_rects=tuple(self.preview.invert_regions()),
             enhancements=self.preview.enhancement_settings(),
         )
         trim_ranges_by_path = self._trim_ranges_for_processing(videos)
@@ -973,7 +1011,6 @@ class VideoEditorWidget(QWidget):
         self.clear_videos_button.setEnabled(enabled)
         self.process_button.setEnabled(enabled and self.video_list.count() > 0)
         self.crop_tool_button.setEnabled(enabled)
-        self.invert_tool_button.setEnabled(enabled)
         self.enhancements_tool_button.setEnabled(enabled)
         self.trim_tool_button.setEnabled(enabled)
 
@@ -985,11 +1022,15 @@ class VideoEditorWidget(QWidget):
     def _release_capture(self) -> None:
         if hasattr(self, "_frame_load_timer"):
             self._frame_load_timer.stop()
+        if hasattr(self, "_trim_context_refresh_timer"):
+            self._trim_context_refresh_timer.stop()
         self._pending_frame_ms = None
         if self._capture is not None:
             self._capture.release()
             self._capture = None
         self._current_video = None
+        if hasattr(self, "preview"):
+            self.preview.set_current_video_path(None)
         self._fps = 0.0
         self._frame_count = 0
 

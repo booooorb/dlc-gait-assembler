@@ -34,7 +34,11 @@ class VideoProcessingThread(QThread):
         for index, path in enumerate(self._video_paths, start=1):
             self.file_started.emit(index, total, path.name)
             try:
-                options = replace(self._options, trim_ranges=self._trim_ranges_by_path.get(str(path), ()))
+                options = replace(
+                    self._options,
+                    crop_regions=tuple(region.resolved_for_input(path) for region in self._options.crop_regions),
+                    trim_ranges=self._trim_ranges_by_path.get(str(path), ()),
+                )
                 results = process_video_outputs(path, self._session_dir, options)
             except Exception as exc:
                 self.file_failed.emit(str(path), str(exc))

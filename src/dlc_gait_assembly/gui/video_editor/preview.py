@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
@@ -241,6 +243,11 @@ class RegionPreviewView(QGraphicsView):
         self._image_bounds = QRectF()
         self._crop_norms: dict[int, NormalizedRect] = {}
         self._crop_names: dict[int, str] = {}
+        self._crop_flip_horizontal: dict[int, bool] = {}
+        self._crop_flip_vertical: dict[int, bool] = {}
+        self._crop_flip_horizontal_video_paths: dict[int, frozenset[str] | None] = {}
+        self._default_crop_flip_horizontal = False
+        self._default_crop_flip_horizontal_video_paths: frozenset[str] | None = None
         self._next_crop_id = 1
         self._invert_norms: dict[int, NormalizedRect] = {}
         self._next_invert_id = 1
@@ -253,6 +260,7 @@ class RegionPreviewView(QGraphicsView):
         self._enhancements = EnhancementSettings()
         self._enhancement_zoom = 1.0
         self._fit_pending = False
+        self._current_video_path: str | None = None
 
     def set_frame(self, image: QImage | None) -> None:
         self._source_image = image.copy() if image is not None else None
@@ -333,12 +341,11 @@ class RegionPreviewView(QGraphicsView):
         selected_item: RegionRectItem | None = None
 
         if target_mode == "crop":
-            if self._crop_overlaps_existing(normalized):
-                return
             region_id = self._next_crop_id
             self._next_crop_id += 1
             self._crop_norms[region_id] = normalized
             self._crop_names[region_id] = self._default_crop_name(region_id)
+            self._initialize_crop_region_settings(region_id)
         else:
             region_id = self._next_invert_id
             self._next_invert_id += 1
@@ -363,6 +370,9 @@ class RegionPreviewView(QGraphicsView):
             region_id = int(name.split(":", 1)[1])
             self._crop_norms.pop(region_id, None)
             self._crop_names.pop(region_id, None)
+            self._crop_flip_horizontal.pop(region_id, None)
+            self._crop_flip_vertical.pop(region_id, None)
+            self._crop_flip_horizontal_video_paths.pop(region_id, None)
         elif name.startswith("invert:"):
             self._invert_norms.pop(int(name.split(":", 1)[1]), None)
         else:
@@ -382,7 +392,15 @@ class RegionPreviewView(QGraphicsView):
         regions = []
         for index, (region_id, rect) in enumerate(sorted(self._crop_norms.items()), start=1):
             if rect.is_usable():
-                regions.append(CropRegion(self._crop_names.get(region_id, f"Crop {index}"), rect))
+                regions.append(
+                    CropRegion(
+                        self._crop_names.get(region_id, f"Region {index}"),
+                        rect,
+                        flip_horizontal=self._crop_flip_horizontal.get(region_id, False),
+                        flip_vertical=self._crop_flip_vertical.get(region_id, False),
+                        flip_horizontal_video_paths=self._crop_flip_horizontal_video_paths.get(region_id),
+                    )
+                )
         return tuple(regions)
 
     def invert_regions(self) -> list[NormalizedRect]:
@@ -402,7 +420,10 @@ class RegionPreviewView(QGraphicsView):
                 crops.append(
                     {
                         "id": region_id,
-                        "name": self._crop_names.get(region_id, f"Crop {index}"),
+                        "name": self._crop_names.get(region_id, f"Region {index}"),
+                        "flip_horizontal": self._crop_flip_horizontal.get(region_id, False),
+                        "flip_vertical": self._crop_flip_vertical.get(region_id, False),
+                        "flip_horizontal_video_paths": self._crop_flip_horizontal_video_paths.get(region_id),
                         **self._normalized_to_pixel_edges(region),
                     }
                 )
@@ -427,14 +448,12 @@ class RegionPreviewView(QGraphicsView):
         if region_id is None:
             region_id = next(iter(sorted(self._crop_norms)), self._next_crop_id)
         normalized = self._pixel_edges_to_normalized(left, top, right, bottom)
-        if self._crop_overlaps_existing(normalized, exclude_id=region_id):
-            self._refresh_region_annotations()
-            self._emit_regions()
-            return
         self._crop_norms[region_id] = normalized
         self._crop_names.setdefault(region_id, self._default_crop_name(region_id))
+        self._initialize_crop_region_settings(region_id)
         self._next_crop_id = max(self._next_crop_id, region_id + 1)
         self._refresh_region_annotations()
+        self._refresh_pixmap()
         self._emit_regions()
 
     def set_crop_region_name(self, region_id: int, name: str) -> None:
@@ -442,6 +461,86 @@ class RegionPreviewView(QGraphicsView):
             return
         self._crop_names[region_id] = name.strip() or self._default_crop_name(region_id)
         self._emit_regions()
+
+    def set_crop_region_flip_horizontal(self, region_id: int, enabled: bool) -> None:
+        if region_id not in self._crop_norms:
+            return
+        self._crop_flip_horizontal[region_id] = bool(enabled)
+        self._crop_flip_horizontal_video_paths.setdefault(region_id, None)
+        self._refresh_pixmap()
+        self._emit_regions()
+
+    def set_crop_region_flip_vertical(self, region_id: int, enabled: bool) -> None:
+        if region_id not in self._crop_norms:
+            return
+        self._crop_flip_vertical[region_id] = bool(enabled)
+        self._refresh_pixmap()
+        self._emit_regions()
+
+    def set_crop_region_horizontal_flip_video_paths(
+        self,
+        region_id: int,
+        video_paths: frozenset[str] | None,
+    ) -> None:
+        if region_id not in self._crop_norms:
+            return
+        self._crop_flip_horizontal_video_paths[region_id] = (
+            None if video_paths is None else frozenset(_normalize_path(path) for path in video_paths)
+        )
+        self._refresh_pixmap()
+        self._emit_regions()
+
+    def set_crop_region_horizontal_flip_selection(
+        self,
+        region_id: int,
+        video_paths: frozenset[str] | None,
+    ) -> None:
+        if region_id not in self._crop_norms:
+            return
+        self._apply_crop_horizontal_flip_selection((region_id,), video_paths, apply_to_new_regions=False)
+
+    def apply_crop_horizontal_flip_selection_to_all_regions(
+        self,
+        video_paths: frozenset[str] | None,
+        apply_to_new_regions: bool = False,
+    ) -> None:
+        self._apply_crop_horizontal_flip_selection(
+            tuple(self._crop_norms),
+            video_paths,
+            apply_to_new_regions=apply_to_new_regions,
+        )
+
+    def crop_region_horizontal_flip_video_paths(self, region_id: int) -> frozenset[str] | None:
+        return self._crop_flip_horizontal_video_paths.get(region_id)
+
+    def set_available_video_paths(self, video_paths: list[str | Path]) -> None:
+        valid_paths = frozenset(_normalize_path(path) for path in video_paths)
+        changed = False
+        for region_id, selected_paths in list(self._crop_flip_horizontal_video_paths.items()):
+            if selected_paths is None:
+                continue
+            pruned_paths = frozenset(path for path in selected_paths if path in valid_paths)
+            if pruned_paths != selected_paths:
+                self._crop_flip_horizontal_video_paths[region_id] = pruned_paths
+                if self._crop_flip_horizontal.get(region_id, False) and not pruned_paths:
+                    self._crop_flip_horizontal[region_id] = False
+                changed = True
+        if self._default_crop_flip_horizontal_video_paths is not None:
+            pruned_default = frozenset(path for path in self._default_crop_flip_horizontal_video_paths if path in valid_paths)
+            if pruned_default != self._default_crop_flip_horizontal_video_paths:
+                self._default_crop_flip_horizontal_video_paths = pruned_default
+                if self._default_crop_flip_horizontal and not pruned_default:
+                    self._default_crop_flip_horizontal = False
+        if changed:
+            self._refresh_pixmap()
+            self._emit_regions()
+
+    def set_current_video_path(self, video_path: str | Path | None) -> None:
+        normalized = _normalize_path(video_path) if video_path is not None else None
+        if normalized == self._current_video_path:
+            return
+        self._current_video_path = normalized
+        self._refresh_pixmap()
 
     def set_invert_pixel_edges(self, region_id: int, left: int, top: int, right: int, bottom: int) -> None:
         if self._image_bounds.isNull():
@@ -513,6 +612,7 @@ class RegionPreviewView(QGraphicsView):
                 region_id = self._next_crop_id
                 self._next_crop_id += 1
                 self._crop_names[region_id] = self._default_crop_name(region_id)
+                self._initialize_crop_region_settings(region_id)
                 self._drag_target = f"crop:{region_id}"
             else:
                 self._drag_target = self._next_invert_id
@@ -596,6 +696,9 @@ class RegionPreviewView(QGraphicsView):
                 region_id = int(self._drag_target.split(":", 1)[1])
                 if region_id not in self._crop_norms:
                     self._crop_names.pop(region_id, None)
+                    self._crop_flip_horizontal.pop(region_id, None)
+                    self._crop_flip_vertical.pop(region_id, None)
+                    self._crop_flip_horizontal_video_paths.pop(region_id, None)
             self._drag_start = None
             self._drag_target = None
             self._emit_regions()
@@ -612,10 +715,10 @@ class RegionPreviewView(QGraphicsView):
         normalized = self._scene_rect_to_normalized(rect)
         if isinstance(self._drag_target, str) and self._drag_target.startswith("crop:"):
             region_id = int(self._drag_target.split(":", 1)[1])
-            if self._crop_overlaps_existing(normalized, exclude_id=region_id):
-                return
             self._crop_norms[region_id] = normalized
             self._refresh_region_annotations()
+            if self._crop_region_needs_pixmap_refresh(region_id):
+                self._refresh_pixmap()
         elif isinstance(self._drag_target, int):
             self._invert_norms[self._drag_target] = normalized
             self._render()
@@ -638,8 +741,7 @@ class RegionPreviewView(QGraphicsView):
             left = _clamp_float(left, bounds.left(), bounds.right() - width)
             top = _clamp_float(top, bounds.top(), bounds.bottom() - height)
             rect = QRectF(left, top, width, height).intersected(bounds)
-            if mode != "crop" or not self._crop_overlaps_existing(self._scene_rect_to_normalized(rect)):
-                return rect
+            return rect
 
         left = bounds.center().x() - width / 2
         top = bounds.center().y() - height / 2
@@ -649,12 +751,10 @@ class RegionPreviewView(QGraphicsView):
         normalized = self._scene_rect_to_normalized(scene_rect)
         if name.startswith("crop:"):
             region_id = int(name.split(":", 1)[1])
-            if self._crop_overlaps_existing(normalized, exclude_id=region_id):
-                self._refresh_region_annotations()
-                self._emit_regions()
-                return
             self._crop_norms[region_id] = normalized
             self._refresh_region_annotations()
+            if self._crop_region_needs_pixmap_refresh(region_id):
+                self._refresh_pixmap()
         elif name.startswith("invert:"):
             self._invert_norms[int(name.split(":", 1)[1])] = normalized
             self._refresh_pixmap()
@@ -675,6 +775,20 @@ class RegionPreviewView(QGraphicsView):
             return
 
         display = self._source_image.copy()
+        for region_id, region_norm in self._crop_norms.items():
+            if not region_norm.is_usable():
+                continue
+            mirror_horizontal = self._crop_horizontal_flip_applies(region_id)
+            mirror_vertical = self._crop_flip_vertical.get(region_id, False)
+            if not mirror_horizontal and not mirror_vertical:
+                continue
+            rect = self._normalized_to_scene_rect(region_norm).toAlignedRect().intersected(display.rect())
+            if rect.width() > 1 and rect.height() > 1:
+                region = display.copy(rect).mirrored(mirror_horizontal, mirror_vertical)
+                painter = QPainter(display)
+                painter.drawImage(rect.topLeft(), region)
+                painter.end()
+
         for region_norm in self._invert_norms.values():
             if not region_norm.is_usable():
                 continue
@@ -791,12 +905,14 @@ class RegionPreviewView(QGraphicsView):
         if not usable_crops or self._image_bounds.isNull():
             return
 
-        shade_path = QPainterPath()
-        shade_path.setFillRule(Qt.OddEvenFill)
-        shade_path.addRect(self._image_bounds)
+        bounds_path = QPainterPath()
+        bounds_path.addRect(self._image_bounds)
+        crop_path = QPainterPath()
+        crop_path.setFillRule(Qt.WindingFill)
         for region in usable_crops:
-            shade_path.addRect(self._normalized_to_scene_rect(region).intersected(self._image_bounds))
+            crop_path.addRect(self._normalized_to_scene_rect(region).intersected(self._image_bounds))
 
+        shade_path = bounds_path.subtracted(crop_path)
         item = QGraphicsPathItem(shade_path)
         item.setPen(QPen(Qt.NoPen))
         item.setBrush(QColor(0, 0, 0, 112))
@@ -867,6 +983,52 @@ class RegionPreviewView(QGraphicsView):
     def _emit_regions(self) -> None:
         self.regions_changed.emit(self.crop_region(), self.invert_regions())
 
+    def _crop_horizontal_flip_applies(self, region_id: int) -> bool:
+        if not self._crop_flip_horizontal.get(region_id, False):
+            return False
+        selected_paths = self._crop_flip_horizontal_video_paths.get(region_id)
+        return selected_paths is None or self._current_video_path in selected_paths
+
+    def _crop_region_needs_pixmap_refresh(self, region_id: int) -> bool:
+        return self._crop_horizontal_flip_applies(region_id) or self._crop_flip_vertical.get(region_id, False)
+
+    def _initialize_crop_region_settings(self, region_id: int) -> None:
+        self._crop_flip_horizontal.setdefault(region_id, self._default_crop_flip_horizontal)
+        self._crop_flip_vertical.setdefault(region_id, False)
+        self._crop_flip_horizontal_video_paths.setdefault(region_id, self._default_crop_flip_horizontal_video_paths)
+
+    def _apply_crop_horizontal_flip_selection(
+        self,
+        region_ids,
+        video_paths: frozenset[str] | None,
+        apply_to_new_regions: bool,
+    ) -> None:
+        normalized_paths = None if video_paths is None else frozenset(_normalize_path(path) for path in video_paths)
+        enabled = normalized_paths is None or bool(normalized_paths)
+
+        changed = False
+        for region_id in region_ids:
+            if region_id not in self._crop_norms:
+                continue
+            if self._crop_flip_horizontal.get(region_id, False) != enabled:
+                self._crop_flip_horizontal[region_id] = enabled
+                changed = True
+            if self._crop_flip_horizontal_video_paths.get(region_id) != normalized_paths:
+                self._crop_flip_horizontal_video_paths[region_id] = normalized_paths
+                changed = True
+
+        if apply_to_new_regions:
+            if self._default_crop_flip_horizontal != enabled:
+                self._default_crop_flip_horizontal = enabled
+                changed = True
+            if self._default_crop_flip_horizontal_video_paths != normalized_paths:
+                self._default_crop_flip_horizontal_video_paths = normalized_paths
+                changed = True
+
+        if changed:
+            self._refresh_pixmap()
+            self._emit_regions()
+
     def _crop_overlaps_existing(self, candidate: NormalizedRect, exclude_id: int | None = None) -> bool:
         if self._image_bounds.isNull() or not candidate.is_usable():
             return False
@@ -881,7 +1043,11 @@ class RegionPreviewView(QGraphicsView):
         return False
 
     def _default_crop_name(self, region_id: int) -> str:
-        return f"Crop {region_id}"
+        return f"Region {region_id}"
+
+
+def _normalize_path(path: str | Path) -> str:
+    return str(Path(path).expanduser().resolve())
 
 
 def _event_pos(event) -> QPoint:

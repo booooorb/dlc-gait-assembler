@@ -88,7 +88,7 @@ TOOL_SPECS = [
         "Video Processing",
         VideoEditorWidget,
         True,
-        "Prepare videos, trims, crops, enhancements, and H.264 export.",
+        "Prepare videos, regions, trims, enhancements, and H.264 export.",
         "Ready",
         theme.STEP_NUMBER_COLORS[1],
     ),

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import shutil
 import subprocess
@@ -36,7 +36,7 @@ class ProcessingOptions:
         if self.crop_regions:
             return tuple(region for region in self.crop_regions if region.rect.is_usable())
         if self.crop_rect is not None and self.crop_rect.is_usable():
-            return (CropRegion("Crop", self.crop_rect),)
+            return (CropRegion("Region", self.crop_rect),)
         return ()
 
     def effective_invert_rects(self) -> tuple[NormalizedRect, ...]:
@@ -136,6 +136,8 @@ def process_video_outputs(input_path: str | Path, output_dir: str | Path, option
     input_path = Path(input_path).expanduser().resolve()
     output_dir = Path(output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    if options.crop_regions:
+        options = replace(options, crop_regions=tuple(region.resolved_for_input(input_path) for region in options.crop_regions))
 
     info = probe_video(input_path)
     crop_regions = options.effective_crop_regions()
@@ -148,6 +150,7 @@ def process_video_outputs(input_path: str | Path, output_dir: str | Path, option
                     ProcessingOptions(
                         crop_enabled=True,
                         crop_rect=crop_region.rect,
+                        crop_regions=(crop_region,),
                         invert_enabled=options.invert_enabled,
                         invert_rect=options.invert_rect,
                         invert_rects=options.invert_rects,
@@ -301,19 +304,25 @@ def build_filter_graph(
 
     trim_ranges = _normalized_trim_ranges(options.trim_ranges)
 
-    crop_rect = options.crop_rect
     crop_regions = options.effective_crop_regions()
+    crop_region = crop_regions[0] if len(crop_regions) == 1 else None
+    crop_rect = options.crop_rect
     if crop_rect is None and len(crop_regions) == 1:
         crop_rect = crop_regions[0].rect
 
     if options.crop_enabled and crop_rect is not None and crop_rect.is_usable():
         crop = normalized_to_pixel_rect(crop_rect, source_width, source_height)
+        crop_filters = [f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}"]
+        if crop_region is not None and crop_region.flip_horizontal:
+            crop_filters.append("hflip")
+        if crop_region is not None and crop_region.flip_vertical:
+            crop_filters.append("vflip")
         if trim_ranges:
             cropped = "[v_cropped]"
-            parts.append(f"{current}crop={crop.width}:{crop.height}:{crop.x}:{crop.y}{cropped}")
+            parts.append(f"{current}{','.join(crop_filters)}{cropped}")
             current = cropped
         else:
-            parts.append(f"{current}crop={crop.width}:{crop.height}:{crop.x}:{crop.y},format=yuv420p[vout]")
+            parts.append(f"{current}{','.join(crop_filters)},format=yuv420p[vout]")
             return ";".join(parts)
 
     if trim_ranges:

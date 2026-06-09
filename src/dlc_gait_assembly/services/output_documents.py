@@ -113,7 +113,15 @@ def _video_processing_manifest(
         "operations": {
             "crop": _rect_to_dict(options.effective_crop_regions()[0].rect) if options.effective_crop_regions() else None,
             "crop_regions": [
-                {"name": region.name, "rect": _rect_to_dict(region.rect)}
+                {
+                    "name": region.name,
+                    "rect": _rect_to_dict(region.rect),
+                    "flip_horizontal": region.flip_horizontal,
+                    "flip_vertical": region.flip_vertical,
+                    "flip_horizontal_video_paths": sorted(region.flip_horizontal_video_paths)
+                    if region.flip_horizontal_video_paths is not None
+                    else None,
+                }
                 for region in options.effective_crop_regions()
             ],
             "invert_regions": [_rect_to_dict(rect) for rect in options.effective_invert_rects()]
@@ -147,8 +155,8 @@ def _video_processing_summary_markdown(manifest: dict) -> str:
         "",
         "## Operations",
         "",
-        f"- Crop: {_format_crop_operation(operations)}",
-        f"- Upside-down regions: {len(operations['invert_regions'])}",
+        f"- Regions: {_format_crop_operation(operations)}",
+        f"- Region flips: {_format_region_flips(operations)}",
         f"- Enhancements: {_format_enhancements(operations['enhancements'])}",
         "- Trim: stored per video below",
         "",
@@ -294,6 +302,21 @@ def _format_crop_operation(operations: dict) -> str:
     if len(crop_regions) == 1:
         return _format_rect(crop_regions[0]["rect"])
     return ", ".join(f"{region['name']} ({_format_rect(region['rect'])})" for region in crop_regions)
+
+
+def _format_region_flips(operations: dict) -> str:
+    crop_regions = operations.get("crop_regions") or []
+    horizontal = [region["name"] for region in crop_regions if region.get("flip_horizontal")]
+    vertical = [region["name"] for region in crop_regions if region.get("flip_vertical")]
+    vertical_overlays = len(operations.get("invert_regions") or [])
+    parts = []
+    if horizontal:
+        parts.append(f"horizontal on {', '.join(horizontal)}")
+    if vertical:
+        parts.append(f"vertical on {', '.join(vertical)}")
+    if vertical_overlays:
+        parts.append(f"vertical overlays: {vertical_overlays}")
+    return "; ".join(parts) if parts else "none"
 
 
 def _format_enhancements(settings: dict) -> str:
