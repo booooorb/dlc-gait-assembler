@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from dlc_gait_assembly.services.imports import default_alma_root as _default_alma_root
+
 
 AnalysisType = Literal["Treadmill", "Spontaneous walking"]
 CalibrationMethod = Literal["reference", "manual"]
@@ -47,10 +49,7 @@ class AlmaRunResult:
 
 
 def default_alma_root(project_root: Path) -> Path:
-    imported_root = project_root / "alma-import"
-    if imported_root.exists():
-        return imported_root
-    return project_root / "DLC-Gait-Analysis-main" / "alma-master"
+    return _default_alma_root(project_root)
 
 
 def load_alma_config_defaults(alma_root: Path) -> dict:

@@ -5,7 +5,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, Qt, QUrl, Signal
+from PySide6.QtCore import QProcess, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
@@ -20,6 +20,15 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
+from dlc_gait_assembly.services.imports import (
+    deeplabcut_environment_file,
+    deeplabcut_install_command,
+    deeplabcut_install_display_command,
+    deeplabcut_launch_command,
+    deeplabcut_launch_display_command,
+    deeplabcut_probe_command,
+)
+from dlc_gait_assembly.services.project_paths import find_project_root
 
 
 DEEPLABCUT_DOCS_URL = "https://deeplabcut.github.io/DeepLabCut/"
@@ -27,6 +36,8 @@ DEEPLABCUT_INSTALL_URL = "https://deeplabcut.github.io/DeepLabCut/docs/installat
 DEEPLABCUT_GITHUB_URL = "https://github.com/DeepLabCut/DeepLabCut"
 DEEPLABCUT_PAPER_URL = "https://www.nature.com/articles/s41596-019-0176-0"
 DEEPLABCUT_LAUNCH_COMMAND = "activate-dlc"
+DEEPLABCUT_INSTALL_COMMAND = "install-dlc"
+DEEPLABCUT_CHECK_COMMAND = "check-dlc"
 
 
 class DeepLabCutWidget(QWidget):
@@ -34,19 +45,27 @@ class DeepLabCutWidget(QWidget):
         super().__init__()
         self.setObjectName("DeepLabCutWidget")
         self._process: QProcess | None = None
-        self._cwd = Path.cwd()
+        self._probe_process: QProcess | None = None
+        self._running_command: str | None = None
+        self._deeplabcut_available = False
+        self._project_root = find_project_root(Path.cwd())
+        self._environment_file = deeplabcut_environment_file(self._project_root)
+        self._cwd = self._project_root
         self._build_ui()
         self._install_shortcuts()
         self._connect_signals()
         self._apply_style()
         self._terminal.write_intro(self._cwd)
+        self._set_status("Checking", "other")
+        self._sync_environment_buttons()
+        QTimer.singleShot(0, self._check_deeplabcut_available)
 
     def can_close(self, parent=None) -> bool:
         if self._is_process_running():
             QMessageBox.information(
                 parent or self,
-                "DeepLabCut is still running",
-                "Close DeepLabCut before closing DLC Gait Assembler.",
+                "DeepLabCut command is still running",
+                "Stop the active DeepLabCut command before closing DLC Gait Assembler.",
             )
             return False
         return True
@@ -102,11 +121,20 @@ class DeepLabCutWidget(QWidget):
         set_tooltip(self.launch_button, "Launch DeepLabCut from the DEEPLABCUT conda environment.", "Ctrl+R")
         toolbar_layout.addWidget(self.launch_button)
 
-        self.install_docs_button = QPushButton("Install")
+        self.install_button = QPushButton("Install DeepLabCut")
+        self.install_button.setObjectName("InstallButton")
+        set_tooltip(
+            self.install_button,
+            f"Install DeepLabCut from {self._environment_file.name} in the imports folder.",
+            "Ctrl+I",
+        )
+        toolbar_layout.addWidget(self.install_button)
+
+        self.install_docs_button = QPushButton("Guide")
         self.user_docs_button = QPushButton("Docs")
         self.github_button = QPushButton("GitHub")
         self.paper_button = QPushButton("Paper")
-        set_tooltip(self.install_docs_button, "Open the DeepLabCut installation guide.", "Ctrl+I")
+        set_tooltip(self.install_docs_button, "Open the DeepLabCut installation guide.", "Ctrl+Shift+I")
         set_tooltip(self.user_docs_button, "Open the DeepLabCut documentation.", "Ctrl+D")
         set_tooltip(self.github_button, "Open the DeepLabCut GitHub repository.", "Ctrl+G")
         set_tooltip(self.paper_button, "Open the DeepLabCut protocol paper.", "Ctrl+P")
@@ -144,7 +172,8 @@ class DeepLabCutWidget(QWidget):
     def _install_shortcuts(self) -> None:
         self._shortcuts = [
             add_shortcut(self, "Ctrl+R", lambda: self._terminal.submit_command(DEEPLABCUT_LAUNCH_COMMAND)),
-            add_shortcut(self, "Ctrl+I", lambda: _open_url(DEEPLABCUT_INSTALL_URL)),
+            add_shortcut(self, "Ctrl+I", lambda: self._terminal.submit_command(DEEPLABCUT_INSTALL_COMMAND)),
+            add_shortcut(self, "Ctrl+Shift+I", lambda: _open_url(DEEPLABCUT_INSTALL_URL)),
             add_shortcut(self, "Ctrl+D", lambda: _open_url(DEEPLABCUT_DOCS_URL)),
             add_shortcut(self, "Ctrl+G", lambda: _open_url(DEEPLABCUT_GITHUB_URL)),
             add_shortcut(self, "Ctrl+P", lambda: _open_url(DEEPLABCUT_PAPER_URL)),
@@ -152,6 +181,7 @@ class DeepLabCutWidget(QWidget):
 
     def _connect_signals(self) -> None:
         self.launch_button.clicked.connect(lambda: self._terminal.submit_command(DEEPLABCUT_LAUNCH_COMMAND))
+        self.install_button.clicked.connect(lambda: self._terminal.submit_command(DEEPLABCUT_INSTALL_COMMAND))
         self._terminal.command_submitted.connect(self._run_terminal_command)
         self._terminal.interrupt_requested.connect(self._interrupt_process)
         self.install_docs_button.clicked.connect(lambda: _open_url(DEEPLABCUT_INSTALL_URL))
@@ -165,10 +195,6 @@ class DeepLabCutWidget(QWidget):
             self._terminal.append_prompt(self._cwd)
             return
 
-        display_command = command
-        if command == DEEPLABCUT_LAUNCH_COMMAND:
-            display_command = _deeplabcut_display_command()
-
         if self._is_process_running():
             self._process.write((command + os.linesep).encode())
             return
@@ -181,10 +207,17 @@ class DeepLabCutWidget(QWidget):
             self._change_directory(command)
             return
 
-        program, arguments = _shell_command(command)
+        command_info = self._terminal_command_info(command)
+        if command_info is None:
+            self._terminal.append_prompt(self._cwd)
+            return
+
+        display_command, shell_command = command_info
+        program, arguments = _shell_command(shell_command)
         if display_command != command:
             self._terminal.append_output(f"{display_command}\n")
         self._process = QProcess(self)
+        self._running_command = command
         self._process.setProgram(program)
         self._process.setArguments(arguments)
         self._process.setWorkingDirectory(str(self._cwd))
@@ -196,6 +229,27 @@ class DeepLabCutWidget(QWidget):
 
         self._set_running(True)
         self._process.start()
+
+    def _terminal_command_info(self, command: str) -> tuple[str, str] | None:
+        if command == DEEPLABCUT_LAUNCH_COMMAND:
+            return deeplabcut_launch_display_command(), deeplabcut_launch_command()
+
+        if command == DEEPLABCUT_INSTALL_COMMAND:
+            if not self._environment_file.exists():
+                self._terminal.append_output(
+                    f"DeepLabCut environment file was not found at {self._environment_file}.\n"
+                )
+                self._set_status("Missing YAML", "error")
+                return None
+            return (
+                deeplabcut_install_display_command(self._environment_file),
+                deeplabcut_install_command(self._environment_file),
+            )
+
+        if command == DEEPLABCUT_CHECK_COMMAND:
+            return "conda run -n DEEPLABCUT --no-capture-output python -c 'import deeplabcut'", deeplabcut_probe_command()
+
+        return command, command
 
     def _change_directory(self, command: str) -> None:
         try:
@@ -219,19 +273,67 @@ class DeepLabCutWidget(QWidget):
         return self._process is not None and self._process.state() != QProcess.NotRunning
 
     def _set_running(self, running: bool) -> None:
-        self.launch_button.setEnabled(not running)
         self.launch_button.setText("Running..." if running else "Launch DeepLabCut")
-        self._set_status("Running" if running else "Ready", "running" if running else "ready")
+        if running:
+            self._set_status("Running", "running")
+        else:
+            self._set_environment_status()
         self.status_label.setProperty("running", running)
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
         self._terminal.set_process_running(running)
+        self._sync_environment_buttons()
 
     def _set_status(self, text: str, state: str = "other") -> None:
         self.status_label.setText(text)
         self.status_indicator.setProperty("statusState", state)
         self.status_indicator.style().unpolish(self.status_indicator)
         self.status_indicator.style().polish(self.status_indicator)
+
+    def _sync_environment_buttons(self) -> None:
+        running = self._is_process_running()
+        checking = self._probe_process is not None
+        installable = self._environment_file.exists()
+        self.launch_button.setEnabled(self._deeplabcut_available and not running and not checking)
+        self.install_button.setEnabled(not self._deeplabcut_available and installable and not running and not checking)
+        self.install_button.setVisible(not self._deeplabcut_available)
+
+    def _set_environment_status(self) -> None:
+        if self._deeplabcut_available:
+            self._set_status("Detected", "ready")
+        elif self._environment_file.exists():
+            self._set_status("Not detected", "error")
+        else:
+            self._set_status("Missing YAML", "error")
+
+    def _check_deeplabcut_available(self) -> None:
+        if self._probe_process is not None or self._is_process_running():
+            return
+
+        program, arguments = _shell_command(deeplabcut_probe_command())
+        self._probe_process = QProcess(self)
+        self._probe_process.setProgram(program)
+        self._probe_process.setArguments(arguments)
+        self._probe_process.setWorkingDirectory(str(self._project_root))
+        self._probe_process.setProcessChannelMode(QProcess.MergedChannels)
+        self._probe_process.errorOccurred.connect(self._on_probe_error)
+        self._probe_process.finished.connect(self._on_probe_finished)
+        self._set_status("Checking", "other")
+        self._sync_environment_buttons()
+        self._probe_process.start()
+
+    def _on_probe_error(self, _error: QProcess.ProcessError) -> None:
+        self._probe_process = None
+        self._set_deeplabcut_available(False)
+
+    def _on_probe_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        self._probe_process = None
+        self._set_deeplabcut_available(exit_status == QProcess.NormalExit and exit_code == 0)
+
+    def _set_deeplabcut_available(self, available: bool) -> None:
+        self._deeplabcut_available = available
+        self._set_environment_status()
+        self._sync_environment_buttons()
 
     def _read_stdout(self) -> None:
         if self._process is None:
@@ -248,6 +350,7 @@ class DeepLabCutWidget(QWidget):
             if self._process is not None:
                 self._process.deleteLater()
             self._process = None
+            self._running_command = None
             self._set_running(False)
             self._set_status("Launch failed.", "error")
             self._terminal.append_prompt(self._cwd)
@@ -259,9 +362,13 @@ class DeepLabCutWidget(QWidget):
             self._terminal.append_output(f"\nProcess exited with code {exit_code}.\n")
         else:
             self._terminal.append_output("\nProcess crashed or was interrupted.\n")
+        completed_command = self._running_command
         self._process = None
+        self._running_command = None
         self._set_running(False)
         self._terminal.append_prompt(self._cwd)
+        if completed_command in {DEEPLABCUT_INSTALL_COMMAND, DEEPLABCUT_CHECK_COMMAND}:
+            QTimer.singleShot(0, self._check_deeplabcut_available)
 
     def _interrupt_process(self) -> None:
         if not self._is_process_running() or self._process is None:
@@ -425,8 +532,8 @@ class TerminalPane(QPlainTextEdit):
         self.clear()
         self.appendPlainText("DeepLabCut terminal")
         self.appendPlainText(
-            "Type commands here. Use activate-dlc to launch DeepLabCut, clear to reset, "
-            "cd to change folders, Ctrl+C to interrupt."
+            "Use install-dlc to create the DEEPLABCUT environment, activate-dlc to launch, "
+            "check-dlc to detect it, clear to reset, cd to change folders, Ctrl+C to interrupt."
         )
         self.append_prompt(cwd)
 
@@ -542,48 +649,6 @@ def _open_url(url: str) -> None:
 
 
 def _shell_command(command: str) -> tuple[str, list[str]]:
-    if command == DEEPLABCUT_LAUNCH_COMMAND:
-        command = _deeplabcut_shell_command()
     if sys.platform.startswith("win"):
         return "cmd.exe", ["/d", "/s", "/c", command]
     return "/bin/zsh", ["-lc", command]
-
-
-def _deeplabcut_shell_command() -> str:
-    if sys.platform.startswith("win"):
-        conda_candidates = [
-            "%USERPROFILE%\\anaconda3\\condabin\\conda.bat",
-            "%USERPROFILE%\\miniconda3\\condabin\\conda.bat",
-            "%LOCALAPPDATA%\\anaconda3\\condabin\\conda.bat",
-            "%LOCALAPPDATA%\\miniconda3\\condabin\\conda.bat",
-            "C:\\ProgramData\\anaconda3\\condabin\\conda.bat",
-            "C:\\ProgramData\\miniconda3\\condabin\\conda.bat",
-        ]
-        run_attempts = [
-            'conda run -n DEEPLABCUT --no-capture-output python -u -m deeplabcut',
-            *[
-                f'if exist "{path}" call "{path}" run -n DEEPLABCUT --no-capture-output python -u -m deeplabcut'
-                for path in conda_candidates
-            ],
-        ]
-        return " || ".join(run_attempts)
-
-    conda_candidates = [
-        "$HOME/anaconda3/etc/profile.d/conda.sh",
-        "$HOME/miniconda3/etc/profile.d/conda.sh",
-        "/opt/anaconda3/etc/profile.d/conda.sh",
-        "/opt/miniconda3/etc/profile.d/conda.sh",
-    ]
-    source_attempts = " || ".join(f'[ -f "{path}" ] && . "{path}"' for path in conda_candidates)
-    return (
-        f'eval "$(conda shell.zsh hook 2>/dev/null)" '
-        f'|| eval "$(conda shell.bash hook 2>/dev/null)" '
-        f'|| {source_attempts}; '
-        "conda activate DEEPLABCUT && python -u -m deeplabcut"
-    )
-
-
-def _deeplabcut_display_command() -> str:
-    if sys.platform.startswith("win"):
-        return "conda run -n DEEPLABCUT --no-capture-output python -u -m deeplabcut"
-    return "conda activate DEEPLABCUT && python -u -m deeplabcut"

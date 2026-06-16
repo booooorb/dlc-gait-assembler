@@ -1,7 +1,8 @@
 # ALMA Import Manifest
 
 This folder contains the ALMA runtime files used by DLC Gait Assembler.
-The original ALMA checkout can remain in `DLC-Gait-Analysis-main/`; this folder is the smaller import that the app uses by default.
+The original ALMA checkout can remain in `DLC-Gait-Analysis-main/`; `imports/alma/` is the smaller import that the app uses by default.
+DeepLabCut's conda environment file lives beside this folder at `imports/DEEPLABCUT.yaml`.
 
 ## Runtime Files
 
