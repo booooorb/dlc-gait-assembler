@@ -18,9 +18,9 @@ class PcaRandomForestWidget(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 14, 14, 14)
-        title = QLabel("PCA and Random Forest Analysis")
-        title.setObjectName("TitleLabel")
-        root.addWidget(title)
+        status = QLabel("No analysis controls are available yet.")
+        status.setObjectName("StatusLabel")
+        root.addWidget(status)
         root.addStretch(1)
 
     def _apply_style(self) -> None:
@@ -35,9 +35,9 @@ class PcaRandomForestWidget(QWidget):
             QLabel {
                 background: transparent;
             }
-            QLabel#TitleLabel {
-                font-size: 19px;
-                font-weight: 800;
+            QLabel#StatusLabel {
+                color: {theme.CONNECTOR};
+                font-size: 13px;
             }
             """
             )

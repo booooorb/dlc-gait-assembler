@@ -101,10 +101,6 @@ class GaitAnalysisWidget(QWidget):
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(10)
 
-        title = QLabel("Gait Analysis")
-        title.setObjectName("TitleLabel")
-        left_layout.addWidget(title)
-
         file_box = QGroupBox("ALMA input and output")
         file_layout = QVBoxLayout(file_box)
         button_row = QHBoxLayout()
@@ -141,7 +137,7 @@ class GaitAnalysisWidget(QWidget):
         settings_layout.setSpacing(10)
         settings_scroll.setWidget(settings_content)
 
-        setup_box = QGroupBox("Experimental Setup")
+        setup_box = QGroupBox("Experimental setup")
         setup_layout = QVBoxLayout(setup_box)
         self.analysis_type_group = QButtonGroup(self)
         self.treadmill_radio = QRadioButton("Treadmill")
@@ -156,27 +152,27 @@ class GaitAnalysisWidget(QWidget):
         setup_layout.addWidget(self.spontaneous_radio)
         settings_layout.addWidget(setup_box)
 
-        speed_box = QGroupBox("Speed & Calibration (Treadmill)")
+        speed_box = QGroupBox("Treadmill speed and calibration")
         speed_layout = QGridLayout(speed_box)
-        self.treadmill_speed_label = QLabel("Treadmill Speed (cm/s)")
+        self.treadmill_speed_label = QLabel("Treadmill speed (cm/s)")
         self.treadmill_speed_spin = _double_spin(0.1, 100.0, self._defaults.treadmill_speed_cm_s, 1)
         self.frame_rate_spin = _double_spin(1.0, 1000.0, self._defaults.frame_rate, 1)
-        self.load_fps_button = QPushButton("Load from Video")
+        self.load_fps_button = QPushButton("Load from video")
         set_tooltip(self.treadmill_speed_spin, "Treadmill belt speed in centimeters per second.")
         set_tooltip(self.frame_rate_spin, "Coordinate-video frame rate in frames per second.")
         set_tooltip(self.load_fps_button, "Load frame rate from a video file.", "Ctrl+F")
         speed_layout.addWidget(self.treadmill_speed_label, 0, 0)
         speed_layout.addWidget(self.treadmill_speed_spin, 0, 1, 1, 2)
-        speed_layout.addWidget(QLabel("Frame Rate (fps)"), 1, 0)
+        speed_layout.addWidget(QLabel("Frame rate (fps)"), 1, 0)
         speed_layout.addWidget(self.frame_rate_spin, 1, 1)
         speed_layout.addWidget(self.load_fps_button, 1, 2)
         settings_layout.addWidget(speed_box)
 
-        calibration_box = QGroupBox("Spatial Calibration Method")
+        calibration_box = QGroupBox("Spatial calibration")
         calibration_layout = QVBoxLayout(calibration_box)
         self.calibration_method_group = QButtonGroup(self)
-        self.reference_radio = QRadioButton("Reference Body Segment (Recommended)")
-        self.manual_radio = QRadioButton("Manual Pixel-to-CM Ratio")
+        self.reference_radio = QRadioButton("Reference body segment (recommended)")
+        self.manual_radio = QRadioButton("Manual pixel-to-cm ratio")
         set_tooltip(self.reference_radio, "Calculate scale from a tracked anatomical reference segment.")
         set_tooltip(self.manual_radio, "Use a manually supplied pixels-per-centimeter calibration.")
         self.reference_radio.setChecked(self._defaults.calibration_method == "reference")
@@ -643,10 +639,10 @@ class GaitAnalysisWidget(QWidget):
             }
             QGroupBox {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 6px;
+                border-radius: 2px;
                 margin-top: 18px;
                 padding: 16px 10px 10px 10px;
-                background: {theme.PANEL};
+                background: {theme.SURFACE};
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -655,15 +651,15 @@ class GaitAnalysisWidget(QWidget):
                 padding: 0 3px;
                 color: {theme.TEXT};
                 font-weight: 600;
-                background: transparent;
+                background: {theme.BACKGROUND};
             }
             QLabel#TitleLabel {
                 font-size: 19px;
-                font-weight: 800;
+                font-weight: 650;
             }
             QLabel#PreviewTitle {
                 font-size: 15px;
-                font-weight: 700;
+                font-weight: 600;
             }
             QLabel#MutedLabel {
                 color: {theme.TEXT};
@@ -671,44 +667,44 @@ class GaitAnalysisWidget(QWidget):
             }
             QPushButton {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 3px;
                 padding: 7px 10px;
-                background: {theme.BACKGROUND};
+                background: {theme.SURFACE};
                 color: {theme.TEXT};
-                font-weight: 650;
+                font-weight: 550;
             }
             QPushButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
             QPushButton#PrimaryButton {
-                background: {theme.TEXT};
-                border-color: {theme.TEXT};
-                color: {theme.BACKGROUND};
-                font-weight: 800;
+                background: {theme.PRIMARY};
+                border-color: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
+                font-weight: 650;
                 padding: 10px;
             }
             QPushButton#PrimaryButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
             QListWidget, QTextEdit, QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 2px;
                 background: {theme.SURFACE};
                 padding: 5px 6px;
             }
             QProgressBar {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 2px;
                 background: {theme.SURFACE};
                 height: 16px;
             }
             QProgressBar::chunk {
-                border-radius: 4px;
-                background: {theme.TEXT};
+                border-radius: 1px;
+                background: {theme.PRIMARY};
             }
             """
             )

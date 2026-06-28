@@ -42,7 +42,7 @@ class TrimTimelineSlider(QSlider):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        orange = QColor(theme.TEXT)
+        orange = QColor(theme.TOOL_1)
         inactive = QColor(theme.ACCENT)
         y = self.height() // 2
 

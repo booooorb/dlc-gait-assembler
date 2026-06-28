@@ -91,10 +91,6 @@ class DeepLabCutWidget(QWidget):
         title.setObjectName("TitleLabel")
         title_layout.addWidget(title)
 
-        subtitle = QLabel("DEEPLABCUT conda environment")
-        subtitle.setObjectName("SubtitleLabel")
-        title_layout.addWidget(subtitle)
-
         toolbar_layout.addWidget(title_block)
         toolbar_layout.addStretch(1)
 
@@ -389,9 +385,9 @@ class DeepLabCutWidget(QWidget):
                 background: transparent;
             }
             QFrame#TerminalToolbar {
-                background: {theme.PANEL};
+                background: {theme.SURFACE};
                 border: 1px solid {theme.ACCENT};
-                border-radius: 8px;
+                border-radius: 2px;
             }
             QWidget#TitleBlock {
                 background: transparent;
@@ -405,19 +401,14 @@ class DeepLabCutWidget(QWidget):
             QLabel#TitleLabel {
                 color: {theme.TEXT};
                 font-size: 17px;
-                font-weight: 800;
-            }
-            QLabel#SubtitleLabel {
-                color: {theme.TEXT};
-                font-size: 11px;
-                font-weight: 600;
+                font-weight: 650;
             }
             QLabel#StatusPill {
                 background: transparent;
                 border: 0;
                 color: {theme.TEXT};
                 font-size: 11px;
-                font-weight: 800;
+                font-weight: 600;
                 padding: 0 2px;
             }
             QLabel#StatusPill[running="true"] {
@@ -444,22 +435,21 @@ class DeepLabCutWidget(QWidget):
                 background: {theme.STATUS_ERROR};
             }
             QFrame#TerminalFrame {
-                background: {theme.TEXT};
+                background: {theme.CANVAS};
                 border: 1px solid {theme.ACCENT};
-                border-radius: 8px;
+                border-radius: 2px;
             }
             QFrame#TerminalHeader {
-                background: {theme.TEXT};
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
+                background: {theme.CANVAS};
+                border-radius: 0;
             }
             QLabel#TerminalHeaderLabel {
-                color: {theme.BACKGROUND};
+                color: {theme.CANVAS_TEXT};
                 font-size: 12px;
                 font-weight: 700;
             }
             QLabel#CommandHint {
-                color: {theme.SURFACE};
+                color: {theme.CANVAS_TEXT};
                 font-family: Menlo, Consolas, monospace;
                 font-size: 11px;
                 font-weight: 700;
@@ -468,42 +458,40 @@ class DeepLabCutWidget(QWidget):
                 border: 0;
                 border-top: 1px solid {theme.ACCENT};
                 border-radius: 0;
-                border-bottom-left-radius: 6px;
-                border-bottom-right-radius: 6px;
-                background: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.CANVAS};
+                color: {theme.CANVAS_TEXT};
                 font-family: Menlo, Consolas, monospace;
                 font-size: 13px;
                 padding: 12px;
                 selection-background-color: {theme.ACCENT};
             }
             QWidget#TerminalViewport {
-                background: {theme.TEXT};
+                background: {theme.CANVAS};
             }
             QPushButton {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 3px;
                 padding: 7px 10px;
                 background: {theme.SURFACE};
                 color: {theme.TEXT};
-                font-weight: 700;
+                font-weight: 550;
             }
             QPushButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
             QPushButton:disabled {
-                color: {theme.ACCENT};
-                background: {theme.SURFACE};
+                color: {theme.CONNECTOR};
+                background: {theme.PANEL};
             }
             QPushButton#PrimaryButton {
-                background: {theme.TEXT};
-                border-color: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.PRIMARY};
+                border-color: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
             }
             QPushButton#PrimaryButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }

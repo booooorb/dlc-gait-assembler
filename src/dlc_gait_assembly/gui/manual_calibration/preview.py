@@ -12,10 +12,6 @@ from dlc_gait_assembly.gui import theme
 
 DeleteTarget = tuple[str, str | int]
 
-_X_COLOR = QColor(theme.TOOL_3)
-_Y_COLOR = QColor(theme.TOOL_2)
-_CM_COLOR = QColor(theme.TOOL_1)
-_LOCATION_FAIL_COLOR = QColor(theme.STATUS_ERROR)
 _ACTIVE_Z = 8.0
 _BASE_Z = 5.0
 _MAX_ZOOM = 32.0
@@ -469,7 +465,7 @@ class CalibrationStickItem(QGraphicsItem):
         return hit_path
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
-        color = _X_COLOR if self._stick.axis == "x" else _Y_COLOR
+        color = QColor(theme.TOOL_3 if self._stick.axis == "x" else theme.TOOL_2)
         scale = self._view_scale()
         line_width = max(2.0, 3.0 / scale)
         radius = self.visual_radius()
@@ -487,7 +483,14 @@ class CalibrationStickItem(QGraphicsItem):
         self._paint_handle(painter, end, color, radius, scale, end_marker_index in self._location_failure_marker_indices)
 
         for marker_index, marker_point in enumerate(self._marker_qpoints(include_ends=False), start=1):
-            self._paint_handle(painter, marker_point, _CM_COLOR, radius * 0.88, scale, marker_index in self._location_failure_marker_indices)
+            self._paint_handle(
+                painter,
+                marker_point,
+                QColor(theme.TOOL_1),
+                radius * 0.88,
+                scale,
+                marker_index in self._location_failure_marker_indices,
+            )
 
         self._paint_label(painter, color, start, end)
         painter.restore()
@@ -629,7 +632,7 @@ class CalibrationStickItem(QGraphicsItem):
         rect = QRectF(anchor.x(), anchor.y(), text_rect.width() + 10.0 / scale, text_rect.height() + 6.0 / scale)
         rect.moveCenter(anchor)
 
-        background = QColor(theme.BACKGROUND)
+        background = QColor(theme.CANVAS)
         background.setAlpha(218)
         painter.setPen(QPen(color, max(1.0, 1.0 / scale)))
         painter.setBrush(background)
@@ -645,26 +648,26 @@ class CalibrationStickItem(QGraphicsItem):
         if failed:
             painter.setBrush(Qt.NoBrush)
             for multiplier, alpha in ((6.0, 54), (4.2, 92), (2.7, 150)):
-                glow = QColor(_LOCATION_FAIL_COLOR)
+                glow = QColor(theme.STATUS_ERROR)
                 glow.setAlpha(alpha)
                 glow_radius = max(radius * multiplier, multiplier * 3.0 / scale)
                 painter.setPen(QPen(glow, max(1.6, 2.4 / scale)))
                 painter.drawEllipse(point, glow_radius, glow_radius)
 
-        painter.setPen(QPen(QColor(theme.BACKGROUND), halo_pen_width))
+        painter.setPen(QPen(QColor(theme.CANVAS_TEXT), halo_pen_width))
         painter.setBrush(color)
         painter.drawEllipse(point, radius, radius)
 
-        painter.setPen(QPen(QColor(theme.BACKGROUND), halo_pen_width))
+        painter.setPen(QPen(QColor(theme.CANVAS_TEXT), halo_pen_width))
         painter.drawLine(QPointF(point.x() - cross, point.y()), QPointF(point.x() + cross, point.y()))
         painter.drawLine(QPointF(point.x(), point.y() - cross), QPointF(point.x(), point.y() + cross))
 
-        painter.setPen(QPen(QColor(theme.TEXT), mark_pen_width))
+        painter.setPen(QPen(QColor(theme.CANVAS), mark_pen_width))
         painter.drawLine(QPointF(point.x() - cross, point.y()), QPointF(point.x() + cross, point.y()))
         painter.drawLine(QPointF(point.x(), point.y() - cross), QPointF(point.x(), point.y() + cross))
 
-        painter.setPen(QPen(QColor(theme.BACKGROUND), max(0.8, 0.8 / scale)))
-        painter.setBrush(QColor(theme.TEXT))
+        painter.setPen(QPen(QColor(theme.CANVAS_TEXT), max(0.8, 0.8 / scale)))
+        painter.setBrush(QColor(theme.CANVAS))
         painter.drawEllipse(point, max(0.9, 1.1 / scale), max(0.9, 1.1 / scale))
 
     def _view_scale(self) -> float:

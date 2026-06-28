@@ -117,10 +117,6 @@ class VideoEditorWidget(QWidget):
         left_layout.setContentsMargins(12, 12, 12, 12)
         left_layout.setSpacing(9)
 
-        title = QLabel("Video Processing")
-        title.setObjectName("TitleLabel")
-        left_layout.addWidget(title)
-
         videos_box = QGroupBox("Uploaded videos")
         videos_box.setMinimumHeight(150)
         videos_layout = QVBoxLayout(videos_box)
@@ -248,6 +244,10 @@ class VideoEditorWidget(QWidget):
         self.settings_panel.video_preview_requested.connect(self._select_video_by_path)
 
     def _apply_style(self) -> None:
+        if hasattr(self, "crop_tool_button"):
+            self.crop_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_3))
+            self.enhancements_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_2))
+            self.trim_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_1))
         self.setStyleSheet(
             theme.stylesheet(
                 """
@@ -261,10 +261,10 @@ class VideoEditorWidget(QWidget):
             }
             QGroupBox {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 6px;
+                border-radius: 2px;
                 margin-top: 18px;
                 padding: 16px 10px 10px 10px;
-                background: {theme.PANEL};
+                background: {theme.SURFACE};
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -273,29 +273,29 @@ class VideoEditorWidget(QWidget):
                 padding: 0 3px;
                 color: {theme.TEXT};
                 font-weight: 600;
-                background: transparent;
+                background: {theme.BACKGROUND};
             }
             QScrollArea#OperationSettingsScroll,
             QScrollArea#OperationSettingsScroll > QWidget,
             QWidget#OperationSettingsContent {
-                background: {theme.PANEL};
+                background: {theme.SURFACE};
                 border: 0;
             }
             QPushButton {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 3px;
                 padding: 7px 10px;
-                background: {theme.BACKGROUND};
+                background: {theme.SURFACE};
                 color: {theme.TEXT};
             }
             QPushButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
             QPushButton:disabled {
-                color: {theme.ACCENT};
-                background: {theme.SURFACE};
+                color: {theme.CONNECTOR};
+                background: {theme.PANEL};
             }
             QPushButton#AddFilesButton {
                 background: {theme.SURFACE};
@@ -304,7 +304,7 @@ class VideoEditorWidget(QWidget):
                 font-weight: 650;
             }
             QPushButton#AddFilesButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
@@ -315,15 +315,15 @@ class VideoEditorWidget(QWidget):
                 font-weight: 650;
             }
             QPushButton#AddFolderButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
             QPushButton#RemoveButton,
             QPushButton#DeleteButton {
-                background: {theme.TEXT};
-                border-color: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.PRIMARY};
+                border-color: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
                 font-weight: 700;
             }
             QPushButton#RemoveButton:hover,
@@ -333,9 +333,9 @@ class VideoEditorWidget(QWidget):
                 color: {theme.TEXT};
             }
             QPushButton#ClearButton {
-                background: {theme.TEXT};
-                border-color: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.PRIMARY};
+                border-color: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
                 font-weight: 700;
             }
             QPushButton#ClearButton:hover {
@@ -344,9 +344,9 @@ class VideoEditorWidget(QWidget):
                 color: {theme.TEXT};
             }
             QPushButton#PrimaryButton {
-                background: {theme.TEXT};
-                border-color: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.PRIMARY};
+                border-color: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
                 font-weight: 700;
                 padding: 10px;
             }
@@ -356,13 +356,13 @@ class VideoEditorWidget(QWidget):
                 color: {theme.TEXT};
             }
             QPushButton#TinyResetButton {
-                border-radius: 4px;
+                border-radius: 2px;
                 padding: 0 4px;
                 font-size: 9px;
             }
             QPushButton#InlineDeleteButton {
                 border: 0;
-                border-radius: 8px;
+                border-radius: 0;
                 padding: 0;
                 min-width: 18px;
                 max-width: 18px;
@@ -373,8 +373,8 @@ class VideoEditorWidget(QWidget):
                 font-weight: 800;
             }
             QPushButton#InlineDeleteButton:hover {
-                background: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
             }
             QPushButton#CreateRegionButton,
             QPushButton#CreateCropRegionButton,
@@ -397,9 +397,9 @@ class VideoEditorWidget(QWidget):
                 padding: 2px 6px;
                 font-size: 10px;
                 min-height: 18px;
-                background: {theme.TEXT};
-                border-color: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.PRIMARY};
+                border-color: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
             }
             QPushButton#ChooseVideosButton:hover {
                 background: {theme.SOFT};
@@ -414,32 +414,33 @@ class VideoEditorWidget(QWidget):
             }
             QFrame#OperationsBar {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 6px;
-                background: {theme.PANEL};
+                border-radius: 2px;
+                background: {theme.SURFACE};
             }
             QToolButton {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 3px;
                 padding: 7px 10px;
                 background: {theme.SURFACE};
                 font-weight: 600;
             }
             QLabel#TitleLabel {
                 font-size: 19px;
-                font-weight: 800;
+                font-weight: 650;
             }
             QLabel#PreviewTitle {
                 font-size: 15px;
-                font-weight: 700;
+                font-weight: 600;
             }
             QLabel#SettingsPlaceholder {
                 color: {theme.TEXT};
                 font-size: 12px;
             }
             QFrame#RegionSettings {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
-                background: {theme.SURFACE};
+                border: 0;
+                border-top: 1px solid {theme.BORDER};
+                border-radius: 0;
+                background: transparent;
             }
             QLabel#RegionTitle {
                 font-weight: 700;
@@ -451,51 +452,52 @@ class VideoEditorWidget(QWidget):
             }
             QSpinBox {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 4px;
+                border-radius: 2px;
                 background: {theme.SURFACE};
                 padding: 0 2px;
                 font-size: 10px;
             }
             QDoubleSpinBox {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 4px;
+                border-radius: 2px;
                 background: {theme.SURFACE};
                 padding: 0 2px;
                 font-size: 10px;
             }
             QComboBox, QLineEdit {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 4px;
+                border-radius: 2px;
                 background: {theme.SURFACE};
                 padding: 5px 6px;
             }
             QFrame#EnhancementSettings {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
-                background: {theme.SURFACE};
+                border: 0;
+                border-top: 1px solid {theme.BORDER};
+                border-radius: 0;
+                background: transparent;
             }
             QSlider#EnhancementSlider::groove:horizontal {
                 height: 7px;
                 border-radius: 3px;
-                background: {theme.TEXT};
-                border: 1px solid {theme.TEXT};
+                background: {theme.PRIMARY};
+                border: 1px solid {theme.PRIMARY};
             }
             QSlider#EnhancementSlider::handle:horizontal {
                 width: 16px;
                 margin: -6px 0;
                 border-radius: 8px;
                 background: {theme.SOFT};
-                border: 2px solid {theme.TEXT};
+                border: 2px solid {theme.PRIMARY};
             }
             QSlider#EnhancementSlider::handle:horizontal:hover {
                 background: {theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)};
             }
             QListWidget {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 2px;
                 background: {theme.SURFACE};
                 alternate-background-color: {theme.SURFACE};
-                selection-background-color: #F79B72;
+                selection-background-color: {theme.SOFT};
                 selection-color: {theme.TEXT};
                 font-size: 9px;
             }
@@ -503,24 +505,24 @@ class VideoEditorWidget(QWidget):
                 padding: 1px 3px;
             }
             QListWidget::item:selected {
-                background: #F79B72;
+                background: {theme.SOFT};
                 color: {theme.TEXT};
             }
             QGraphicsView {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 6px;
-                background: {theme.TEXT};
+                border-radius: 2px;
+                background: {theme.CANVAS};
             }
             QProgressBar {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 2px;
                 background: {theme.SURFACE};
                 height: 16px;
                 text-align: center;
             }
             QProgressBar::chunk {
-                background: #F79B72;
-                border-radius: 4px;
+                background: {theme.PRIMARY};
+                border-radius: 1px;
             }
             """
             )
@@ -1046,33 +1048,29 @@ def _make_tool_button(text: str, color: str) -> QToolButton:
 def _tool_button_style(color: str) -> str:
     return f"""
         QToolButton {{
-            background: {theme.mix_hex(color, theme.BACKGROUND, 0.82)};
-            border: 1px solid {theme.mix_hex(color, theme.BACKGROUND, 0.50)};
+            background: {theme.SURFACE};
+            border: 1px solid {theme.BORDER};
+            border-bottom: 3px solid {color};
             color: {theme.TEXT};
-            border-radius: 5px;
-            padding: 7px 10px;
-            font-weight: 700;
+            border-radius: 3px;
+            padding: 6px 10px 5px 10px;
+            font-weight: 600;
         }}
         QToolButton:hover {{
-            background: {theme.mix_hex(color, theme.BACKGROUND, 0.48)};
-            border: 2px solid {theme.TEXT};
-            padding: 6px 9px;
+            background: {theme.PANEL};
+            border-color: {theme.CONNECTOR};
+            border-bottom-color: {color};
         }}
         QToolButton:checked {{
-            background: {theme.mix_hex(color, theme.BACKGROUND, 0.12)};
-            border: 3px solid {theme.TEXT};
+            background: {theme.PANEL};
+            border: 1px solid {theme.TEXT};
+            border-bottom: 3px solid {color};
             color: {theme.TEXT};
-            padding: 5px 8px;
-        }}
-        QToolButton:checked:hover {{
-            background: {theme.mix_hex(color, theme.BACKGROUND, 0.06)};
-            border: 3px solid {theme.TEXT};
-            padding: 5px 8px;
         }}
         QToolButton:disabled {{
-            background: {theme.SURFACE};
+            background: {theme.BACKGROUND};
             border-color: {theme.ACCENT};
-            color: {theme.TEXT};
+            color: {theme.CONNECTOR};
         }}
     """
 

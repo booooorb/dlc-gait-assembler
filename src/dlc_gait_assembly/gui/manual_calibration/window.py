@@ -100,10 +100,6 @@ class ManualCalibrationWidget(QWidget):
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(12)
 
-        title = QLabel("Manual Calibration")
-        title.setObjectName("TitleLabel")
-        left_layout.addWidget(title)
-
         media_box = QGroupBox("Calibration frame")
         media_box.setMaximumHeight(245)
         media_layout = QVBoxLayout(media_box)
@@ -288,6 +284,10 @@ class ManualCalibrationWidget(QWidget):
         self.export_conversion_button.clicked.connect(self._export_conversion_map)
 
     def _apply_style(self) -> None:
+        if hasattr(self, "x_tool_button"):
+            self.x_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_3))
+            self.y_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_2))
+            self.cm_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_1))
         self.setStyleSheet(
             theme.stylesheet(
                 """
@@ -301,10 +301,10 @@ class ManualCalibrationWidget(QWidget):
             }
             QGroupBox {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 6px;
+                border-radius: 2px;
                 margin-top: 18px;
                 padding: 16px 10px 10px 10px;
-                background: {theme.PANEL};
+                background: {theme.SURFACE};
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -313,38 +313,38 @@ class ManualCalibrationWidget(QWidget):
                 padding: 0 3px;
                 color: {theme.TEXT};
                 font-weight: 600;
-                background: transparent;
+                background: {theme.BACKGROUND};
             }
             QLabel#TitleLabel {
                 font-size: 19px;
-                font-weight: 800;
+                font-weight: 650;
             }
             QLabel#PreviewTitle {
                 font-size: 15px;
-                font-weight: 700;
+                font-weight: 600;
             }
             QLabel#MutedLabel {
                 color: {theme.TEXT};
                 font-size: 12px;
             }
             QLabel#ResultsLabel {
-                background: {theme.PANEL};
+                background: {theme.SURFACE};
             }
             QScrollArea#ResultsScroll,
             QScrollArea#ResultsScroll > QWidget,
             QScrollArea#ResultsScroll > QWidget > QWidget {
-                background: {theme.PANEL};
+                background: {theme.SURFACE};
                 border: 0;
             }
             QPushButton {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
+                border-radius: 3px;
                 padding: 7px 10px;
-                background: {theme.BACKGROUND};
+                background: {theme.SURFACE};
                 color: {theme.TEXT};
             }
             QPushButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
@@ -352,17 +352,17 @@ class ManualCalibrationWidget(QWidget):
                 background: {theme.SURFACE};
                 border-color: {theme.ACCENT};
                 color: {theme.TEXT};
-                font-weight: 700;
+                font-weight: 600;
             }
             QPushButton#OpenMediaButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 border-color: {theme.TEXT};
                 color: {theme.TEXT};
             }
             QPushButton#ClearButton {
-                background: {theme.TEXT};
-                border-color: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.PRIMARY};
+                border-color: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
                 font-weight: 700;
             }
             QPushButton#ClearButton:hover {
@@ -393,9 +393,9 @@ class ManualCalibrationWidget(QWidget):
                 font-size: 10px;
             }
             QPushButton#ExportButton {
-                background: {theme.TEXT};
-                border-color: {theme.TEXT};
-                color: {theme.BACKGROUND};
+                background: {theme.PRIMARY};
+                border-color: {theme.PRIMARY};
+                color: {theme.PRIMARY_TEXT};
             }
             QPushButton#ResetButton:hover,
             QPushButton#ExportButton:hover {
@@ -405,48 +405,44 @@ class ManualCalibrationWidget(QWidget):
             }
             QFrame#OperationsBar {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 6px;
-                background: {theme.PANEL};
+                border-radius: 2px;
+                background: {theme.SURFACE};
             }
-            QFrame#InlineSettings {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
-                background: {theme.BACKGROUND};
-            }
+            QFrame#InlineSettings,
             QFrame#MarkerGapInline {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
-                background: {theme.BACKGROUND};
+                border: 0;
+                border-radius: 0;
+                background: transparent;
             }
             QPushButton#PreviewResetZoomButton {
                 background: {theme.BACKGROUND};
                 border: 1px solid {theme.TEXT};
-                border-radius: 5px;
+                border-radius: 3px;
                 color: {theme.TEXT};
                 font-size: 10px;
                 font-weight: 700;
                 padding: 2px 5px;
             }
             QPushButton#PreviewResetZoomButton:hover {
-                background: {theme.SOFT};
+                background: {theme.PANEL};
                 color: {theme.TEXT};
             }
             QGraphicsView {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 6px;
-                background: {theme.TEXT};
+                border-radius: 2px;
+                background: {theme.CANVAS};
             }
             QComboBox,
             QDoubleSpinBox {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 4px;
+                border-radius: 2px;
                 background: {theme.SURFACE};
                 padding: 4px 6px;
             }
             QListWidget {
                 border: 1px solid {theme.ACCENT};
-                border-radius: 5px;
-                background: {theme.BACKGROUND};
+                border-radius: 2px;
+                background: {theme.SURFACE};
                 color: {theme.TEXT};
                 padding: 2px;
             }
@@ -995,33 +991,29 @@ def _make_tool_button(text: str, color: str) -> QToolButton:
 def _tool_button_style(color: str) -> str:
     return f"""
         QToolButton {{
-            background: {theme.mix_hex(color, theme.BACKGROUND, 0.82)};
-            border: 1px solid {theme.mix_hex(color, theme.BACKGROUND, 0.50)};
+            background: {theme.SURFACE};
+            border: 1px solid {theme.BORDER};
+            border-bottom: 3px solid {color};
             color: {theme.TEXT};
-            border-radius: 5px;
-            padding: 7px 10px;
-            font-weight: 700;
+            border-radius: 3px;
+            padding: 6px 10px 5px 10px;
+            font-weight: 600;
         }}
         QToolButton:hover {{
-            background: {theme.mix_hex(color, theme.BACKGROUND, 0.48)};
-            border: 2px solid {theme.TEXT};
-            padding: 6px 9px;
+            background: {theme.PANEL};
+            border-color: {theme.CONNECTOR};
+            border-bottom-color: {color};
         }}
         QToolButton:checked {{
-            background: {theme.mix_hex(color, theme.BACKGROUND, 0.12)};
-            border: 3px solid {theme.TEXT};
+            background: {theme.PANEL};
+            border: 1px solid {theme.TEXT};
+            border-bottom: 3px solid {color};
             color: {theme.TEXT};
-            padding: 5px 8px;
-        }}
-        QToolButton:checked:hover {{
-            background: {theme.mix_hex(color, theme.BACKGROUND, 0.06)};
-            border: 3px solid {theme.TEXT};
-            padding: 5px 8px;
         }}
         QToolButton:disabled {{
-            background: {theme.SURFACE};
+            background: {theme.BACKGROUND};
             border-color: {theme.ACCENT};
-            color: {theme.TEXT};
+            color: {theme.CONNECTOR};
         }}
     """
 
