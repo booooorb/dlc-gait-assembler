@@ -54,7 +54,7 @@ class OperationSettingsPanel(QGroupBox):
     trim_ranges_reset = Signal()
 
     def __init__(self, preview: RegionPreviewView, parent=None):
-        super().__init__("Operations Settings", parent)
+        super().__init__("Operation settings", parent)
         self._preview = preview
         self._building = False
         self._controls: dict[tuple[str, int | None], dict] = {}
@@ -72,7 +72,7 @@ class OperationSettingsPanel(QGroupBox):
         self._choice_apply_to_all_regions = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 7, 6, 6)
+        layout.setContentsMargins(8, 8, 8, 8)
         self._scroll = QScrollArea()
         self._scroll.setObjectName("OperationSettingsScroll")
         self._scroll.setWidgetResizable(True)
@@ -84,7 +84,7 @@ class OperationSettingsPanel(QGroupBox):
         self._content.setObjectName("OperationSettingsContent")
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout.setSpacing(4)
+        self._content_layout.setSpacing(8)
         self._scroll.setWidget(self._content)
         layout.addWidget(self._scroll, 1)
 
@@ -215,12 +215,12 @@ class OperationSettingsPanel(QGroupBox):
         for field, title, minimum, maximum, scale in _ENHANCEMENT_SLIDERS:
             self._add_enhancement_slider(field, title, minimum, maximum, scale, getattr(settings, field))
 
-        reset_button = QPushButton("Reset Enhancements")
+        reset_button = QPushButton("Reset enhancements")
         reset_button.setObjectName("ResetButton")
         set_tooltip(reset_button, "Restore all enhancement settings to their defaults.")
         reset_button.clicked.connect(self._reset_enhancements)
         self._content_layout.addWidget(reset_button)
-        zoom_reset_button = QPushButton("Reset Preview Zoom")
+        zoom_reset_button = QPushButton("Reset preview zoom")
         zoom_reset_button.setObjectName("ResetButton")
         set_tooltip(zoom_reset_button, "Return the enhancement preview to fit-to-window zoom.")
         zoom_reset_button.clicked.connect(lambda _checked=False: self._preview.reset_enhancement_zoom())
@@ -240,11 +240,11 @@ class OperationSettingsPanel(QGroupBox):
         frame = QFrame()
         frame.setObjectName("EnhancementSettings")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(5, 3, 5, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setSpacing(4)
 
         label_row = QHBoxLayout()
-        label_row.setSpacing(4)
+        label_row.setSpacing(8)
         label = QLabel(title)
         label.setObjectName("RegionTitle")
         label_row.addWidget(label)
@@ -336,13 +336,13 @@ class OperationSettingsPanel(QGroupBox):
         for index, trim_range in enumerate(ranges):
             self._add_trim_range_settings(index, trim_range, index == self._active_trim_index)
 
-        add_button = QPushButton("Add Trim Range")
+        add_button = QPushButton("Add trim range")
         add_button.setObjectName("CreateTrimRangeButton")
         set_tooltip(add_button, "Add another trim range for the selected video.")
         add_button.clicked.connect(lambda _checked=False: self.trim_range_added.emit())
         self._content_layout.addWidget(add_button)
 
-        reset_button = QPushButton("Reset Video Trim")
+        reset_button = QPushButton("Reset video trim")
         reset_button.setObjectName("ResetButton")
         set_tooltip(reset_button, "Reset the selected video to one full-length trim range.")
         reset_button.clicked.connect(lambda _checked=False: self.trim_ranges_reset.emit())
@@ -355,9 +355,9 @@ class OperationSettingsPanel(QGroupBox):
         frame = QFrame()
         frame.setObjectName("RegionSettings")
         layout = QGridLayout(frame)
-        layout.setContentsMargins(5, 4, 5, 5)
-        layout.setHorizontalSpacing(4)
-        layout.setVerticalSpacing(2)
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(4)
         layout.setColumnStretch(1, 1)
 
         title = QLabel(f"Range {index + 1}")
@@ -477,7 +477,7 @@ class OperationSettingsPanel(QGroupBox):
         self._content_layout.addWidget(label)
 
     def _add_create_region_button(self) -> None:
-        text = "New Region"
+        text = "New region"
         object_name = "CreateCropRegionButton"
 
         button = QPushButton(text)
@@ -498,9 +498,9 @@ class OperationSettingsPanel(QGroupBox):
         frame = QFrame()
         frame.setObjectName("RegionSettings")
         layout = QGridLayout(frame)
-        layout.setContentsMargins(5, 4, 5, 5)
-        layout.setHorizontalSpacing(4)
-        layout.setVerticalSpacing(2)
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(4)
 
         title_label = QLabel(title)
         title_label.setObjectName("RegionTitle")

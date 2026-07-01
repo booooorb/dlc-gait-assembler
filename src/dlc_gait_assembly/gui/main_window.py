@@ -5,24 +5,28 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication, QPixmap
+from PySide6.QtGui import QActionGroup, QColor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QPushButton,
-    QStackedWidget,
+    QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
+from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.gait_analysis.window import GaitAnalysisWidget
-from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
+from dlc_gait_assembly.gui.shared.widgets import CurrentPageStackedWidget
 
 
 MAIN_MENU_CONTENT_WIDTH = 1080
@@ -89,19 +93,21 @@ TOOL_SPECS = [
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, initial_tool_id: str | None = None):
+    theme_mode_requested = Signal(str)
+
+    def __init__(self, initial_tool_id: str | None = None, initial_theme_mode: str = "light"):
         super().__init__()
         self.setWindowTitle("DLC Gait Assembler")
+        self.setMinimumSize(960, 640)
         self.resize(1280, 820)
         self._active_tool: QWidget | None = None
         self._active_tool_id: str | None = None
         self._tool_widgets: dict[str, QWidget] = {}
-        self._stack = QStackedWidget()
+        self._stack = CurrentPageStackedWidget()
         self._main_menu = MainMenuWidget(TOOL_SPECS)
         self._main_menu.tool_requested.connect(self._open_tool)
         self._stack.addWidget(self._main_menu)
-        self._build_shell()
-        self._build_navigation()
+        self._build_shell(initial_theme_mode)
         if initial_tool_id is None:
             self._show_main_menu()
         else:
@@ -119,6 +125,8 @@ class MainWindow(QMainWindow):
 
     def apply_theme(self) -> None:
         self._apply_shell_style()
+        for logo in self.findChildren(PartnerLogoLabel):
+            logo.apply_theme()
         self._main_menu._apply_style()
         for tool in self._tool_widgets.values():
             apply_style = getattr(tool, "_apply_style", None)
@@ -127,7 +135,12 @@ class MainWindow(QMainWindow):
         self._refresh_stage_navigation()
         self.update()
 
-    def _build_shell(self) -> None:
+    def set_theme_mode(self, mode: str) -> None:
+        action = self._theme_actions.get(mode)
+        if action is not None:
+            action.setChecked(True)
+
+    def _build_shell(self, initial_theme_mode: str) -> None:
         shell = QWidget()
         shell.setObjectName("AppShell")
         shell_layout = QVBoxLayout(shell)
@@ -138,7 +151,7 @@ class MainWindow(QMainWindow):
         toolbar.setObjectName("AppToolbar")
         toolbar.setFixedHeight(APP_TOOLBAR_HEIGHT)
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(18, 0, 16, 0)
+        toolbar_layout.setContentsMargins(16, 0, 16, 0)
         toolbar_layout.setSpacing(0)
 
         home_button = QPushButton("DLC Gait Assembler")
@@ -169,11 +182,24 @@ class MainWindow(QMainWindow):
 
         toolbar_layout.addStretch(1)
 
+        settings_button = QToolButton()
+        settings_button.setObjectName("SettingsButton")
+        settings_button.setText("Settings")
+        settings_button.setAccessibleName("Application settings")
+        settings_button.setCursor(Qt.PointingHandCursor)
+        settings_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        settings_menu = QMenu(settings_button)
+        self._build_theme_actions(settings_menu, initial_theme_mode)
+        settings_button.setMenu(settings_menu)
+        self._settings_button = settings_button
+        self._settings_menu = settings_menu
+        toolbar_layout.addWidget(settings_button)
+
         partner_marks = QFrame()
         partner_marks.setObjectName("PartnerMarks")
         partner_layout = QHBoxLayout(partner_marks)
-        partner_layout.setContentsMargins(8, 3, 8, 3)
-        partner_layout.setSpacing(10)
+        partner_layout.setContentsMargins(8, 4, 8, 4)
+        partner_layout.setSpacing(12)
         partner_layout.addWidget(_main_menu_logo_label("choforcelab.png"))
         partner_layout.addWidget(_main_menu_logo_label("NERVES_Logo.png"))
         toolbar_layout.addWidget(partner_marks)
@@ -228,7 +254,7 @@ class MainWindow(QMainWindow):
                     font-size: 12px;
                     font-weight: 550;
                     min-height: 48px;
-                    padding: 0 9px;
+                    padding: 0 8px;
                 }
                 QPushButton#StageNavigationButton:hover {
                     background: {theme.PANEL};
@@ -245,10 +271,22 @@ class MainWindow(QMainWindow):
                     color: {theme.TEXT};
                     font-weight: 650;
                 }
+                QToolButton#SettingsButton {
+                    background: transparent;
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 3px;
+                    color: {theme.TEXT};
+                    min-height: 26px;
+                    padding: 2px 8px;
+                }
+                QToolButton#SettingsButton:hover,
+                QToolButton#SettingsButton:open {
+                    background: {theme.PANEL};
+                    border-color: {theme.TEXT};
+                }
                 QFrame#PartnerMarks {
-                    background: {theme.LOGO_SURFACE};
-                    border: 1px solid {theme.LOGO_BORDER};
-                    border-radius: 2px;
+                    background: transparent;
+                    border: 0;
                     margin-left: 10px;
                 }
                 QLabel#MainMenuLogo {
@@ -258,17 +296,27 @@ class MainWindow(QMainWindow):
             )
         )
 
-    def _build_navigation(self) -> None:
-        navigation = self.menuBar().addMenu("Navigation")
-        main_menu_action = navigation.addAction("Main Menu")
-        main_menu_action.triggered.connect(self._show_main_menu)
-        navigation.addSeparator()
+    def _build_theme_actions(self, settings_menu: QMenu, initial_theme_mode: str) -> None:
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        self._theme_actions = {}
+        for label, mode in (("Light mode", "light"), ("Dark mode", "dark")):
+            action = settings_menu.addAction(label)
+            action.setCheckable(True)
+            action.setData(mode)
+            action.setChecked(mode == initial_theme_mode)
+            action.triggered.connect(
+                lambda checked=False, selected_mode=mode: self._request_theme_mode(
+                    selected_mode, checked
+                )
+            )
+            theme_group.addAction(action)
+            self._theme_actions[mode] = action
+        self._theme_action_group = theme_group
 
-        for spec in TOOL_SPECS:
-            action = navigation.addAction(spec.label)
-            action.setEnabled(spec.enabled)
-            if spec.enabled:
-                action.triggered.connect(lambda _checked=False, tool_id=spec.id: self._open_tool(tool_id))
+    def _request_theme_mode(self, mode: str, checked: bool) -> None:
+        if checked:
+            self.theme_mode_requested.emit(mode)
 
     def _show_main_menu(self) -> None:
         if not self._can_leave_active_tool():
@@ -343,7 +391,7 @@ class MainMenuWidget(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(32, 28, 32, 36)
+        root.setContentsMargins(32, 24, 32, 32)
         root.setSpacing(0)
 
         content = QWidget()
@@ -352,37 +400,81 @@ class MainMenuWidget(QWidget):
         content.setMaximumWidth(MAIN_MENU_CONTENT_WIDTH)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(18)
+        content_layout.setSpacing(16)
 
         section_title = QLabel("Workflow")
         section_title.setObjectName("WorkflowTitle")
         content_layout.addWidget(section_title)
 
+        pipeline_tabs = QTabWidget()
+        pipeline_tabs.setObjectName("PipelineTabs")
+        pipeline_tabs.setDocumentMode(True)
+        pipeline_tabs.tabBar().setExpanding(True)
+        pipeline_tabs.setAccessibleName("Pipeline type")
+
+        manual_page = QWidget()
+        manual_page.setObjectName("ManualPipelinePage")
+        manual_layout = QVBoxLayout(manual_page)
+        manual_layout.setContentsMargins(0, 8, 0, 0)
+        manual_layout.addWidget(self._workflow_list(self._tools, connect_tools=True))
+        pipeline_tabs.addTab(manual_page, "Manual pipeline")
+
+        automated_page = QWidget()
+        automated_page.setObjectName("AutomatedPipelinePage")
+        automated_layout = QVBoxLayout(automated_page)
+        automated_layout.setContentsMargins(0, 8, 0, 0)
+        self.automated_profiles = AutomatedPipelineProfilesWidget()
+        automated_layout.addWidget(self.automated_profiles)
+        pipeline_tabs.addTab(automated_page, "Automated pipeline")
+
+        self.pipeline_tabs = pipeline_tabs
+        content_layout.addWidget(pipeline_tabs)
+
+        root.addWidget(content, 0, Qt.AlignHCenter)
+        root.addStretch(1)
+
+    def _workflow_list(self, tools: list[ToolSpec], connect_tools: bool) -> QFrame:
         workflow_list = QFrame()
         workflow_list.setObjectName("WorkflowList")
         list_layout = QVBoxLayout(workflow_list)
         list_layout.setContentsMargins(0, 0, 0, 0)
         list_layout.setSpacing(0)
 
-        for index, spec in enumerate(self._tools):
+        for index, spec in enumerate(tools):
             step = WorkflowStep(index + 1, spec)
-            if spec.enabled:
+            if connect_tools and spec.enabled:
                 step.clicked.connect(self.tool_requested.emit)
             list_layout.addWidget(step)
-            if index < len(self._tools) - 1:
+            if index < len(tools) - 1:
                 separator = QFrame()
                 separator.setObjectName("WorkflowSeparator")
                 separator.setFrameShape(QFrame.HLine)
                 list_layout.addWidget(separator)
-
-        content_layout.addWidget(workflow_list)
-        root.addWidget(content, 0, Qt.AlignHCenter)
-        root.addStretch(1)
+        return workflow_list
 
     def _apply_style(self) -> None:
+        if hasattr(self, "automated_profiles"):
+            self.automated_profiles._apply_style()
+        pipeline_tab_style = """
+            QTabWidget#PipelineTabs {
+                background: {theme.PANEL};
+            }
+            QTabWidget#PipelineTabs::pane {
+                background: {theme.BACKGROUND};
+                border: 0;
+                border-top: 1px solid {theme.BORDER};
+            }
+            QTabWidget#PipelineTabs QTabBar::tab {
+                background: {theme.PANEL};
+            }
+            QTabWidget#PipelineTabs QTabBar::tab:selected {
+                background: {theme.SURFACE};
+            }
+        """
         self.setStyleSheet(
             theme.stylesheet(
-                """
+                pipeline_tab_style
+                + """
             QWidget#MainMenuWidget {
                 background: {theme.BACKGROUND};
                 color: {theme.TEXT};
@@ -399,8 +491,11 @@ class MainMenuWidget(QWidget):
             }
             QLabel#WorkflowTitle {
                 color: {theme.TEXT};
-                font-size: 20px;
-                font-weight: 650;
+                font-size: 16px;
+                font-weight: 600;
+            }
+            QWidget#ManualPipelinePage, QWidget#AutomatedPipelinePage {
+                background: transparent;
             }
             QFrame#WorkflowList {
                 background: {theme.SURFACE};
@@ -465,24 +560,70 @@ class MainMenuWidget(QWidget):
         )
 
 
-def _main_menu_logo_label(filename: str) -> QLabel:
-    label = QLabel()
-    label.setObjectName("MainMenuLogo")
-    label.setAlignment(Qt.AlignCenter)
-    path = Path(__file__).resolve().parents[3] / "assets" / "images" / filename
-    pixmap = QPixmap(str(path))
-    if not pixmap.isNull():
-        scale = max(1.0, QGuiApplication.primaryScreen().devicePixelRatio() if QGuiApplication.primaryScreen() is not None else 1.0)
+class PartnerLogoLabel(QLabel):
+    def __init__(self, filename: str):
+        super().__init__()
+        self.setObjectName("MainMenuLogo")
+        self.setAccessibleName("Cho Force Lab logo" if filename == "choforcelab.png" else "NERVES Lab logo")
+        self.setAlignment(Qt.AlignCenter)
+        self._plain_pixmap = QPixmap()
+        self._outlined_pixmap = QPixmap()
+        self._load_pixmaps(filename)
+        self.apply_theme()
+
+    def _load_pixmaps(self, filename: str) -> None:
+        path = Path(__file__).resolve().parents[3] / "assets" / "images" / filename
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            return
+
+        screen = QGuiApplication.primaryScreen()
+        scale = max(1.0, screen.devicePixelRatio() if screen is not None else 1.0)
         scaled = pixmap.scaled(
             round(MAIN_MENU_LOGO_MAX_WIDTH * scale),
             round(MAIN_MENU_LOGO_HEIGHT * scale),
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
-        scaled.setDevicePixelRatio(scale)
-        label.setPixmap(scaled)
-        label.setFixedSize(round(scaled.width() / scale), round(scaled.height() / scale))
-    return label
+        outline_width = max(1, round(2 * scale))
+        self._plain_pixmap = QPixmap(scaled)
+        self._outlined_pixmap = _pixmap_with_outline(scaled, QColor("#FFFFFF"), outline_width)
+        self._plain_pixmap.setDevicePixelRatio(scale)
+        self._outlined_pixmap.setDevicePixelRatio(scale)
+
+    def apply_theme(self) -> None:
+        pixmap = self._outlined_pixmap if theme.IS_DARK else self._plain_pixmap
+        if pixmap.isNull():
+            return
+        self.setPixmap(pixmap)
+        scale = pixmap.devicePixelRatio()
+        self.setFixedSize(round(pixmap.width() / scale), round(pixmap.height() / scale))
+
+
+def _pixmap_with_outline(source: QPixmap, color: QColor, width: int) -> QPixmap:
+    width = max(1, width)
+    silhouette = QPixmap(source.size())
+    silhouette.fill(Qt.transparent)
+    silhouette_painter = QPainter(silhouette)
+    silhouette_painter.drawPixmap(0, 0, source)
+    silhouette_painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    silhouette_painter.fillRect(silhouette.rect(), color)
+    silhouette_painter.end()
+
+    outlined = QPixmap(source.width() + width * 2, source.height() + width * 2)
+    outlined.fill(Qt.transparent)
+    painter = QPainter(outlined)
+    for y_offset in range(-width, width + 1):
+        for x_offset in range(-width, width + 1):
+            if x_offset * x_offset + y_offset * y_offset <= width * width:
+                painter.drawPixmap(width + x_offset, width + y_offset, silhouette)
+    painter.drawPixmap(width, width, source)
+    painter.end()
+    return outlined
+
+
+def _main_menu_logo_label(filename: str) -> QLabel:
+    return PartnerLogoLabel(filename)
 
 
 class WorkflowStep(QFrame):
@@ -505,8 +646,8 @@ class WorkflowStep(QFrame):
 
     def _build_ui(self, index: int, spec: ToolSpec) -> None:
         root = QHBoxLayout(self)
-        root.setContentsMargins(18, 12, 16, 12)
-        root.setSpacing(14)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(16)
 
         number = QLabel(str(index))
         number.setObjectName("StepIndex")

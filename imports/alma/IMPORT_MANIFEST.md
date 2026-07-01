@@ -9,6 +9,10 @@ DeepLabCut's conda environment file lives beside this folder at `imports/DEEPLAB
 - `Functions/KinematicsFunctions.py`: stride/gait cycle detection, low-pass filtering, treadmill correction, spontaneous walking extraction, dragging detection, parameter calculation, and stickplot generation.
 - `config.yaml`: ALMA default settings used to seed the gait-analysis GUI.
 
+The ladder-rung detection logic from upstream `Functions/FootfallFunctions.py` is ported into
+`src/dlc_gait_assembly/services/pipeline/ladder.py`. It retains ALMA's deviation, baseline,
+threshold, confidence, and recovery behavior while adding safe handling for recordings with no detections.
+
 ## Reference Files
 
 - `LICENSE`: ALMA license copied with the imported implementation.

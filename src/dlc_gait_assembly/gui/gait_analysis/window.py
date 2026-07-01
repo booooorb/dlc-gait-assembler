@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import csv
+import tempfile
+from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QByteArray, Qt, QThread, Signal
+from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -20,10 +22,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QRadioButton,
-    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -46,16 +49,16 @@ from dlc_gait_assembly.services.video_processing import probe_video
 
 STANDARD_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")
 BODY_PART_ALIASES = {
-    "toe": ("toe", "toer", "toel", "toe_r", "toe_l"),
-    "mtp": ("mtp", "mtpr", "mtpl", "mtp_r", "mtp_l"),
-    "ankle": ("ankle", "ankler", "anklel", "ankle_r", "ankle_l"),
-    "knee": ("knee", "kneer", "kneel", "knee_r", "knee_l"),
-    "hip": ("hip", "hipr", "hipl", "hip_r", "hip_l"),
-    "iliac crest": ("iliac crest", "crest", "crestr", "crestl", "crest_r", "crest_l", "iliac crestr", "iliac crestl", "iliacr", "iliacl"),
+    "toe": ("toe", "toer", "toel", "toe_r", "toe_l", "l-back-toe", "l-back-toe_tip", "r-back-toe", "r-back-toe_tip"),
+    "mtp": ("mtp", "mtpr", "mtpl", "mtp_r", "mtp_l", "l-back-mtp", "r-back-mtp"),
+    "ankle": ("ankle", "ankler", "anklel", "ankle_r", "ankle_l", "l-back-ankle", "r-back-ankle"),
+    "knee": ("knee", "kneer", "kneel", "knee_r", "knee_l", "l-back-knee", "r-back-knee"),
+    "hip": ("hip", "hipr", "hipl", "hip_r", "hip_l", "l-hip", "r-hip"),
+    "iliac crest": ("iliac crest", "crest", "crestr", "crestl", "crest_r", "crest_l", "iliac crestr", "iliac crestl", "iliacr", "iliacl", "l-iliac-crest", "r-iliac-crest"),
 }
 
 
-class GaitAnalysisWidget(QWidget):
+class AlmaKinematicsWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("GaitAnalysisWidget")
@@ -63,6 +66,9 @@ class GaitAnalysisWidget(QWidget):
         self._alma_root = default_alma_root(self._project_root)
         self._selected_files: list[Path] = []
         self._worker: AlmaAnalysisThread | None = None
+        self._preview_worker: StickPlotPreviewThread | None = None
+        self._stickplot_preview_ready = False
+        self._preview_invalidated_while_running = False
         self._defaults = settings_from_alma_config(load_alma_config_defaults(self._alma_root))
         self._calibration_map_path: Path | None = None
         self._calibration_map_source = ""
@@ -78,11 +84,13 @@ class GaitAnalysisWidget(QWidget):
         self._update_run_state()
 
     def can_close(self, parent=None) -> bool:
-        if self._worker is not None and self._worker.isRunning():
+        analysis_running = self._worker is not None and self._worker.isRunning()
+        preview_running = self._preview_worker is not None and self._preview_worker.isRunning()
+        if analysis_running or preview_running:
             QMessageBox.information(
                 parent or self,
-                "Gait analysis is running",
-                "Wait for the current ALMA gait analysis run to finish before closing the window.",
+                "Gait processing is running",
+                "Wait for the current stick-plot preview or gait-analysis run to finish before closing the window.",
             )
             return False
         return True
@@ -91,22 +99,34 @@ class GaitAnalysisWidget(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
+        header = QWidget()
+        header.setObjectName("WorkspaceHeader")
+        header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 16, 16, 0)
+        header_layout.setSpacing(12)
+        title = QLabel("Runway analysis")
+        title.setObjectName("TitleLabel")
+        header_layout.addWidget(title)
+        header_layout.addStretch(1)
+        root.addWidget(header, 0)
+
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
-        root.addWidget(splitter)
+        root.addWidget(splitter, 1)
 
         left_panel = QWidget()
-        left_panel.setMinimumWidth(520)
+        left_panel.setMinimumWidth(440)
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(14, 14, 14, 14)
-        left_layout.setSpacing(10)
+        left_layout.setContentsMargins(16, 16, 16, 16)
+        left_layout.setSpacing(12)
 
         file_box = QGroupBox("ALMA input and output")
         file_layout = QVBoxLayout(file_box)
         button_row = QHBoxLayout()
         self.add_file_button = QPushButton("Add CSV")
         set_tooltip(self.add_file_button, "Add one ALMA or DeepLabCut coordinate CSV.", "Ctrl+O")
-        self.add_folder_button = QPushButton("Add Folder")
+        self.add_folder_button = QPushButton("Add folder")
         set_tooltip(self.add_folder_button, "Add every CSV in a folder.", "Ctrl+Shift+O")
         self.clear_files_button = QPushButton("Clear")
         set_tooltip(self.clear_files_button, "Clear the selected input CSV files.", "Ctrl+L")
@@ -116,7 +136,8 @@ class GaitAnalysisWidget(QWidget):
         file_layout.addLayout(button_row)
 
         self.file_list = QListWidget()
-        file_layout.addWidget(self.file_list, 1)
+        self.file_list.setMaximumHeight(70)
+        file_layout.addWidget(self.file_list)
 
         output_row = QHBoxLayout()
         self.output_folder_edit = QLineEdit(str(self._default_output_root()))
@@ -126,34 +147,53 @@ class GaitAnalysisWidget(QWidget):
         output_row.addWidget(self.output_folder_edit, 1)
         output_row.addWidget(self.output_folder_button)
         file_layout.addLayout(output_row)
-        left_layout.addWidget(file_box, 2)
+        left_layout.addWidget(file_box)
 
-        settings_scroll = QScrollArea()
-        settings_scroll.setWidgetResizable(True)
-        settings_scroll.setFrameShape(QFrame.NoFrame)
-        settings_content = QWidget()
-        settings_layout = QVBoxLayout(settings_content)
-        settings_layout.setContentsMargins(0, 0, 0, 0)
-        settings_layout.setSpacing(10)
-        settings_scroll.setWidget(settings_content)
+        settings_tabs = QTabWidget()
+        settings_tabs.setObjectName("RunwaySettingsTabs")
+        settings_tabs.setDocumentMode(True)
+        settings_tabs.tabBar().setExpanding(True)
+        self.settings_tabs = settings_tabs
+        setup_tab = QWidget()
+        setup_tab_layout = QVBoxLayout(setup_tab)
+        setup_tab_layout.setContentsMargins(6, 6, 6, 6)
+        setup_tab_layout.setSpacing(3)
+        analysis_tab = QWidget()
+        analysis_tab_layout = QVBoxLayout(analysis_tab)
+        analysis_tab_layout.setContentsMargins(6, 6, 6, 6)
+        analysis_tab_layout.setSpacing(3)
+        calibration_tab = QWidget()
+        calibration_tab_layout = QVBoxLayout(calibration_tab)
+        calibration_tab_layout.setContentsMargins(6, 6, 6, 6)
+        calibration_tab_layout.setSpacing(3)
+        filters_tab = QWidget()
+        filters_tab_layout = QVBoxLayout(filters_tab)
+        filters_tab_layout.setContentsMargins(6, 6, 6, 6)
+        filters_tab_layout.setSpacing(3)
+        output_tab = QWidget()
+        output_tab_layout = QVBoxLayout(output_tab)
+        output_tab_layout.setContentsMargins(6, 6, 6, 6)
+        output_tab_layout.setSpacing(3)
+        settings_tabs.addTab(setup_tab, "Setup")
+        settings_tabs.addTab(calibration_tab, "Calibration")
+        settings_tabs.addTab(analysis_tab, "Analysis")
+        settings_tabs.addTab(filters_tab, "Filters")
+        settings_tabs.addTab(output_tab, "Output")
 
         setup_box = QGroupBox("Experimental setup")
-        setup_layout = QVBoxLayout(setup_box)
-        self.analysis_type_group = QButtonGroup(self)
-        self.treadmill_radio = QRadioButton("Treadmill")
-        self.spontaneous_radio = QRadioButton("Spontaneous walking")
-        set_tooltip(self.treadmill_radio, "Use treadmill gait-analysis settings.")
-        set_tooltip(self.spontaneous_radio, "Use spontaneous-walking gait-analysis settings.")
-        self.treadmill_radio.setChecked(self._defaults.analysis_type == "Treadmill")
-        self.spontaneous_radio.setChecked(self._defaults.analysis_type == "Spontaneous walking")
-        self.analysis_type_group.addButton(self.treadmill_radio)
-        self.analysis_type_group.addButton(self.spontaneous_radio)
-        setup_layout.addWidget(self.treadmill_radio)
-        setup_layout.addWidget(self.spontaneous_radio)
-        settings_layout.addWidget(setup_box)
+        setup_layout = QGridLayout(setup_box)
+        self.analysis_type_combo = QComboBox()
+        self.analysis_type_combo.addItems(["Treadmill", "Spontaneous walking"])
+        self.analysis_type_combo.setCurrentText(self._defaults.analysis_type)
+        set_tooltip(self.analysis_type_combo, "Choose treadmill or spontaneous-walking analysis.")
+        setup_layout.addWidget(QLabel("Analysis type"), 0, 0)
+        setup_layout.addWidget(self.analysis_type_combo, 0, 1)
+        setup_tab_layout.addWidget(setup_box)
 
         speed_box = QGroupBox("Treadmill speed and calibration")
         speed_layout = QGridLayout(speed_box)
+        speed_layout.setHorizontalSpacing(12)
+        speed_layout.setVerticalSpacing(4)
         self.treadmill_speed_label = QLabel("Treadmill speed (cm/s)")
         self.treadmill_speed_spin = _double_spin(0.1, 100.0, self._defaults.treadmill_speed_cm_s, 1)
         self.frame_rate_spin = _double_spin(1.0, 1000.0, self._defaults.frame_rate, 1)
@@ -166,56 +206,58 @@ class GaitAnalysisWidget(QWidget):
         speed_layout.addWidget(QLabel("Frame rate (fps)"), 1, 0)
         speed_layout.addWidget(self.frame_rate_spin, 1, 1)
         speed_layout.addWidget(self.load_fps_button, 1, 2)
-        settings_layout.addWidget(speed_box)
+        setup_tab_layout.addWidget(speed_box)
+        setup_tab_layout.addStretch(1)
 
         calibration_box = QGroupBox("Spatial calibration")
         calibration_layout = QVBoxLayout(calibration_box)
-        self.calibration_method_group = QButtonGroup(self)
-        self.reference_radio = QRadioButton("Reference body segment (recommended)")
-        self.manual_radio = QRadioButton("Manual pixel-to-cm ratio")
-        set_tooltip(self.reference_radio, "Calculate scale from a tracked anatomical reference segment.")
-        set_tooltip(self.manual_radio, "Use a manually supplied pixels-per-centimeter calibration.")
-        self.reference_radio.setChecked(self._defaults.calibration_method == "reference")
-        self.manual_radio.setChecked(self._defaults.calibration_method == "manual")
-        self.calibration_method_group.addButton(self.reference_radio)
-        self.calibration_method_group.addButton(self.manual_radio)
-        calibration_layout.addWidget(self.reference_radio)
-        calibration_layout.addWidget(self.manual_radio)
+        self.calibration_method_combo = QComboBox()
+        self.calibration_method_combo.addItems(["Reference body segment", "Manual pixel-to-cm ratio"])
+        self.calibration_method_combo.setCurrentIndex(0 if self._defaults.calibration_method == "reference" else 1)
+        set_tooltip(self.calibration_method_combo, "Choose anatomical-reference or manual spatial calibration.")
+        calibration_layout.addWidget(self.calibration_method_combo)
 
         self.reference_settings_widget = QWidget()
         reference_layout = QGridLayout(self.reference_settings_widget)
-        reference_layout.setContentsMargins(16, 2, 0, 0)
+        reference_layout.setContentsMargins(16, 4, 0, 0)
+        reference_layout.setHorizontalSpacing(12)
+        reference_layout.setVerticalSpacing(4)
         self.reference_segment_combo = QComboBox()
         self.reference_segment_combo.addItems(["ankle_toe (1.5cm)", "hip_knee (2.5cm)", "knee_ankle (2.0cm)", "ankle_mtp (0.8cm)"])
         self.reference_segment_combo.setCurrentText(_reference_segment_label(self._defaults.reference_segment))
         self.reference_length_spin = _double_spin(0.1, 10.0, self._defaults.reference_length_cm, 2)
         set_tooltip(self.reference_segment_combo, "Body segment used as the reference calibration length.")
         set_tooltip(self.reference_length_spin, "Known length of the selected reference segment in centimeters.")
-        reference_layout.addWidget(QLabel("Reference Segment"), 0, 0)
+        reference_layout.addWidget(QLabel("Reference segment"), 0, 0)
         reference_layout.addWidget(self.reference_segment_combo, 0, 1)
-        reference_layout.addWidget(QLabel("Segment Length (cm)"), 1, 0)
+        reference_layout.addWidget(QLabel("Segment length (cm)"), 1, 0)
         reference_layout.addWidget(self.reference_length_spin, 1, 1)
         calibration_layout.addWidget(self.reference_settings_widget)
 
         self.manual_settings_widget = QWidget()
         manual_layout = QGridLayout(self.manual_settings_widget)
-        manual_layout.setContentsMargins(16, 2, 0, 0)
+        manual_layout.setContentsMargins(16, 4, 0, 0)
+        manual_layout.setHorizontalSpacing(12)
+        manual_layout.setVerticalSpacing(4)
         self.pixels_per_cm_spin = _double_spin(1.0, 1000.0, self._defaults.pixels_per_cm or 50.0, 3)
-        self.import_calibration_map_button = QPushButton("Import Calibration Map")
+        self.import_calibration_map_button = QPushButton("Import calibration map")
         set_tooltip(self.pixels_per_cm_spin, "Manual pixel-to-centimeter ratio.")
         set_tooltip(self.import_calibration_map_button, "Import a calibration conversion map.", "Ctrl+M")
         self.calibration_map_label = QLabel("No calibration map imported.")
         self.calibration_map_label.setObjectName("MutedLabel")
         self.calibration_map_label.setWordWrap(True)
-        manual_layout.addWidget(QLabel("Pixels per CM"), 0, 0)
+        manual_layout.addWidget(QLabel("Pixels per cm"), 0, 0)
         manual_layout.addWidget(self.pixels_per_cm_spin, 0, 1)
         manual_layout.addWidget(self.import_calibration_map_button, 1, 0, 1, 2)
         manual_layout.addWidget(self.calibration_map_label, 2, 0, 1, 2)
         calibration_layout.addWidget(self.manual_settings_widget)
-        settings_layout.addWidget(calibration_box)
+        calibration_tab_layout.addWidget(calibration_box)
+        calibration_tab_layout.addStretch(1)
 
-        movement_box = QGroupBox("Movement Analysis Settings")
+        movement_box = QGroupBox("Movement analysis settings")
         movement_layout = QGridLayout(movement_box)
+        movement_layout.setHorizontalSpacing(12)
+        movement_layout.setVerticalSpacing(4)
         self.filter_cutoff_spin = _double_spin(0.1, 50.0, self._defaults.filter_cutoff, 1)
         self.direction_combo = QComboBox()
         self.direction_combo.addItems(["Auto-detect", "Left-to-Right", "Right-to-Left"])
@@ -233,17 +275,17 @@ class GaitAnalysisWidget(QWidget):
         set_tooltip(self.drag_clearance_spin, "Toe clearance threshold used by drag detection.")
         set_tooltip(self.drag_frames_spin, "Number of consecutive frames required for drag detection.")
         set_tooltip(self.filter_cutoff_spin, "Low-pass filter cutoff frequency in Hz.")
-        movement_layout.addWidget(QLabel("Walking Direction"), 0, 0)
+        movement_layout.addWidget(QLabel("Walking direction"), 0, 0)
         movement_layout.addWidget(self.direction_combo, 0, 1)
-        movement_layout.addWidget(QLabel("Drag Clearance Threshold (cm)"), 1, 0)
+        movement_layout.addWidget(QLabel("Drag clearance threshold (cm)"), 1, 0)
         movement_layout.addWidget(self.drag_clearance_spin, 1, 1)
-        movement_layout.addWidget(QLabel("Drag Detection Sensitivity (frames)"), 2, 0)
+        movement_layout.addWidget(QLabel("Drag detection sensitivity (frames)"), 2, 0)
         movement_layout.addWidget(self.drag_frames_spin, 2, 1)
-        movement_layout.addWidget(QLabel("Lowpass Filter Cutoff (Hz)"), 3, 0)
+        movement_layout.addWidget(QLabel("Low-pass filter cutoff (Hz)"), 3, 0)
         movement_layout.addWidget(self.filter_cutoff_spin, 3, 1)
-        settings_layout.addWidget(movement_box)
+        analysis_tab_layout.addWidget(movement_box)
 
-        spontaneous_box = QGroupBox("Spontaneous Walking Options")
+        spontaneous_box = QGroupBox("Spontaneous walking options")
         spontaneous_layout = QVBoxLayout(spontaneous_box)
         self.no_outlier_checkbox = QCheckBox("No outlier filter")
         self.no_outlier_checkbox.setChecked(self._defaults.no_outlier_filter)
@@ -254,10 +296,12 @@ class GaitAnalysisWidget(QWidget):
         spontaneous_layout.addWidget(self.no_outlier_checkbox)
         spontaneous_layout.addWidget(self.dragging_filter_checkbox)
         self.spontaneous_box = spontaneous_box
-        settings_layout.addWidget(spontaneous_box)
+        analysis_tab_layout.addWidget(spontaneous_box)
 
-        filter_box = QGroupBox("Stride Filtering (Optional)")
+        filter_box = QGroupBox("Stride filtering (optional)")
         filter_layout = QGridLayout(filter_box)
+        filter_layout.setHorizontalSpacing(12)
+        filter_layout.setVerticalSpacing(4)
         self.step_height_min_spin = _double_spin(0.0, 5.0, self._defaults.step_height_min_cm, 2)
         self.step_height_max_spin = _double_spin(0.0, 5.0, self._defaults.step_height_max_cm, 2)
         self.stride_length_min_spin = _double_spin(0.0, 20.0, self._defaults.stride_length_min_cm, 2)
@@ -274,34 +318,54 @@ class GaitAnalysisWidget(QWidget):
         filter_layout.addWidget(self.stride_length_min_spin, 2, 1)
         filter_layout.addWidget(QLabel("Stride length max (cm)"), 3, 0)
         filter_layout.addWidget(self.stride_length_max_spin, 3, 1)
-        settings_layout.addWidget(filter_box)
+        filters_tab_layout.addWidget(filter_box)
+        filters_tab_layout.addStretch(1)
+        analysis_tab_layout.addStretch(1)
 
         output_options_box = QGroupBox("Output options")
         output_options_layout = QGridLayout(output_options_box)
+        output_options_layout.setHorizontalSpacing(12)
+        output_options_layout.setVerticalSpacing(4)
         self.continuous_strides_spin = QSpinBox()
         self.continuous_strides_spin.setRange(1, 50)
         self.continuous_strides_spin.setValue(self._defaults.n_continuous_strides)
         self.stickplot_checkbox = QCheckBox("Generate stickplot SVG")
         self.stickplot_checkbox.setChecked(True)
+        self.rustlab1_checkbox = QCheckBox("Generate RustLab1 30-parameter + merged CSVs")
+        self.rustlab1_checkbox.setChecked(self._defaults.generate_rustlab1_parameters)
         set_tooltip(self.continuous_strides_spin, "Number of continuous strides used for ALMA outputs.")
         set_tooltip(self.stickplot_checkbox, "Generate an SVG stickplot output.")
+        set_tooltip(self.rustlab1_checkbox, "Calculate the SOP's 30 RustLab1 parameters on ALMA gait cycles when multi-view labels are present.")
         output_options_layout.addWidget(QLabel("Continuous strides"), 0, 0)
         output_options_layout.addWidget(self.continuous_strides_spin, 0, 1)
         output_options_layout.addWidget(self.stickplot_checkbox, 1, 0, 1, 2)
-        settings_layout.addWidget(output_options_box)
-        settings_layout.addStretch(1)
+        output_options_layout.addWidget(self.rustlab1_checkbox, 2, 0, 1, 2)
+        output_tab_layout.addWidget(output_options_box)
+        rustlab_note = QLabel("RustLab1 needs l-/r-/d- multi-view markers. Missing features are left blank and reported in the run log.")
+        rustlab_note.setObjectName("MutedLabel")
+        rustlab_note.setWordWrap(True)
+        output_tab_layout.addWidget(rustlab_note)
+        output_tab_layout.addStretch(1)
 
-        left_layout.addWidget(settings_scroll, 5)
+        left_layout.addWidget(settings_tabs, 1)
 
-        self.run_button = QPushButton("Run ALMA Gait Analysis")
+        self.preview_button = QPushButton("1. Generate stick-plot preview")
+        set_tooltip(
+            self.preview_button,
+            "Generate and inspect a one-stride ALMA stick plot before running the full analysis.",
+            "Ctrl+P",
+        )
+        left_layout.addWidget(self.preview_button)
+
+        self.run_button = QPushButton("2. Run gait analysis")
         self.run_button.setObjectName("PrimaryButton")
-        set_tooltip(self.run_button, "Run ALMA gait analysis on the selected CSV files.", "Ctrl+R")
+        set_tooltip(self.run_button, "Run ALMA gait analysis after reviewing the stick plot.", "Ctrl+R")
         left_layout.addWidget(self.run_button)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(14, 14, 14, 14)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.setSpacing(12)
         self.status_label = QLabel("Select CSV coordinate files to begin.")
         self.status_label.setObjectName("PreviewTitle")
         right_layout.addWidget(self.status_label)
@@ -309,19 +373,33 @@ class GaitAnalysisWidget(QWidget):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         right_layout.addWidget(self.progress)
+
+        self.preview_stack = QStackedWidget()
+        self.preview_stack.setObjectName("StickPlotPreview")
+        self.preview_placeholder = QLabel("Select CSV coordinates, then generate a stick-plot preview.")
+        self.preview_placeholder.setAlignment(Qt.AlignCenter)
+        self.preview_placeholder.setWordWrap(True)
+        self.preview_placeholder.setObjectName("MutedLabel")
+        self.stickplot_view = QSvgWidget()
+        self.stickplot_view.setObjectName("StickPlotSvg")
+        self.preview_stack.addWidget(self.preview_placeholder)
+        self.preview_stack.addWidget(self.stickplot_view)
+        self.preview_stack.setCurrentWidget(self.preview_placeholder)
+        right_layout.addWidget(self.preview_stack, 1)
+
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMaximumHeight(190)
-        right_layout.addWidget(self.log, 1)
+        self.log.setMaximumHeight(105)
+        right_layout.addWidget(self.log)
 
-        mapping_box = QGroupBox("Body Part Mapping")
-        mapping_box.setMaximumHeight(210)
+        mapping_box = QGroupBox("Body part mapping")
+        mapping_box.setMaximumHeight(190)
         mapping_layout = QVBoxLayout(mapping_box)
-        mapping_layout.setSpacing(6)
+        mapping_layout.setSpacing(8)
         mapping_header = QHBoxLayout()
         self.use_custom_mapping_checkbox = QCheckBox("Use custom mapping")
-        self.reload_mapping_button = QPushButton("Load From CSV")
-        self.auto_mapping_button = QPushButton("Auto Detect")
+        self.reload_mapping_button = QPushButton("Load from CSV")
+        self.auto_mapping_button = QPushButton("Auto detect")
         set_tooltip(self.use_custom_mapping_checkbox, "Manually map raw DLC labels to the expected ALMA body parts.")
         set_tooltip(self.reload_mapping_button, "Load body-part labels from the first selected CSV.")
         set_tooltip(self.auto_mapping_button, "Automatically match common DLC body-part labels.")
@@ -336,7 +414,7 @@ class GaitAnalysisWidget(QWidget):
         mapping_layout.addWidget(self.mapping_status_label)
 
         mapping_grid = QGridLayout()
-        mapping_grid.setHorizontalSpacing(10)
+        mapping_grid.setHorizontalSpacing(12)
         mapping_grid.setVerticalSpacing(4)
         for index, standard_bodypart in enumerate(STANDARD_BODYPARTS):
             row = index // 2
@@ -366,6 +444,7 @@ class GaitAnalysisWidget(QWidget):
             add_shortcut(self, "Ctrl+Shift+S", self._select_output_folder),
             add_shortcut(self, "Ctrl+F", self._load_frame_rate_from_video),
             add_shortcut(self, "Ctrl+M", self._import_calibration_map),
+            add_shortcut(self, "Ctrl+P", self._generate_stickplot_preview),
             add_shortcut(self, "Ctrl+R", self._run_analysis),
         ]
         self._wheel_value_guard = install_wheel_value_guard(self)
@@ -375,9 +454,11 @@ class GaitAnalysisWidget(QWidget):
         self.add_folder_button.clicked.connect(self._add_folder)
         self.clear_files_button.clicked.connect(self._clear_files)
         self.output_folder_button.clicked.connect(self._select_output_folder)
+        self.output_folder_edit.textChanged.connect(self._update_run_state)
+        self.preview_button.clicked.connect(self._generate_stickplot_preview)
         self.run_button.clicked.connect(self._run_analysis)
-        self.treadmill_radio.toggled.connect(self._update_analysis_mode)
-        self.reference_radio.toggled.connect(self._update_calibration_method)
+        self.analysis_type_combo.currentTextChanged.connect(self._update_analysis_mode)
+        self.calibration_method_combo.currentTextChanged.connect(self._update_calibration_method)
         self.load_fps_button.clicked.connect(self._load_frame_rate_from_video)
         self.import_calibration_map_button.clicked.connect(self._import_calibration_map)
         self.use_custom_mapping_checkbox.toggled.connect(self._update_mapping_enabled)
@@ -385,6 +466,40 @@ class GaitAnalysisWidget(QWidget):
         self.auto_mapping_button.clicked.connect(self._apply_auto_bodypart_mapping)
         self.file_list.model().rowsInserted.connect(self._update_run_state)
         self.file_list.model().rowsRemoved.connect(self._update_run_state)
+
+        preview_controls = (
+            self.analysis_type_combo,
+            self.calibration_method_combo,
+            self.reference_segment_combo,
+            self.direction_combo,
+        )
+        for combo in preview_controls:
+            combo.currentTextChanged.connect(self._invalidate_stickplot_preview)
+
+        preview_spins = (
+            self.treadmill_speed_spin,
+            self.frame_rate_spin,
+            self.reference_length_spin,
+            self.pixels_per_cm_spin,
+            self.filter_cutoff_spin,
+            self.drag_clearance_spin,
+            self.drag_frames_spin,
+            self.step_height_min_spin,
+            self.step_height_max_spin,
+            self.stride_length_min_spin,
+            self.stride_length_max_spin,
+        )
+        for spin in preview_spins:
+            spin.valueChanged.connect(self._invalidate_stickplot_preview)
+
+        for checkbox in (
+            self.no_outlier_checkbox,
+            self.dragging_filter_checkbox,
+            self.use_custom_mapping_checkbox,
+        ):
+            checkbox.toggled.connect(self._invalidate_stickplot_preview)
+        for combo in self._bodypart_combos.values():
+            combo.currentTextChanged.connect(self._invalidate_stickplot_preview)
 
     def _add_file(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Select ALMA/DLC coordinate CSV", str(self._project_root), "CSV files (*.csv);;All files (*)")
@@ -397,6 +512,7 @@ class GaitAnalysisWidget(QWidget):
             self._add_csv_paths(sorted(Path(directory).glob("*.csv")))
 
     def _add_csv_paths(self, paths: list[Path]) -> None:
+        previous_count = len(self._selected_files)
         existing = {str(path) for path in self._selected_files}
         for path in paths:
             resolved = path.expanduser().resolve()
@@ -407,6 +523,8 @@ class GaitAnalysisWidget(QWidget):
             existing.add(str(resolved))
         if self._selected_files and not self._raw_bodyparts:
             self._load_bodypart_mapping_from_first_file()
+        if len(self._selected_files) != previous_count:
+            self._invalidate_stickplot_preview()
         self._update_run_state()
 
     def _clear_files(self) -> None:
@@ -415,6 +533,7 @@ class GaitAnalysisWidget(QWidget):
         self._raw_bodyparts = []
         self._refresh_bodypart_mapping_choices()
         self.mapping_status_label.setText("Add a CSV to detect labels.")
+        self._invalidate_stickplot_preview("Select CSV coordinates, then generate a stick-plot preview.")
         self._update_run_state()
 
     def _select_output_folder(self) -> None:
@@ -469,7 +588,7 @@ class GaitAnalysisWidget(QWidget):
 
         self._calibration_map_path = path
         self._calibration_map_source = source
-        self.manual_radio.setChecked(True)
+        self.calibration_method_combo.setCurrentText("Manual pixel-to-cm ratio")
         self.pixels_per_cm_spin.setValue(pixels_per_cm)
         self.calibration_map_label.setText(f"{path.name} | {source}: {pixels_per_cm:.3f} px/cm")
         self.status_label.setText("Calibration map imported.")
@@ -520,26 +639,125 @@ class GaitAnalysisWidget(QWidget):
             combo.setEnabled(enabled)
 
     def _update_analysis_mode(self) -> None:
-        treadmill = self.treadmill_radio.isChecked()
+        treadmill = self.analysis_type_combo.currentText() == "Treadmill"
         self.treadmill_speed_label.setVisible(treadmill)
         self.treadmill_speed_spin.setVisible(treadmill)
         self.spontaneous_box.setVisible(not treadmill)
 
     def _update_calibration_method(self) -> None:
-        reference = self.reference_radio.isChecked()
+        reference = self.calibration_method_combo.currentText() == "Reference body segment"
         self.reference_settings_widget.setVisible(reference)
         self.manual_settings_widget.setVisible(not reference)
 
     def _update_run_state(self) -> None:
         has_files = bool(self._selected_files)
         has_output = bool(self.output_folder_edit.text().strip())
-        running = self._worker is not None and self._worker.isRunning()
-        self.run_button.setEnabled(has_files and has_output and not running)
+        analysis_running = self._worker is not None and self._worker.isRunning()
+        preview_running = self._preview_worker is not None and self._preview_worker.isRunning()
+        running = analysis_running or preview_running
+        self.preview_button.setEnabled(has_files and not running)
+        self.run_button.setEnabled(
+            has_files and has_output and self._stickplot_preview_ready and not running
+        )
+
+    def _invalidate_stickplot_preview(self, message=None, *_args) -> None:
+        if message == "Select CSV coordinates, then generate a stick-plot preview.":
+            placeholder_text = message
+        elif self._selected_files:
+            placeholder_text = "Settings changed. Regenerate the stick-plot preview before analysis."
+        else:
+            placeholder_text = "Select CSV coordinates, then generate a stick-plot preview."
+        self._stickplot_preview_ready = False
+        if self._preview_worker is not None and self._preview_worker.isRunning():
+            self._preview_invalidated_while_running = True
+        elif self._selected_files:
+            self.status_label.setText("Generate a stick-plot preview before gait analysis.")
+        else:
+            self.status_label.setText("Select CSV coordinate files to begin.")
+        self.preview_placeholder.setText(placeholder_text)
+        self.preview_stack.setCurrentWidget(self.preview_placeholder)
+        self._update_run_state()
+
+    def _generate_stickplot_preview(self) -> None:
+        if not self._selected_files:
+            QMessageBox.information(self, "No input files", "Add a CSV coordinate file first.")
+            return
+        settings = self._collect_settings()
+        if self.use_custom_mapping_checkbox.isChecked() and not settings.custom_bodypart_mapping:
+            QMessageBox.warning(
+                self,
+                "No body part mapping",
+                "Select at least one body part mapping or turn off custom mapping.",
+            )
+            return
+
+        self._stickplot_preview_ready = False
+        self._preview_invalidated_while_running = False
+        self.progress.setValue(0)
+        self.log.clear()
+        self.status_label.setText("Generating stick-plot preview...")
+        self.preview_placeholder.setText("Generating a one-stride ALMA stick plot...")
+        self.preview_stack.setCurrentWidget(self.preview_placeholder)
+
+        preview_settings = replace(
+            settings,
+            n_continuous_strides=1,
+            generate_stickplot=True,
+            generate_rustlab1_parameters=False,
+        )
+        self._preview_worker = StickPlotPreviewThread(
+            self._selected_files[0],
+            preview_settings,
+            self._alma_root,
+        )
+        self._preview_worker.progress_updated.connect(self._update_progress)
+        self._preview_worker.log_message.connect(self._append_log)
+        self._preview_worker.preview_ready.connect(self._stickplot_preview_completed)
+        self._preview_worker.preview_failed.connect(self._stickplot_preview_failed)
+        self._preview_worker.finished.connect(self._preview_worker_finished)
+        self._preview_worker.start()
+        self._update_run_state()
+
+    def _stickplot_preview_completed(self, svg_data: bytes, source_name: str) -> None:
+        if self._preview_invalidated_while_running:
+            self._stickplot_preview_ready = False
+            self.preview_placeholder.setText(
+                "Settings changed while the preview was running. Generate it again."
+            )
+            self.preview_stack.setCurrentWidget(self.preview_placeholder)
+            self.status_label.setText("Stick-plot preview is out of date.")
+            self._append_log("Preview discarded because its settings changed during generation.")
+            return
+        self.stickplot_view.load(QByteArray(svg_data))
+        self.preview_stack.setCurrentWidget(self.stickplot_view)
+        self._stickplot_preview_ready = True
+        self.progress.setValue(100)
+        self.status_label.setText("Stick-plot preview ready. Review it, then run gait analysis.")
+        self._append_log(f"Stick-plot preview generated from {source_name}.")
+
+    def _stickplot_preview_failed(self, message: str) -> None:
+        self._stickplot_preview_ready = False
+        self.preview_placeholder.setText("Stick-plot preview could not be generated.")
+        self.preview_stack.setCurrentWidget(self.preview_placeholder)
+        self.status_label.setText("Stick-plot preview failed.")
+        self._append_log(message)
+        QMessageBox.critical(self, "Stick-plot preview failed", message)
+
+    def _preview_worker_finished(self) -> None:
+        self._preview_worker = None
+        self._update_run_state()
 
     def _run_analysis(self) -> None:
         output_folder = Path(self.output_folder_edit.text()).expanduser().resolve()
         if not self._selected_files:
             QMessageBox.information(self, "No input files", "Add at least one CSV coordinate file.")
+            return
+        if not self._stickplot_preview_ready:
+            QMessageBox.information(
+                self,
+                "Stick-plot preview required",
+                "Generate and review the stick-plot preview before running gait analysis.",
+            )
             return
 
         settings = self._collect_settings()
@@ -557,6 +775,7 @@ class GaitAnalysisWidget(QWidget):
         self._worker.analysis_completed.connect(self._analysis_completed)
         self._worker.finished.connect(self._worker_finished)
         self._worker.start()
+        self._update_run_state()
 
     def _collect_settings(self) -> AlmaSettings:
         if self.direction_combo.currentText() == "Auto-detect":
@@ -567,16 +786,18 @@ class GaitAnalysisWidget(QWidget):
             right_to_left = False
 
         return AlmaSettings(
-            analysis_type="Treadmill" if self.treadmill_radio.isChecked() else "Spontaneous walking",
+            analysis_type=self.analysis_type_combo.currentText(),
             frame_rate=self.frame_rate_spin.value(),
             filter_cutoff=self.filter_cutoff_spin.value(),
             treadmill_speed_cm_s=self.treadmill_speed_spin.value(),
-            calibration_method="reference" if self.reference_radio.isChecked() else "manual",
+            calibration_method="reference" if self.calibration_method_combo.currentText() == "Reference body segment" else "manual",
             reference_segment=self.reference_segment_combo.currentText().split(" ", 1)[0],
             reference_length_cm=self.reference_length_spin.value(),
             calibration_map_path=self._calibration_map_path,
             right_to_left=right_to_left,
-            pixels_per_cm=self.pixels_per_cm_spin.value() if self.manual_radio.isChecked() else None,
+            pixels_per_cm=self.pixels_per_cm_spin.value()
+            if self.calibration_method_combo.currentText() == "Manual pixel-to-cm ratio"
+            else None,
             no_outlier_filter=self.no_outlier_checkbox.isChecked(),
             dragging_filter=self.dragging_filter_checkbox.isChecked(),
             drag_clearance_cm=self.drag_clearance_spin.value(),
@@ -587,6 +808,7 @@ class GaitAnalysisWidget(QWidget):
             stride_length_max_cm=self.stride_length_max_spin.value(),
             n_continuous_strides=self.continuous_strides_spin.value(),
             generate_stickplot=self.stickplot_checkbox.isChecked(),
+            generate_rustlab1_parameters=self.rustlab1_checkbox.isChecked(),
             custom_bodypart_mapping=self._collect_bodypart_mapping(),
         )
 
@@ -626,89 +848,106 @@ class GaitAnalysisWidget(QWidget):
         return output_root
 
     def _apply_style(self) -> None:
+        runway_tab_style = """
+            QTabWidget#RunwaySettingsTabs {
+                background: {theme.PANEL};
+            }
+            QTabWidget#RunwaySettingsTabs::pane {
+                background: {theme.BACKGROUND};
+                border: 0;
+                border-top: 1px solid {theme.BORDER};
+            }
+            QTabWidget#RunwaySettingsTabs QTabBar::tab {
+                background: {theme.PANEL};
+            }
+            QTabWidget#RunwaySettingsTabs QTabBar::tab:selected {
+                background: {theme.SURFACE};
+            }
+        """
         self.setStyleSheet(
-            theme.stylesheet(
-                """
-            QWidget#GaitAnalysisWidget {
-                background: {theme.BACKGROUND};
-                color: {theme.TEXT};
-                font-size: 13px;
-            }
-            QLabel {
-                background: transparent;
-            }
-            QGroupBox {
-                border: 1px solid {theme.ACCENT};
+            theme.workspace_stylesheet(
+                "GaitAnalysisWidget",
+                runway_tab_style
+                + """
+            QStackedWidget#StickPlotPreview {
+                border: 1px solid {theme.BORDER};
                 border-radius: 2px;
-                margin-top: 18px;
-                padding: 16px 10px 10px 10px;
-                background: {theme.SURFACE};
+                background: white;
             }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 5px;
-                padding: 0 3px;
-                color: {theme.TEXT};
-                font-weight: 600;
-                background: {theme.BACKGROUND};
-            }
-            QLabel#TitleLabel {
-                font-size: 19px;
-                font-weight: 650;
-            }
-            QLabel#PreviewTitle {
-                font-size: 15px;
-                font-weight: 600;
-            }
-            QLabel#MutedLabel {
-                color: {theme.TEXT};
-                font-size: 12px;
-            }
-            QPushButton {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 3px;
-                padding: 7px 10px;
-                background: {theme.SURFACE};
-                color: {theme.TEXT};
-                font-weight: 550;
-            }
-            QPushButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#PrimaryButton {
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
-                font-weight: 650;
-                padding: 10px;
-            }
-            QPushButton#PrimaryButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QListWidget, QTextEdit, QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                padding: 5px 6px;
-            }
-            QProgressBar {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                height: 16px;
-            }
-            QProgressBar::chunk {
-                border-radius: 1px;
-                background: {theme.PRIMARY};
+            QSvgWidget#StickPlotSvg {
+                background: white;
             }
             """
             )
         )
+
+
+class GaitAnalysisWidget(QWidget):
+    """Primary gait-analysis workspace, opening directly to Runway."""
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("GaitAnalysisContainer")
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        self.kinematics_widget = AlmaKinematicsWidget()
+        root.addWidget(self.kinematics_widget)
+
+    def can_close(self, parent=None) -> bool:
+        return self.kinematics_widget.can_close(parent or self)
+
+    def release_resources(self) -> None:
+        pass
+
+    def _apply_style(self) -> None:
+        self.kinematics_widget._apply_style()
+
+
+class StickPlotPreviewThread(QThread):
+    progress_updated = Signal(int, str)
+    log_message = Signal(str)
+    preview_ready = Signal(bytes, str)
+    preview_failed = Signal(str)
+
+    def __init__(self, csv_file: Path, settings: AlmaSettings, alma_root: Path):
+        super().__init__()
+        self._csv_file = csv_file
+        self._settings = settings
+        self._alma_root = alma_root
+
+    def run(self) -> None:
+        try:
+            self.log_message.emit(f"Generating preview from {self._csv_file.name}")
+
+            def progress(index: int, total: int, message: str) -> None:
+                value = 10 + int(index * 75 / max(1, total))
+                self.progress_updated.emit(value, message)
+                self.log_message.emit(message)
+
+            temp_root = Path("/private/tmp") if Path("/private/tmp").is_dir() else None
+            with tempfile.TemporaryDirectory(prefix="dlc-gait-stickplot-", dir=temp_root) as temp_dir:
+                results = run_alma_gait_analysis(
+                    [self._csv_file],
+                    Path(temp_dir),
+                    self._settings,
+                    self._alma_root,
+                    progress_callback=progress,
+                )
+                svg_paths = [
+                    path
+                    for result in results
+                    for path in result.output_files
+                    if path.suffix.lower() == ".svg" and path.exists()
+                ]
+                if not svg_paths:
+                    raise RuntimeError(
+                        "ALMA did not find a valid stride for the stick plot. Check body-part mapping, "
+                        "walking direction, calibration, and stride filters."
+                    )
+                svg_data = svg_paths[0].read_bytes()
+            self.preview_ready.emit(svg_data, self._csv_file.name)
+        except Exception as exc:
+            self.preview_failed.emit(str(exc))
 
 
 class AlmaAnalysisThread(QThread):
@@ -753,6 +992,8 @@ class AlmaAnalysisThread(QThread):
                 self.log_message.emit(f"{result.input_file.name}:")
                 for output in result.output_files:
                     self.log_message.emit(f"  {output}")
+                for message in result.messages:
+                    self.log_message.emit(f"  {message}")
             self.progress_updated.emit(100, "ALMA gait analysis complete.")
             self.analysis_completed.emit(True, f"Analysis complete. Results saved to:\n{self._output_folder}")
         except Exception as exc:

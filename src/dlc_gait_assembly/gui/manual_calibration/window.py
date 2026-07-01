@@ -97,7 +97,7 @@ class ManualCalibrationWidget(QWidget):
         left_panel = QWidget()
         left_panel.setMinimumWidth(320)
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(14, 14, 14, 14)
+        left_layout.setContentsMargins(16, 16, 16, 16)
         left_layout.setSpacing(12)
 
         media_box = QGroupBox("Calibration frame")
@@ -105,7 +105,7 @@ class ManualCalibrationWidget(QWidget):
         media_layout = QVBoxLayout(media_box)
         media_layout.setSpacing(8)
         media_buttons = QHBoxLayout()
-        media_buttons.setSpacing(6)
+        media_buttons.setSpacing(8)
         self.open_media_button = QPushButton("Add")
         self.open_media_button.setObjectName("OpenMediaButton")
         set_tooltip(self.open_media_button, "Add calibration images or videos.", "Ctrl+O")
@@ -148,7 +148,7 @@ class ManualCalibrationWidget(QWidget):
         results_scroll.setFrameShape(QFrame.NoFrame)
         results_scroll.setWidget(self.results_label)
         results_layout.addWidget(results_scroll)
-        self.export_conversion_button = QPushButton("Export Conversion Map")
+        self.export_conversion_button = QPushButton("Export conversion map")
         self.export_conversion_button.setObjectName("ExportButton")
         results_layout.addWidget(self.export_conversion_button)
         left_layout.addWidget(results_box, 1)
@@ -156,8 +156,8 @@ class ManualCalibrationWidget(QWidget):
         right_panel = QWidget()
         right_panel.setMinimumWidth(420)
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(14, 14, 14, 14)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.setSpacing(12)
 
         self.preview_title = QLabel("Open a calibration image or video.")
         self.preview_title.setObjectName("PreviewTitle")
@@ -166,14 +166,14 @@ class ManualCalibrationWidget(QWidget):
         tools_bar = QFrame()
         tools_bar.setObjectName("OperationsBar")
         tools_layout = QHBoxLayout(tools_bar)
-        tools_layout.setContentsMargins(8, 5, 8, 5)
-        tools_layout.setSpacing(8)
+        tools_layout.setContentsMargins(12, 8, 12, 8)
+        tools_layout.setSpacing(12)
         tool_buttons_row = QHBoxLayout()
         tool_buttons_row.setContentsMargins(0, 0, 0, 0)
-        tool_buttons_row.setSpacing(6)
-        self.x_tool_button = _make_tool_button("X-Calibration Stick", theme.TOOL_3)
+        tool_buttons_row.setSpacing(8)
+        self.x_tool_button = _make_tool_button("X-calibration stick", theme.TOOL_3)
         set_tooltip(self.x_tool_button, "Draw an x-axis calibration stick.", "Ctrl+1")
-        self.y_tool_button = _make_tool_button("Y-Calibration Stick", theme.TOOL_2)
+        self.y_tool_button = _make_tool_button("Y-calibration stick", theme.TOOL_2)
         set_tooltip(self.y_tool_button, "Draw a y-axis calibration stick.", "Ctrl+2")
         self.cm_tool_button = _make_tool_button("Marker", theme.TOOL_1)
         set_tooltip(self.cm_tool_button, "Add calibration markers to a stick.", "Ctrl+3")
@@ -189,9 +189,9 @@ class ManualCalibrationWidget(QWidget):
         self.marker_gap_frame = QFrame()
         self.marker_gap_frame.setObjectName("MarkerGapInline")
         marker_row = QHBoxLayout(self.marker_gap_frame)
-        marker_row.setContentsMargins(6, 2, 6, 2)
-        marker_row.setSpacing(5)
-        marker_row.addWidget(QLabel("Marker Gap"))
+        marker_row.setContentsMargins(8, 4, 8, 4)
+        marker_row.setSpacing(8)
+        marker_row.addWidget(QLabel("Marker gap"))
         self.marker_interval_spin = QDoubleSpinBox()
         self.marker_interval_spin.setRange(0.000001, 100000.0)
         self.marker_interval_spin.setDecimals(4)
@@ -212,12 +212,12 @@ class ManualCalibrationWidget(QWidget):
         self.settings_frame.setObjectName("InlineSettings")
         self.settings_frame.setMaximumWidth(230)
         settings_layout = QVBoxLayout(self.settings_frame)
-        settings_layout.setContentsMargins(7, 3, 7, 3)
-        settings_layout.setSpacing(2)
+        settings_layout.setContentsMargins(8, 4, 8, 4)
+        settings_layout.setSpacing(4)
         margin_row = QHBoxLayout()
         margin_row.setContentsMargins(0, 0, 0, 0)
-        margin_row.setSpacing(6)
-        margin_row.addWidget(QLabel("Margin of Error"))
+        margin_row.setSpacing(8)
+        margin_row.addWidget(QLabel("Margin of error"))
         self.tau_spin = QDoubleSpinBox()
         self.tau_spin.setRange(0.1, 20.0)
         self.tau_spin.setDecimals(2)
@@ -228,7 +228,7 @@ class ManualCalibrationWidget(QWidget):
         set_tooltip(self.tau_spin, "Margin of calibration error.")
         margin_row.addWidget(self.tau_spin)
         settings_layout.addLayout(margin_row)
-        self.euclidean_lengths_checkbox = QCheckBox("Euclidian Distance")
+        self.euclidean_lengths_checkbox = QCheckBox("Euclidean distance")
         self.euclidean_lengths_checkbox.setChecked(True)
         set_tooltip(self.euclidean_lengths_checkbox, "Measure each marker segment as the full distance between two points instead of only x/y axis distance.", "Ctrl+E")
         settings_layout.addWidget(self.euclidean_lengths_checkbox)
@@ -289,44 +289,9 @@ class ManualCalibrationWidget(QWidget):
             self.y_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_2))
             self.cm_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_1))
         self.setStyleSheet(
-            theme.stylesheet(
+            theme.workspace_stylesheet(
+                "ManualCalibrationWidget",
                 """
-            QWidget#ManualCalibrationWidget {
-                background: {theme.BACKGROUND};
-                color: {theme.TEXT};
-                font-size: 13px;
-            }
-            QLabel {
-                background: transparent;
-            }
-            QGroupBox {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                margin-top: 18px;
-                padding: 16px 10px 10px 10px;
-                background: {theme.SURFACE};
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 5px;
-                padding: 0 3px;
-                color: {theme.TEXT};
-                font-weight: 600;
-                background: {theme.BACKGROUND};
-            }
-            QLabel#TitleLabel {
-                font-size: 19px;
-                font-weight: 650;
-            }
-            QLabel#PreviewTitle {
-                font-size: 15px;
-                font-weight: 600;
-            }
-            QLabel#MutedLabel {
-                color: {theme.TEXT};
-                font-size: 12px;
-            }
             QLabel#ResultsLabel {
                 background: {theme.SURFACE};
             }
@@ -336,83 +301,9 @@ class ManualCalibrationWidget(QWidget):
                 background: {theme.SURFACE};
                 border: 0;
             }
-            QPushButton {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 3px;
-                padding: 7px 10px;
-                background: {theme.SURFACE};
-                color: {theme.TEXT};
-            }
-            QPushButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#OpenMediaButton {
-                background: {theme.SURFACE};
-                border-color: {theme.ACCENT};
-                color: {theme.TEXT};
-                font-weight: 600;
-            }
-            QPushButton#OpenMediaButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#ClearButton {
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
-                font-weight: 700;
-            }
-            QPushButton#ClearButton:hover {
-                background: {theme.SOFT};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#RemoveButton {
-                background: {theme.BACKGROUND};
-                border-color: {theme.ACCENT};
-                color: {theme.TEXT};
-                font-weight: 650;
-            }
-            QPushButton#RemoveButton:hover {
-                background: {theme.SOFT};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#ResetButton,
-            QPushButton#ExportButton {
-                background: {theme.SURFACE};
-                border-color: {theme.ACCENT};
-                color: {theme.TEXT};
-                font-weight: 650;
-            }
             QPushButton#ResetButton {
                 padding: 2px 5px;
                 font-size: 10px;
-            }
-            QPushButton#ExportButton {
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
-            }
-            QPushButton#ResetButton:hover,
-            QPushButton#ExportButton:hover {
-                background: {theme.SOFT};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QFrame#OperationsBar {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-            }
-            QFrame#InlineSettings,
-            QFrame#MarkerGapInline {
-                border: 0;
-                border-radius: 0;
-                background: transparent;
             }
             QPushButton#PreviewResetZoomButton {
                 background: {theme.BACKGROUND};
@@ -428,30 +319,9 @@ class ManualCalibrationWidget(QWidget):
                 color: {theme.TEXT};
             }
             QGraphicsView {
-                border: 1px solid {theme.ACCENT};
+                border: 1px solid {theme.BORDER};
                 border-radius: 2px;
                 background: {theme.CANVAS};
-            }
-            QComboBox,
-            QDoubleSpinBox {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                padding: 4px 6px;
-            }
-            QListWidget {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                color: {theme.TEXT};
-                padding: 2px;
-            }
-            QListWidget::item {
-                padding: 4px 5px;
-            }
-            QListWidget::item:selected {
-                background: {theme.SOFT};
-                color: {theme.TEXT};
             }
             """
             )
@@ -996,7 +866,7 @@ def _tool_button_style(color: str) -> str:
             border-bottom: 3px solid {color};
             color: {theme.TEXT};
             border-radius: 3px;
-            padding: 6px 10px 5px 10px;
+            padding: 6px 10px;
             font-weight: 600;
         }}
         QToolButton:hover {{

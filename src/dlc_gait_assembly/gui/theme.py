@@ -57,59 +57,58 @@ HIGH_VARIETY = Palette(
 )
 
 PRIMARY_TOOLS = Palette(
-    name="Field Notes",
-    tool_1="#5E6F60",
-    tool_2="#7A684D",
-    tool_3="#80594B",
-    number_icon="#555750",
+    name="Paper + Rust",
+    tool_1="#6E7658",
+    tool_2="#8C7044",
+    tool_3="#985D46",
+    number_icon="#64574A",
 )
 
 DARK_TOOLS = Palette(
-    name="Field Notes Dark",
-    tool_1="#91A58F",
-    tool_2="#B49A6A",
-    tool_3="#B77C69",
-    number_icon="#B7B9B0",
+    name="Paper + Rust Dark",
+    tool_1="#9FAC89",
+    tool_2="#C2A16C",
+    tool_3="#C9866D",
+    number_icon="#C5B9AB",
 )
 
 LIGHT_COLORS = ThemeColors(
-    background="#F1F1EF",
-    surface="#FFFFFF",
-    panel="#E7E7E3",
-    soft="#D8D8D2",
-    border="#BDBEB8",
-    text="#282925",
-    secondary_text="#686A63",
-    primary="#30312D",
+    background="#F5F1EA",
+    surface="#FFFDF9",
+    panel="#EAE2D8",
+    soft="#DCCDBE",
+    border="#C4B6A6",
+    text="#342E29",
+    secondary_text="#776C62",
+    primary="#57483D",
     primary_text="#FFFFFF",
-    canvas="#272925",
-    canvas_text="#F1F1EF",
-    status_ready="#5C7553",
-    status_running="#7A684D",
-    status_error="#9B4D3F",
+    canvas="#27231F",
+    canvas_text="#FAF5ED",
+    status_ready="#64745C",
+    status_running="#957346",
+    status_error="#A4533F",
 )
 
 DARK_COLORS = ThemeColors(
-    background="#181916",
-    surface="#22231F",
-    panel="#2D2E29",
-    soft="#3A3B35",
-    border="#51534B",
-    text="#ECEDE7",
-    secondary_text="#B3B5AC",
-    primary="#50534B",
-    primary_text="#F5F5F1",
-    canvas="#10110F",
-    canvas_text="#ECEDE7",
-    status_ready="#8EA486",
-    status_running="#B49A6A",
-    status_error="#D68B7B",
+    background="#1C1917",
+    surface="#28231F",
+    panel="#342E29",
+    soft="#463C34",
+    border="#65584C",
+    text="#F2ECE4",
+    secondary_text="#C2B5A7",
+    primary="#665548",
+    primary_text="#FFF9F2",
+    canvas="#100E0D",
+    canvas_text="#F2ECE4",
+    status_ready="#91A286",
+    status_running="#C09A63",
+    status_error="#D7836D",
 )
 
 # Change these assignments while testing palettes.
-AESTHETIC_PALETTE = PASTEL_SKY
-LOGO_SURFACE = "#FFFFFF"
-LOGO_BORDER = "#D6D7D0"
+AESTHETIC_PALETTE = PRIMARY_TOOLS
+BRAND_SURFACE = LIGHT_COLORS.surface
 
 
 def set_dark_mode(enabled: bool) -> None:
@@ -204,6 +203,9 @@ def application_palette() -> QPalette:
 def application_stylesheet() -> str:
     return stylesheet(
         """
+        QWidget {
+            font-size: 13px;
+        }
         QToolTip {
             background: {theme.SURFACE};
             color: {theme.TEXT};
@@ -226,6 +228,118 @@ def application_stylesheet() -> str:
         QDialog, QMessageBox {
             background: {theme.BACKGROUND};
             color: {theme.TEXT};
+        }
+        QPushButton, QToolButton {
+            background: {theme.SURFACE};
+            color: {theme.TEXT};
+            border: 1px solid {theme.BORDER};
+            border-radius: 3px;
+            padding: 6px 10px;
+            min-height: 18px;
+        }
+        QPushButton:hover, QToolButton:hover {
+            background: {theme.PANEL};
+            border-color: {theme.TEXT};
+        }
+        QPushButton:disabled, QToolButton:disabled {
+            background: {theme.PANEL};
+            color: {theme.CONNECTOR};
+        }
+        QPushButton#PrimaryButton, QPushButton#ExportButton {
+            background: {theme.PRIMARY};
+            border-color: {theme.PRIMARY};
+            color: {theme.PRIMARY_TEXT};
+            font-weight: 600;
+        }
+        QPushButton#PrimaryButton:hover, QPushButton#ExportButton:hover {
+            background: {theme.SOFT};
+            border-color: {theme.TEXT};
+            color: {theme.TEXT};
+        }
+        QPushButton#PrimaryButton:disabled, QPushButton#ExportButton:disabled {
+            background: {theme.PANEL};
+            border-color: {theme.BORDER};
+            color: {theme.CONNECTOR};
+        }
+        QLineEdit, QTextEdit, QPlainTextEdit, QComboBox,
+        QSpinBox, QDoubleSpinBox, QListWidget, QTreeWidget, QTableWidget {
+            background: {theme.SURFACE};
+            color: {theme.TEXT};
+            border: 1px solid {theme.BORDER};
+            border-radius: 2px;
+            padding: 4px 6px;
+            selection-background-color: {theme.SOFT};
+            selection-color: {theme.TEXT};
+        }
+        QGroupBox {
+            background: {theme.SURFACE};
+            color: {theme.TEXT};
+            border: 1px solid {theme.BORDER};
+            border-radius: 2px;
+            margin-top: 14px;
+            padding: 14px 10px 10px 10px;
+            font-weight: 600;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 7px;
+            padding: 0 3px;
+            background: {theme.BACKGROUND};
+            color: {theme.TEXT};
+        }
+        QTabWidget::pane {
+            background: {theme.SURFACE};
+            border: 1px solid {theme.BORDER};
+            border-radius: 0;
+            top: -1px;
+        }
+        QTabBar::tab {
+            background: transparent;
+            color: {theme.CONNECTOR};
+            border: 0;
+            border-bottom: 2px solid transparent;
+            padding: 7px 10px;
+        }
+        QTabBar::tab:hover {
+            color: {theme.TEXT};
+            background: {theme.PANEL};
+        }
+        QTabBar::tab:selected {
+            color: {theme.TEXT};
+            border-bottom-color: {theme.TOOL_1};
+            font-weight: 600;
+        }
+        QHeaderView::section {
+            background: {theme.PANEL};
+            color: {theme.TEXT};
+            border: 0;
+            border-right: 1px solid {theme.BORDER};
+            border-bottom: 1px solid {theme.BORDER};
+            padding: 6px 8px;
+            font-weight: 600;
+            text-align: left;
+        }
+        QProgressBar {
+            background: {theme.SURFACE};
+            color: {theme.TEXT};
+            border: 1px solid {theme.BORDER};
+            border-radius: 2px;
+            min-height: 16px;
+            text-align: center;
+        }
+        QProgressBar::chunk {
+            background: {theme.TOOL_1};
+            border-radius: 1px;
+        }
+        QScrollArea {
+            border: 0;
+            background: transparent;
+        }
+        QSplitter::handle {
+            background: {theme.BORDER};
+            width: 1px;
+            height: 1px;
         }
         QCheckBox, QRadioButton {
             color: {theme.TEXT};
@@ -274,6 +388,55 @@ def application_stylesheet() -> str:
     )
 
 
+def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
+    """Shared visual contract for every full-size tool workspace."""
+
+    base = """
+        QWidget#ROOT_OBJECT {
+            background: {theme.BACKGROUND};
+            color: {theme.TEXT};
+            font-size: 13px;
+        }
+        QLabel {
+            background: transparent;
+            color: {theme.TEXT};
+        }
+        QLabel#TitleLabel, QLabel#PreviewTitle {
+            color: {theme.TEXT};
+            font-size: 15px;
+            font-weight: 600;
+        }
+        QLabel#MutedLabel, QLabel#StatusLabel, QLabel#SettingsPlaceholder,
+        QLabel#DimensionLabel {
+            color: {theme.CONNECTOR};
+            font-size: 12px;
+        }
+        QFrame#OperationsBar, QFrame#TerminalToolbar {
+            background: {theme.SURFACE};
+            border: 1px solid {theme.BORDER};
+            border-radius: 2px;
+        }
+        QFrame#InlineSettings, QFrame#MarkerGapInline {
+            background: transparent;
+            border: 0;
+        }
+        QPushButton#RemoveButton, QPushButton#ClearButton,
+        QPushButton#DeleteButton {
+            background: {theme.SURFACE};
+            border-color: {theme.STATUS_ERROR};
+            color: {theme.STATUS_ERROR};
+            font-weight: 600;
+        }
+        QPushButton#RemoveButton:hover, QPushButton#ClearButton:hover,
+        QPushButton#DeleteButton:hover {
+            background: {theme.PANEL};
+            border-color: {theme.STATUS_ERROR};
+            color: {theme.STATUS_ERROR};
+        }
+    """.replace("ROOT_OBJECT", root_object_name)
+    return stylesheet(base + extra)
+
+
 def stylesheet(template: str) -> str:
     return (
         template.replace("{theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)}", mix_hex(SOFT, SURFACE, 0.35))
@@ -289,8 +452,7 @@ def stylesheet(template: str) -> str:
         .replace("{theme.PRIMARY_TEXT}", PRIMARY_TEXT)
         .replace("{theme.CANVAS}", CANVAS)
         .replace("{theme.CANVAS_TEXT}", CANVAS_TEXT)
-        .replace("{theme.LOGO_SURFACE}", LOGO_SURFACE)
-        .replace("{theme.LOGO_BORDER}", LOGO_BORDER)
+        .replace("{theme.BRAND_SURFACE}", BRAND_SURFACE)
         .replace("{theme.STATUS_READY}", STATUS_READY)
         .replace("{theme.STATUS_RUNNING}", STATUS_RUNNING)
         .replace("{theme.STATUS_ERROR}", STATUS_ERROR)

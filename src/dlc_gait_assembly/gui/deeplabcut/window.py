@@ -73,25 +73,17 @@ class DeepLabCutWidget(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(10)
+        root.setSpacing(12)
 
         toolbar = QFrame()
         toolbar.setObjectName("TerminalToolbar")
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(14, 11, 14, 11)
-        toolbar_layout.setSpacing(10)
+        toolbar_layout.setContentsMargins(12, 12, 12, 12)
+        toolbar_layout.setSpacing(12)
 
-        title_block = QWidget()
-        title_block.setObjectName("TitleBlock")
-        title_layout = QVBoxLayout(title_block)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(2)
-
-        title = QLabel("DeepLabCut Terminal")
+        title = QLabel("DeepLabCut terminal")
         title.setObjectName("TitleLabel")
-        title_layout.addWidget(title)
-
-        toolbar_layout.addWidget(title_block)
+        toolbar_layout.addWidget(title)
         toolbar_layout.addStretch(1)
 
         status_group = QWidget()
@@ -100,14 +92,9 @@ class DeepLabCutWidget(QWidget):
         status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.setSpacing(4)
 
-        self.status_indicator = QLabel()
-        self.status_indicator.setObjectName("StatusDot")
-        self.status_indicator.setProperty("statusState", "ready")
-        self.status_indicator.setFixedSize(8, 8)
-        status_layout.addWidget(self.status_indicator)
-
-        self.status_label = QLabel("Ready")
-        self.status_label.setObjectName("StatusPill")
+        self.status_label = QLabel("Status: Ready")
+        self.status_label.setObjectName("StatusLabel")
+        self.status_label.setProperty("statusState", "ready")
         self.status_label.setProperty("running", False)
         status_layout.addWidget(self.status_label)
         toolbar_layout.addWidget(status_group)
@@ -150,15 +137,12 @@ class DeepLabCutWidget(QWidget):
         terminal_header = QFrame()
         terminal_header.setObjectName("TerminalHeader")
         terminal_header_layout = QHBoxLayout(terminal_header)
-        terminal_header_layout.setContentsMargins(9, 7, 9, 7)
-        terminal_header_layout.setSpacing(7)
+        terminal_header_layout.setContentsMargins(12, 8, 12, 8)
+        terminal_header_layout.setSpacing(8)
         terminal_label = QLabel("Console")
         terminal_label.setObjectName("TerminalHeaderLabel")
         terminal_header_layout.addWidget(terminal_label)
         terminal_header_layout.addStretch(1)
-        command_hint = QLabel("activate-dlc")
-        command_hint.setObjectName("CommandHint")
-        terminal_header_layout.addWidget(command_hint)
         terminal_layout.addWidget(terminal_header)
 
         self._terminal = TerminalPane()
@@ -281,10 +265,10 @@ class DeepLabCutWidget(QWidget):
         self._sync_environment_buttons()
 
     def _set_status(self, text: str, state: str = "other") -> None:
-        self.status_label.setText(text)
-        self.status_indicator.setProperty("statusState", state)
-        self.status_indicator.style().unpolish(self.status_indicator)
-        self.status_indicator.style().polish(self.status_indicator)
+        self.status_label.setText(f"Status: {text}")
+        self.status_label.setProperty("statusState", state)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def _sync_environment_buttons(self) -> None:
         running = self._is_process_running()
@@ -374,69 +358,31 @@ class DeepLabCutWidget(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
-            theme.stylesheet(
+            theme.workspace_stylesheet(
+                "DeepLabCutWidget",
                 """
-            QWidget#DeepLabCutWidget {
-                background: {theme.BACKGROUND};
-                color: {theme.TEXT};
-                font-size: 13px;
-            }
-            QWidget#TerminalToolbar {
-                background: transparent;
-            }
-            QFrame#TerminalToolbar {
-                background: {theme.SURFACE};
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-            }
-            QWidget#TitleBlock {
-                background: transparent;
-            }
             QWidget#StatusGroup {
                 background: transparent;
             }
-            QLabel {
-                background: transparent;
-            }
-            QLabel#TitleLabel {
-                color: {theme.TEXT};
-                font-size: 17px;
-                font-weight: 650;
-            }
-            QLabel#StatusPill {
+            QLabel#StatusLabel {
                 background: transparent;
                 border: 0;
-                color: {theme.TEXT};
-                font-size: 11px;
+                color: {theme.CONNECTOR};
+                font-size: 12px;
                 font-weight: 600;
-                padding: 0 2px;
             }
-            QLabel#StatusPill[running="true"] {
-                background: transparent;
-                border: 0;
-                color: {theme.TEXT};
+            QLabel#StatusLabel[statusState="ready"] {
+                color: {theme.STATUS_READY};
             }
-            QLabel#StatusDot {
-                background: {theme.STATUS_OTHER};
-                border: 0;
-                border-radius: 4px;
-                min-width: 8px;
-                max-width: 8px;
-                min-height: 8px;
-                max-height: 8px;
+            QLabel#StatusLabel[statusState="running"] {
+                color: {theme.STATUS_RUNNING};
             }
-            QLabel#StatusDot[statusState="ready"] {
-                background: {theme.STATUS_READY};
-            }
-            QLabel#StatusDot[statusState="running"] {
-                background: {theme.STATUS_RUNNING};
-            }
-            QLabel#StatusDot[statusState="error"] {
-                background: {theme.STATUS_ERROR};
+            QLabel#StatusLabel[statusState="error"] {
+                color: {theme.STATUS_ERROR};
             }
             QFrame#TerminalFrame {
                 background: {theme.CANVAS};
-                border: 1px solid {theme.ACCENT};
+                border: 1px solid {theme.BORDER};
                 border-radius: 2px;
             }
             QFrame#TerminalHeader {
@@ -448,52 +394,19 @@ class DeepLabCutWidget(QWidget):
                 font-size: 12px;
                 font-weight: 700;
             }
-            QLabel#CommandHint {
-                color: {theme.CANVAS_TEXT};
-                font-family: Menlo, Consolas, monospace;
-                font-size: 11px;
-                font-weight: 700;
-            }
             QPlainTextEdit#TerminalPane {
                 border: 0;
-                border-top: 1px solid {theme.ACCENT};
+                border-top: 1px solid {theme.BORDER};
                 border-radius: 0;
                 background: {theme.CANVAS};
                 color: {theme.CANVAS_TEXT};
                 font-family: Menlo, Consolas, monospace;
                 font-size: 13px;
                 padding: 12px;
-                selection-background-color: {theme.ACCENT};
+                selection-background-color: {theme.SOFT};
             }
             QWidget#TerminalViewport {
                 background: {theme.CANVAS};
-            }
-            QPushButton {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 3px;
-                padding: 7px 10px;
-                background: {theme.SURFACE};
-                color: {theme.TEXT};
-                font-weight: 550;
-            }
-            QPushButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton:disabled {
-                color: {theme.CONNECTOR};
-                background: {theme.PANEL};
-            }
-            QPushButton#PrimaryButton {
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
-            }
-            QPushButton#PrimaryButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
             }
             """
             )

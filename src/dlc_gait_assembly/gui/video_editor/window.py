@@ -49,6 +49,7 @@ except ImportError:
 class VideoEditorWidget(QWidget):
     def __init__(self):
         super().__init__()
+        self.setObjectName("VideoEditorWidget")
 
         self._capture = None
         self._current_video: Path | None = None
@@ -114,18 +115,18 @@ class VideoEditorWidget(QWidget):
         left_panel = QWidget()
         left_panel.setMinimumWidth(350)
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(12, 12, 12, 12)
-        left_layout.setSpacing(9)
+        left_layout.setContentsMargins(16, 16, 16, 16)
+        left_layout.setSpacing(12)
 
         videos_box = QGroupBox("Uploaded videos")
         videos_box.setMinimumHeight(150)
         videos_layout = QVBoxLayout(videos_box)
         videos_layout.setSpacing(8)
         button_row = QHBoxLayout()
-        self.add_videos_button = QPushButton("Add Files")
+        self.add_videos_button = QPushButton("Add files")
         self.add_videos_button.setObjectName("AddFilesButton")
         set_tooltip(self.add_videos_button, "Add video files to the processing list.", "Ctrl+O")
-        self.add_folder_button = QPushButton("Add Folder")
+        self.add_folder_button = QPushButton("Add folder")
         self.add_folder_button.setObjectName("AddFolderButton")
         set_tooltip(self.add_folder_button, "Add every supported video in a folder.", "Ctrl+Shift+O")
         self.remove_videos_button = QPushButton("Remove")
@@ -155,7 +156,7 @@ class VideoEditorWidget(QWidget):
         self.settings_panel = OperationSettingsPanel(self.preview)
         left_layout.addWidget(self.settings_panel, 4)
 
-        self.process_button = QPushButton("Process Files")
+        self.process_button = QPushButton("Process files")
         self.process_button.setObjectName("PrimaryButton")
         set_tooltip(self.process_button, "Process the uploaded videos with the selected operations.", "Ctrl+R")
         left_layout.addWidget(self.process_button)
@@ -169,8 +170,8 @@ class VideoEditorWidget(QWidget):
         right_panel = QWidget()
         right_panel.setMinimumWidth(390)
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(14, 14, 14, 14)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.setSpacing(12)
 
         self.preview_title = QLabel("Select a video from the uploaded list.")
         self.preview_title.setObjectName("PreviewTitle")
@@ -179,7 +180,7 @@ class VideoEditorWidget(QWidget):
         operations_bar = QFrame()
         operations_bar.setObjectName("OperationsBar")
         operations_layout = QVBoxLayout(operations_bar)
-        operations_layout.setContentsMargins(10, 8, 10, 8)
+        operations_layout.setContentsMargins(12, 8, 12, 8)
         operations_layout.setSpacing(8)
 
         tool_row = QHBoxLayout()
@@ -249,111 +250,14 @@ class VideoEditorWidget(QWidget):
             self.enhancements_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_2))
             self.trim_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_1))
         self.setStyleSheet(
-            theme.stylesheet(
+            theme.workspace_stylesheet(
+                "VideoEditorWidget",
                 """
-            QMainWindow, QWidget {
-                background: {theme.BACKGROUND};
-                color: {theme.TEXT};
-                font-size: 13px;
-            }
-            QLabel {
-                background: transparent;
-            }
-            QGroupBox {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                margin-top: 18px;
-                padding: 16px 10px 10px 10px;
-                background: {theme.SURFACE};
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 5px;
-                padding: 0 3px;
-                color: {theme.TEXT};
-                font-weight: 600;
-                background: {theme.BACKGROUND};
-            }
             QScrollArea#OperationSettingsScroll,
             QScrollArea#OperationSettingsScroll > QWidget,
             QWidget#OperationSettingsContent {
                 background: {theme.SURFACE};
                 border: 0;
-            }
-            QPushButton {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 3px;
-                padding: 7px 10px;
-                background: {theme.SURFACE};
-                color: {theme.TEXT};
-            }
-            QPushButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton:disabled {
-                color: {theme.CONNECTOR};
-                background: {theme.PANEL};
-            }
-            QPushButton#AddFilesButton {
-                background: {theme.SURFACE};
-                border-color: {theme.ACCENT};
-                color: {theme.TEXT};
-                font-weight: 650;
-            }
-            QPushButton#AddFilesButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#AddFolderButton {
-                background: {theme.SURFACE};
-                border-color: {theme.ACCENT};
-                color: {theme.TEXT};
-                font-weight: 650;
-            }
-            QPushButton#AddFolderButton:hover {
-                background: {theme.PANEL};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#RemoveButton,
-            QPushButton#DeleteButton {
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
-                font-weight: 700;
-            }
-            QPushButton#RemoveButton:hover,
-            QPushButton#DeleteButton:hover {
-                background: {theme.SOFT};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#ClearButton {
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
-                font-weight: 700;
-            }
-            QPushButton#ClearButton:hover {
-                background: {theme.SOFT};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
-            }
-            QPushButton#PrimaryButton {
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
-                font-weight: 700;
-                padding: 10px;
-            }
-            QPushButton#PrimaryButton:hover {
-                background: {theme.SOFT};
-                border-color: {theme.TEXT};
-                color: {theme.TEXT};
             }
             QPushButton#TinyResetButton {
                 border-radius: 2px;
@@ -373,8 +277,8 @@ class VideoEditorWidget(QWidget):
                 font-weight: 800;
             }
             QPushButton#InlineDeleteButton:hover {
-                background: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
+                background: {theme.PANEL};
+                color: {theme.STATUS_ERROR};
             }
             QPushButton#CreateRegionButton,
             QPushButton#CreateCropRegionButton,
@@ -384,22 +288,22 @@ class VideoEditorWidget(QWidget):
                 font-weight: 650;
             }
             QPushButton#CreateCropRegionButton {
-                background: {theme.BACKGROUND};
-                border-color: {theme.ACCENT};
+                background: {theme.SURFACE};
+                border-color: {theme.BORDER};
                 color: {theme.TEXT};
             }
             QPushButton#CreateTrimRangeButton {
                 background: {theme.SURFACE};
-                border-color: {theme.ACCENT};
+                border-color: {theme.BORDER};
                 color: {theme.TEXT};
             }
             QPushButton#ChooseVideosButton {
                 padding: 2px 6px;
                 font-size: 10px;
                 min-height: 18px;
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
+                background: {theme.SURFACE};
+                border-color: {theme.BORDER};
+                color: {theme.TEXT};
             }
             QPushButton#ChooseVideosButton:hover {
                 background: {theme.SOFT};
@@ -412,30 +316,6 @@ class VideoEditorWidget(QWidget):
                 border-color: {theme.ACCENT};
                 color: {theme.TEXT};
             }
-            QFrame#OperationsBar {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-            }
-            QToolButton {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 3px;
-                padding: 7px 10px;
-                background: {theme.SURFACE};
-                font-weight: 600;
-            }
-            QLabel#TitleLabel {
-                font-size: 19px;
-                font-weight: 650;
-            }
-            QLabel#PreviewTitle {
-                font-size: 15px;
-                font-weight: 600;
-            }
-            QLabel#SettingsPlaceholder {
-                color: {theme.TEXT};
-                font-size: 12px;
-            }
             QFrame#RegionSettings {
                 border: 0;
                 border-top: 1px solid {theme.BORDER};
@@ -443,32 +323,12 @@ class VideoEditorWidget(QWidget):
                 background: transparent;
             }
             QLabel#RegionTitle {
-                font-weight: 700;
-                font-size: 10px;
+                font-weight: 600;
+                font-size: 12px;
             }
             QLabel#DimensionLabel {
-                color: {theme.TEXT};
-                font-size: 9px;
-            }
-            QSpinBox {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                padding: 0 2px;
-                font-size: 10px;
-            }
-            QDoubleSpinBox {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                padding: 0 2px;
-                font-size: 10px;
-            }
-            QComboBox, QLineEdit {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                padding: 5px 6px;
+                color: {theme.CONNECTOR};
+                font-size: 11px;
             }
             QFrame#EnhancementSettings {
                 border: 0;
@@ -479,50 +339,26 @@ class VideoEditorWidget(QWidget):
             QSlider#EnhancementSlider::groove:horizontal {
                 height: 7px;
                 border-radius: 3px;
-                background: {theme.PRIMARY};
-                border: 1px solid {theme.PRIMARY};
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
             }
             QSlider#EnhancementSlider::handle:horizontal {
                 width: 16px;
                 margin: -6px 0;
-                border-radius: 8px;
+                border-radius: 2px;
                 background: {theme.SOFT};
-                border: 2px solid {theme.PRIMARY};
+                border: 1px solid {theme.TEXT};
             }
             QSlider#EnhancementSlider::handle:horizontal:hover {
                 background: {theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)};
             }
-            QListWidget {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                alternate-background-color: {theme.SURFACE};
-                selection-background-color: {theme.SOFT};
-                selection-color: {theme.TEXT};
-                font-size: 9px;
-            }
             QListWidget::item {
-                padding: 1px 3px;
-            }
-            QListWidget::item:selected {
-                background: {theme.SOFT};
-                color: {theme.TEXT};
+                padding: 4px 6px;
             }
             QGraphicsView {
-                border: 1px solid {theme.ACCENT};
+                border: 1px solid {theme.BORDER};
                 border-radius: 2px;
                 background: {theme.CANVAS};
-            }
-            QProgressBar {
-                border: 1px solid {theme.ACCENT};
-                border-radius: 2px;
-                background: {theme.SURFACE};
-                height: 16px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background: {theme.PRIMARY};
-                border-radius: 1px;
             }
             """
             )
@@ -1053,7 +889,7 @@ def _tool_button_style(color: str) -> str:
             border-bottom: 3px solid {color};
             color: {theme.TEXT};
             border-radius: 3px;
-            padding: 6px 10px 5px 10px;
+            padding: 6px 10px;
             font-weight: 600;
         }}
         QToolButton:hover {{
@@ -1123,7 +959,7 @@ class ExportSettingsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         if ok_button is not None:
-            ok_button.setText("Process Files")
+            ok_button.setText("Process files")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -1148,7 +984,7 @@ class ExportSettingsDialog(QDialog):
     def _browse_output_root(self) -> None:
         directory = QFileDialog.getExistingDirectory(
             self,
-            "Choose Output Folder",
+            "Choose output folder",
             self.output_root_edit.text() or str(Path.home()),
         )
         if directory:

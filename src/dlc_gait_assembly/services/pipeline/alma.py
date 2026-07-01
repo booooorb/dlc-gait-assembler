@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Literal
 
 from dlc_gait_assembly.services.imports import default_alma_root as _default_alma_root
+from dlc_gait_assembly.services.pipeline.rustlab1 import (
+    RUSTLAB1_PARAMETER_NAMES,
+    extract_rustlab1_parameters,
+)
 
 
 AnalysisType = Literal["Treadmill", "Spontaneous walking"]
@@ -39,6 +43,7 @@ class AlmaSettings:
     stride_length_max_cm: float = 8.0
     n_continuous_strides: int = 10
     generate_stickplot: bool = True
+    generate_rustlab1_parameters: bool = True
     custom_bodypart_mapping: dict[str, str] | None = None
 
 
@@ -46,6 +51,7 @@ class AlmaSettings:
 class AlmaRunResult:
     input_file: Path
     output_files: tuple[Path, ...]
+    messages: tuple[str, ...] = ()
 
 
 def default_alma_root(project_root: Path) -> Path:
@@ -105,6 +111,7 @@ def settings_from_alma_config(config: dict) -> AlmaSettings:
         step_height_max_cm=float(config.get("step_height_max_cm", 2.0)),
         stride_length_min_cm=float(config.get("stride_length_min_cm", 0.0)),
         stride_length_max_cm=float(config.get("stride_length_max_cm", 8.0)),
+        generate_rustlab1_parameters=_coerce_bool(config.get("generate_rustlab1_parameters", True), default=True),
     )
 
 
@@ -206,6 +213,7 @@ def _run_alma_gait_analysis_external(
             AlmaRunResult(
                 input_file=Path(item["input_file"]),
                 output_files=tuple(Path(path) for path in item["output_files"]),
+                messages=tuple(item.get("messages", ())),
             )
             for item in payload["results"]
         ]
@@ -217,7 +225,8 @@ def _run_alma_gait_analysis_external(
 
 
 def _run_single_file(csv_file: Path, output_folder: Path, settings: AlmaSettings, kinematics, pd, plt) -> AlmaRunResult:
-    dataframe = pd.read_csv(csv_file, header=[1, 2])
+    raw_dataframe = pd.read_csv(csv_file, header=[1, 2])
+    dataframe = raw_dataframe.copy()
     dataframe, bodyparts, _bodyparts_raw = kinematics.fix_column_names(dataframe, settings.custom_bodypart_mapping)
 
     if settings.analysis_type == "Treadmill":
@@ -254,10 +263,34 @@ def _run_single_file(csv_file: Path, output_folder: Path, settings: AlmaSettings
 
     base_name = csv_file.stem
     output_files: list[Path] = []
+    messages: list[str] = []
 
     parameters_path = output_folder / f"{base_name}_parameters.csv"
     parameters.to_csv(parameters_path, index=False)
     output_files.append(parameters_path)
+
+    if settings.generate_rustlab1_parameters:
+        rustlab1 = extract_rustlab1_parameters(raw_dataframe, parameters, settings, kinematics)
+        if rustlab1.dataframe is None:
+            messages.append("RustLab1 output skipped: no left/right/down RustLab1 marker labels were detected.")
+        else:
+            rustlab1_path = output_folder / f"{base_name}_rustlab1_parameters.csv"
+            rustlab1.dataframe.to_csv(rustlab1_path, index=False)
+            output_files.append(rustlab1_path)
+
+            merged_path = output_folder / f"{base_name}_expanded_parameters.csv"
+            rustlab_features = rustlab1.dataframe.loc[:, list(RUSTLAB1_PARAMETER_NAMES)].reset_index(drop=True)
+            merged = pd.concat([parameters.reset_index(drop=True), rustlab_features], axis=1)
+            merged.to_csv(merged_path, index=False)
+            output_files.append(merged_path)
+
+            scale_text = "unknown scale" if rustlab1.pixels_per_cm is None else f"{rustlab1.pixels_per_cm:.3f} px/cm"
+            messages.append(
+                f"RustLab1: calculated {len(rustlab1.available_parameters)}/30 parameters at {scale_text} "
+                f"({rustlab1.calibration_source})."
+            )
+            if rustlab1.missing_markers:
+                messages.append("RustLab1 missing markers: " + ", ".join(rustlab1.missing_markers))
 
     if coords is not None:
         coords_path = output_folder / f"{base_name}_coordinates.csv"
@@ -285,7 +318,7 @@ def _run_single_file(csv_file: Path, output_folder: Path, settings: AlmaSettings
             if plt.get_fignums():
                 plt.close("all")
 
-    return AlmaRunResult(input_file=csv_file, output_files=tuple(output_files))
+    return AlmaRunResult(input_file=csv_file, output_files=tuple(output_files), messages=tuple(messages))
 
 
 def _alma_compatible_python() -> Path | None:
@@ -475,6 +508,7 @@ def _run_request(request_path: Path) -> None:
             {
                 "input_file": str(result.input_file),
                 "output_files": [str(path) for path in result.output_files],
+                "messages": list(result.messages),
             }
             for result in results
         ]

@@ -2,12 +2,65 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from dlc_gait_assembly.services.pipeline.alma import (
     AlmaSettings,
     pixels_per_cm_from_calibration_map,
     run_alma_gait_analysis,
 )
+from dlc_gait_assembly.services.pipeline.rustlab1 import (
+    RUSTLAB1_PARAMETER_NAMES,
+    extract_rustlab1_parameters,
+)
+
+
+def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
+    import numpy as np
+    import pandas as pd
+
+    frame_count = 20
+    coordinates: dict[tuple[str, str], object] = {}
+    marker_values = {
+        "d-center-back": (np.zeros(frame_count), np.zeros(frame_count)),
+        "d-back-left": (np.ones(frame_count), np.ones(frame_count)),
+        "d-back-right": (np.ones(frame_count), np.zeros(frame_count)),
+        "l-back-ankle": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
+        "l-back-toe_tip": (np.arange(frame_count, dtype=float) + 10, np.arange(frame_count, dtype=float)),
+        "l-hip": (np.r_[np.full(10, 5.0), np.full(10, 15.0)], np.arange(frame_count, dtype=float)),
+        "l-iliac-crest": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
+        "r-back-ankle": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
+        "r-back-toe_tip": (np.arange(frame_count, dtype=float) + 10, np.arange(frame_count, dtype=float)),
+        "r-hip": (np.r_[np.full(10, 5.0), np.full(10, 15.0)], np.arange(frame_count, dtype=float)),
+        "r-iliac-crest": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
+    }
+    for marker, (x, y) in marker_values.items():
+        coordinates[(marker, "x")] = x
+        coordinates[(marker, "y")] = y
+        coordinates[(marker, "likelihood")] = np.ones(frame_count)
+
+    raw = pd.DataFrame(coordinates)
+    alma_parameters = pd.DataFrame(
+        {"stride_start (frame)": [0, 10], "stride_end (frame)": [9, 19]}
+    )
+    settings = AlmaSettings(
+        calibration_method="manual",
+        pixels_per_cm=10.0,
+        generate_stickplot=False,
+    )
+    identity_kinematics = SimpleNamespace(butterworth_filter=lambda values, _fps, _cutoff: values)
+
+    result = extract_rustlab1_parameters(raw, alma_parameters, settings, identity_kinematics)
+
+    assert result.dataframe is not None
+    assert result.available_parameters == RUSTLAB1_PARAMETER_NAMES
+    assert result.missing_markers == ()
+    assert result.dataframe["LB__avg_Angle"].tolist() == [45.0, 45.0]
+    assert result.dataframe["RB__avg_Angle"].tolist() == [0.0, 0.0]
+    assert result.dataframe["l-back-ankle__Average_Height"].tolist() == [4.5, 4.5]
+    assert result.dataframe["r-back-ankle__Movement"].tolist() == [9.0, 9.0]
+    assert np.isnan(result.dataframe.loc[0, "left__back__movement_per_step"])
+    assert result.dataframe.loc[1, "left__back__movement_per_step"] == 1.0
 
 
 def test_pixels_per_cm_from_calibration_map_uses_overall_value(tmp_path):
