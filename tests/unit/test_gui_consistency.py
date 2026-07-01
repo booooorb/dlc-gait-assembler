@@ -114,8 +114,21 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     automated_page = tabs.widget(1)
     assert [label.text() for label in manual_page.findChildren(QLabel, "StepTitle")] == expected_stages
     assert all(button.isEnabled() for button in manual_page.findChildren(QPushButton, "OpenToolButton"))
-    assert automated_page.findChild(AutomatedPipelineProfilesWidget) is not None
+    automated_profiles = automated_page.findChild(AutomatedPipelineProfilesWidget)
+    assert automated_profiles is not None
     assert not automated_page.findChildren(QPushButton, "OpenToolButton")
+    configuration_tabs = automated_profiles.findChild(QTabWidget, "ProfileConfigurationTabs")
+    assert [configuration_tabs.tabText(index) for index in range(configuration_tabs.count())] == [
+        "1  Manifest + regions",
+        "2  Region models",
+        "3  Calibration",
+        "4  Review + save",
+    ]
+    assert automated_profiles.run_pipeline_button.text() == "RUN pipeline"
+    assert not automated_profiles.run_pipeline_button.isEnabled()
+    assert automated_profiles.configuration_menu.isHidden()
+    automated_profiles.configuration_menu_button.click()
+    assert not automated_profiles.configuration_menu.isHidden()
     menu.close()
 
 

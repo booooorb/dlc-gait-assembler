@@ -8,33 +8,45 @@ import shutil
 from uuid import uuid4
 
 
-PROFILE_FORMAT_VERSION = 1
-ASSET_KEYS = ("calibration_map", "deeplabcut_model", "processing_manifest")
+PROFILE_FORMAT_VERSION = 2
+
+
+def regions_from_processing_manifest(path: str | Path) -> tuple[str, ...]:
+    manifest_path = Path(path).expanduser().resolve()
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        crop_regions = data["operations"]["crop_regions"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("This is not a valid video processing manifest.") from exc
+
+    if not isinstance(crop_regions, list):
+        raise ValueError("The video processing manifest has an invalid region list.")
+    if not crop_regions:
+        return ("Full frame",)
+
+    regions: list[str] = []
+    for index, item in enumerate(crop_regions, start=1):
+        if not isinstance(item, dict):
+            raise ValueError("The video processing manifest has an invalid region entry.")
+        name = str(item.get("name", "")).strip() or f"Region {index}"
+        if name in regions:
+            raise ValueError(f'The video processing manifest contains duplicate region name "{name}".')
+        regions.append(name)
+    return tuple(regions)
 
 
 @dataclass(frozen=True)
 class AutomatedPipelineProfile:
     id: str
     name: str
-    calibration_map: Path
-    deeplabcut_model: Path
     processing_manifest: Path
+    calibration_map: Path
+    deeplabcut_models: dict[str, Path]
     updated_at: str = ""
-
-    def asset_paths(self) -> dict[str, Path]:
-        return {
-            "calibration_map": self.calibration_map,
-            "deeplabcut_model": self.deeplabcut_model,
-            "processing_manifest": self.processing_manifest,
-        }
 
 
 class AutomatedProfileStore:
-    """Owns the files selected for automated-pipeline profiles.
-
-    This store intentionally does not interpret the assets or run any pipeline
-    work. It only copies them into a durable, app-managed profile folder.
-    """
+    """Owns profile inputs without interpreting or running the pipeline."""
 
     def __init__(self, root: str | Path):
         self.root = Path(root).expanduser().resolve()
@@ -48,31 +60,34 @@ class AutomatedProfileStore:
             try:
                 profiles.append(self._load_metadata(metadata_path))
             except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
-                # A partially written or manually edited folder should not make
-                # the entire profile picker unusable.
                 continue
         return sorted(profiles, key=lambda profile: profile.name.casefold())
 
     def load(self, profile_id: str) -> AutomatedPipelineProfile:
-        profile_dir = self._profile_dir(profile_id)
-        return self._load_metadata(profile_dir / "profile.json")
+        return self._load_metadata(self._profile_dir(profile_id) / "profile.json")
 
     def save(
         self,
         name: str,
-        assets: dict[str, str | Path],
+        processing_manifest: str | Path,
+        calibration_map: str | Path,
+        deeplabcut_models: dict[str, str | Path],
         profile_id: str | None = None,
     ) -> AutomatedPipelineProfile:
         clean_name = name.strip()
         if not clean_name:
             raise ValueError("Enter a profile name.")
 
-        missing_keys = [key for key in ASSET_KEYS if key not in assets]
-        if missing_keys:
-            raise ValueError(f"Missing profile asset: {missing_keys[0].replace('_', ' ')}.")
-
-        source_paths = {key: Path(assets[key]).expanduser().resolve() for key in ASSET_KEYS}
-        missing_paths = [path for path in source_paths.values() if not path.exists()]
+        manifest_source = Path(processing_manifest).expanduser().resolve()
+        calibration_source = Path(calibration_map).expanduser().resolve()
+        regions = regions_from_processing_manifest(manifest_source)
+        if set(deeplabcut_models) != set(regions):
+            raise ValueError("Choose exactly one DeepLabCut model for every region in the manifest.")
+        model_sources = {
+            region: Path(deeplabcut_models[region]).expanduser().resolve() for region in regions
+        }
+        source_paths = (manifest_source, calibration_source, *model_sources.values())
+        missing_paths = [path for path in source_paths if not path.exists()]
         if missing_paths:
             raise FileNotFoundError(f"The selected file or folder no longer exists: {missing_paths[0]}")
 
@@ -88,26 +103,28 @@ class AutomatedProfileStore:
 
         try:
             staging_dir.mkdir(parents=False, exist_ok=False)
-            stored_paths: dict[str, Path] = {}
-            for key, source in source_paths.items():
-                asset_dir = staging_dir / key
-                asset_dir.mkdir()
-                destination = asset_dir / source.name
-                if source.is_dir():
-                    shutil.copytree(source, destination)
-                else:
-                    shutil.copy2(source, destination)
-                stored_paths[key] = destination
+            stored_manifest = self._copy_asset(manifest_source, staging_dir / "processing_manifest")
+            stored_calibration = self._copy_asset(calibration_source, staging_dir / "calibration_map")
+            stored_models: dict[str, Path] = {}
+            for index, (region, source) in enumerate(model_sources.items(), start=1):
+                stored_models[region] = self._copy_asset(
+                    source,
+                    staging_dir / "deeplabcut_models" / f"{index:02d}",
+                )
 
-            updated_at = datetime.now().astimezone().isoformat()
             metadata = {
                 "format_version": PROFILE_FORMAT_VERSION,
                 "id": profile_id,
                 "name": clean_name,
-                "updated_at": updated_at,
+                "updated_at": datetime.now().astimezone().isoformat(),
                 "assets": {
-                    key: str(path.relative_to(staging_dir)) for key, path in stored_paths.items()
+                    "processing_manifest": str(stored_manifest.relative_to(staging_dir)),
+                    "calibration_map": str(stored_calibration.relative_to(staging_dir)),
                 },
+                "deeplabcut_models": [
+                    {"region": region, "path": str(path.relative_to(staging_dir))}
+                    for region, path in stored_models.items()
+                ],
             }
             (staging_dir / "profile.json").write_text(
                 json.dumps(metadata, indent=2, sort_keys=True) + "\n",
@@ -137,6 +154,16 @@ class AutomatedProfileStore:
             raise FileNotFoundError(f"Profile not found: {profile_id}")
         shutil.rmtree(profile_dir)
 
+    @staticmethod
+    def _copy_asset(source: Path, asset_dir: Path) -> Path:
+        asset_dir.mkdir(parents=True)
+        destination = asset_dir / source.name
+        if source.is_dir():
+            shutil.copytree(source, destination)
+        else:
+            shutil.copy2(source, destination)
+        return destination
+
     def _profile_dir(self, profile_id: str) -> Path:
         if not profile_id or any(character not in "0123456789abcdef" for character in profile_id.lower()):
             raise ValueError("Invalid profile identifier.")
@@ -147,22 +174,34 @@ class AutomatedProfileStore:
 
     def _load_metadata(self, metadata_path: Path) -> AutomatedPipelineProfile:
         data = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if data.get("format_version") != PROFILE_FORMAT_VERSION:
+        format_version = data.get("format_version")
+        if format_version not in (1, PROFILE_FORMAT_VERSION):
             raise ValueError("Unsupported automated profile format.")
         profile_dir = metadata_path.parent.resolve()
-        asset_paths = {
-            key: (profile_dir / data["assets"][key]).resolve()
-            for key in ASSET_KEYS
-        }
-        if any(profile_dir not in path.parents for path in asset_paths.values()):
-            raise ValueError("A profile asset points outside its profile folder.")
-        if not all(path.exists() for path in asset_paths.values()):
+        manifest = self._stored_path(profile_dir, data["assets"]["processing_manifest"])
+        calibration = self._stored_path(profile_dir, data["assets"]["calibration_map"])
+        if format_version == 1:
+            legacy_model = self._stored_path(profile_dir, data["assets"]["deeplabcut_model"])
+            models = {region: legacy_model for region in regions_from_processing_manifest(manifest)}
+        else:
+            models = {
+                str(item["region"]): self._stored_path(profile_dir, item["path"])
+                for item in data["deeplabcut_models"]
+            }
+        if not manifest.exists() or not calibration.exists() or not all(path.exists() for path in models.values()):
             raise FileNotFoundError("A stored profile asset is missing.")
         return AutomatedPipelineProfile(
             id=str(data["id"]),
             name=str(data["name"]),
-            calibration_map=asset_paths["calibration_map"],
-            deeplabcut_model=asset_paths["deeplabcut_model"],
-            processing_manifest=asset_paths["processing_manifest"],
+            processing_manifest=manifest,
+            calibration_map=calibration,
+            deeplabcut_models=models,
             updated_at=str(data.get("updated_at", "")),
         )
+
+    @staticmethod
+    def _stored_path(profile_dir: Path, relative_path: str) -> Path:
+        path = (profile_dir / relative_path).resolve()
+        if profile_dir not in path.parents:
+            raise ValueError("A profile asset points outside its profile folder.")
+        return path

@@ -7,12 +7,14 @@ from typing import Callable
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QActionGroup, QColor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -424,14 +426,21 @@ class MainMenuWidget(QWidget):
         automated_layout = QVBoxLayout(automated_page)
         automated_layout.setContentsMargins(0, 8, 0, 0)
         self.automated_profiles = AutomatedPipelineProfilesWidget()
-        automated_layout.addWidget(self.automated_profiles)
+        automated_scroll = QScrollArea()
+        automated_scroll.setObjectName("AutomatedPipelineScroll")
+        automated_scroll.setFrameShape(QFrame.NoFrame)
+        automated_scroll.setWidgetResizable(True)
+        automated_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        automated_scroll.setSizeAdjustPolicy(QAbstractScrollArea.AdjustIgnored)
+        automated_scroll.setWidget(self.automated_profiles)
+        automated_layout.addWidget(automated_scroll)
+        self.automated_pipeline_scroll = automated_scroll
         pipeline_tabs.addTab(automated_page, "Automated pipeline")
 
         self.pipeline_tabs = pipeline_tabs
         content_layout.addWidget(pipeline_tabs)
 
-        root.addWidget(content, 0, Qt.AlignHCenter)
-        root.addStretch(1)
+        root.addWidget(content, 1, Qt.AlignHCenter)
 
     def _workflow_list(self, tools: list[ToolSpec], connect_tools: bool) -> QFrame:
         workflow_list = QFrame()
@@ -496,6 +505,11 @@ class MainMenuWidget(QWidget):
             }
             QWidget#ManualPipelinePage, QWidget#AutomatedPipelinePage {
                 background: transparent;
+            }
+            QScrollArea#AutomatedPipelineScroll,
+            QScrollArea#AutomatedPipelineScroll > QWidget > QWidget {
+                background: {theme.BACKGROUND};
+                border: 0;
             }
             QFrame#WorkflowList {
                 background: {theme.SURFACE};

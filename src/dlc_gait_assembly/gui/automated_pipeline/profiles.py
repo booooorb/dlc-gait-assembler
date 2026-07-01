@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, Qt
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPainter, QPalette
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -10,39 +11,29 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QInputDialog,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.automated_profiles import (
-    ASSET_KEYS,
     AutomatedPipelineProfile,
     AutomatedProfileStore,
+    regions_from_processing_manifest,
 )
 from dlc_gait_assembly.services.project_paths import find_project_root
 
 
-ASSET_DETAILS = {
-    "calibration_map": (
-        "Calibration map",
-        "Export from Manual calibration (conversion_factor_map.json).",
-    ),
-    "deeplabcut_model": (
-        "DeepLabCut model",
-        "Choose a trained model file, archive, or project/model folder.",
-    ),
-    "processing_manifest": (
-        "Video processing manifest",
-        "Export from Video Processing (processing_manifest.json).",
-    ),
-}
-
-
 class AutomatedPipelineProfilesWidget(QWidget):
-    """Profile-only UI for future automated-pipeline inputs."""
+    """Ordered, profile-only setup UI for the future automated pipeline."""
 
     def __init__(self, store: AutomatedProfileStore | None = None):
         super().__init__()
@@ -51,7 +42,11 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._store = store or AutomatedProfileStore(project_root / "outputs" / "automated_profiles")
         self._profiles: dict[str, AutomatedPipelineProfile] = {}
         self._current_profile_id: str | None = None
-        self._asset_sources: dict[str, Path | None] = {key: None for key in ASSET_KEYS}
+        self._manifest_source: Path | None = None
+        self._calibration_source: Path | None = None
+        self._regions: tuple[str, ...] = ()
+        self._model_sources: dict[str, Path | None] = {}
+        self._video_paths: list[Path] = []
         self._saved_snapshot: tuple[str, ...] | None = None
         self._build_ui()
         self._connect_signals()
@@ -61,20 +56,19 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(12)
+        root.setSpacing(8)
 
         header = QFrame()
         header.setObjectName("ProfileHeader")
         header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(16, 14, 16, 14)
+        header_layout.setContentsMargins(16, 12, 16, 12)
         header_layout.setSpacing(8)
-
         title = QLabel("Automated pipeline profiles")
         title.setObjectName("AutomatedProfileTitle")
         header_layout.addWidget(title)
         description = QLabel(
-            "Bundle the three inputs required by a future automated run. "
-            "Saving a profile only stores copies; it does not start the pipeline."
+            "Set up the pipeline in order. The manifest defines the video regions; each detected "
+            "region then requires its own DeepLabCut model. Saving does not run the pipeline."
         )
         description.setObjectName("AutomatedProfileDescription")
         description.setWordWrap(True)
@@ -82,16 +76,17 @@ class AutomatedPipelineProfilesWidget(QWidget):
 
         selector_row = QHBoxLayout()
         selector_row.setSpacing(8)
-        selector_label = QLabel("Profile")
-        selector_label.setObjectName("FieldLabel")
-        selector_row.addWidget(selector_label)
+        selector_row.addWidget(self._field_label("Profile"))
         self.profile_selector = QComboBox()
         self.profile_selector.setObjectName("ProfileSelector")
         self.profile_selector.setAccessibleName("Saved automated pipeline profile")
         selector_row.addWidget(self.profile_selector, 1)
         self.new_profile_button = QPushButton("New profile")
-        self.new_profile_button.setObjectName("NewProfileButton")
         selector_row.addWidget(self.new_profile_button)
+        self.duplicate_profile_button = QPushButton("Duplicate")
+        self.duplicate_profile_button.setObjectName("SmallProfileButton")
+        self.duplicate_profile_button.setToolTip("Create a separately named copy of the selected profile.")
+        selector_row.addWidget(self.duplicate_profile_button)
         self.delete_profile_button = QPushButton("Delete profile")
         self.delete_profile_button.setObjectName("DeleteProfileButton")
         selector_row.addWidget(self.delete_profile_button)
@@ -99,89 +94,216 @@ class AutomatedPipelineProfilesWidget(QWidget):
 
         name_row = QHBoxLayout()
         name_row.setSpacing(8)
-        name_label = QLabel("Name")
-        name_label.setObjectName("FieldLabel")
-        name_row.addWidget(name_label)
+        name_row.addWidget(self._field_label("Name"))
         self.profile_name = QLineEdit()
         self.profile_name.setObjectName("ProfileNameInput")
         self.profile_name.setPlaceholderText("Example: Treadmill camera setup")
-        self.profile_name.setAccessibleName("Automated pipeline profile name")
         name_row.addWidget(self.profile_name, 1)
         header_layout.addLayout(name_row)
         root.addWidget(header)
 
-        self.asset_path_labels: dict[str, QLabel] = {}
-        self.asset_upload_buttons: dict[str, QPushButton] = {}
-        for key in ASSET_KEYS:
-            root.addWidget(self._asset_card(key))
+        automation_menu = QFrame()
+        automation_menu.setObjectName("MainAutomationMenu")
+        automation_layout = QVBoxLayout(automation_menu)
+        automation_layout.setContentsMargins(16, 12, 16, 12)
+        automation_layout.setSpacing(8)
+        automation_title = QLabel("Main automation menu")
+        automation_title.setObjectName("MainAutomationTitle")
+        automation_layout.addWidget(automation_title)
+        automation_description = QLabel(
+            "Add the videos for an automated run. The console will report pipeline activity once execution is connected."
+        )
+        automation_description.setObjectName("AutomatedProfileDescription")
+        automation_description.setWordWrap(True)
+        automation_layout.addWidget(automation_description)
 
-        footer = QFrame()
-        footer.setObjectName("ProfileFooter")
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(16, 12, 16, 12)
-        footer_layout.setSpacing(8)
-        self.status_label = QLabel("Choose all three inputs, then save the profile.")
+        automation_content = QHBoxLayout()
+        automation_content.setSpacing(10)
+        video_panel = QFrame()
+        video_panel.setObjectName("VideoDropPanel")
+        video_layout = QVBoxLayout(video_panel)
+        video_layout.setContentsMargins(10, 8, 10, 10)
+        video_layout.setSpacing(6)
+        video_toolbar = QHBoxLayout()
+        videos_title = QLabel("Videos")
+        videos_title.setObjectName("AutomationPanelTitle")
+        video_toolbar.addWidget(videos_title)
+        self.video_count_label = QLabel("0 videos")
+        self.video_count_label.setObjectName("VideoCountLabel")
+        video_toolbar.addWidget(self.video_count_label)
+        video_toolbar.addStretch(1)
+        self.upload_videos_button = QPushButton("Upload videos")
+        video_toolbar.addWidget(self.upload_videos_button)
+        self.remove_videos_button = QPushButton("Remove")
+        self.remove_videos_button.setObjectName("RemoveButton")
+        video_toolbar.addWidget(self.remove_videos_button)
+        self.clear_videos_button = QPushButton("Clear")
+        self.clear_videos_button.setObjectName("ClearButton")
+        video_toolbar.addWidget(self.clear_videos_button)
+        video_layout.addLayout(video_toolbar)
+        self.video_list = VideoDropList()
+        self.video_list.setObjectName("AutomationVideoDropList")
+        self.video_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.video_list.setMinimumHeight(180)
+        video_layout.addWidget(self.video_list, 1)
+        automation_content.addWidget(video_panel, 3)
+
+        console_panel = QFrame()
+        console_panel.setObjectName("AutomationConsolePanel")
+        console_layout = QVBoxLayout(console_panel)
+        console_layout.setContentsMargins(10, 8, 10, 10)
+        console_layout.setSpacing(6)
+        console_title = QLabel("Automation log / console")
+        console_title.setObjectName("AutomationPanelTitle")
+        console_layout.addWidget(console_title)
+        self.automation_console = QPlainTextEdit()
+        self.automation_console.setObjectName("AutomationConsole")
+        self.automation_console.setReadOnly(True)
+        self.automation_console.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.automation_console.setPlainText(
+            "[Ready] Select a saved profile and add videos.\n"
+            "[Info] Pipeline execution is not connected yet."
+        )
+        console_layout.addWidget(self.automation_console, 1)
+        automation_content.addWidget(console_panel, 2)
+        automation_layout.addLayout(automation_content, 1)
+
+        run_row = QHBoxLayout()
+        self.run_readiness_label = QLabel("RUN is unavailable until pipeline execution is implemented.")
+        self.run_readiness_label.setObjectName("ProfileStatusLabel")
+        run_row.addWidget(self.run_readiness_label, 1)
+        self.run_pipeline_button = QPushButton("RUN pipeline")
+        self.run_pipeline_button.setObjectName("RunPipelineButton")
+        self.run_pipeline_button.setEnabled(False)
+        self.run_pipeline_button.setToolTip("Pipeline execution is not connected yet.")
+        run_row.addWidget(self.run_pipeline_button)
+        automation_layout.addLayout(run_row)
+        root.addWidget(automation_menu)
+
+        self.configuration_menu_button = QPushButton("Profile configuration  ▸")
+        self.configuration_menu_button.setObjectName("ConfigurationMenuButton")
+        self.configuration_menu_button.setCheckable(True)
+        self.configuration_menu_button.setAccessibleName("Open profile configuration menu")
+        root.addWidget(self.configuration_menu_button)
+
+        self.configuration_menu = QFrame()
+        self.configuration_menu.setObjectName("ProfileConfigurationMenu")
+        configuration_layout = QVBoxLayout(self.configuration_menu)
+        configuration_layout.setContentsMargins(0, 0, 0, 0)
+        configuration_layout.setSpacing(0)
+
+        self.configuration_tabs = QTabWidget()
+        self.configuration_tabs.setObjectName("ProfileConfigurationTabs")
+        self.configuration_tabs.setDocumentMode(True)
+        self.configuration_tabs.tabBar().setExpanding(True)
+
+        manifest_page, manifest_content = self._stage_page(
+            "Video processing manifest",
+            "Upload the manifest first. Its crop regions determine which model menus appear next.",
+        )
+        manifest_row = QHBoxLayout()
+        self.manifest_path_label = self._path_label()
+        manifest_row.addWidget(self.manifest_path_label, 1)
+        self.manifest_upload_button = QPushButton("Upload manifest")
+        manifest_row.addWidget(self.manifest_upload_button)
+        manifest_content.addLayout(manifest_row)
+        self.regions_label = QLabel("No regions detected yet.")
+        self.regions_label.setObjectName("DetectedRegionsLabel")
+        self.regions_label.setWordWrap(True)
+        manifest_content.addWidget(self.regions_label)
+        manifest_content.addStretch(1)
+        self.configuration_tabs.addTab(manifest_page, "1  Manifest + regions")
+
+        models_page, models_content = self._stage_page(
+            "DeepLabCut models by region",
+            "Upload one trained model for every region detected from the manifest.",
+        )
+        self.models_container = QWidget()
+        self.models_layout = QVBoxLayout(self.models_container)
+        self.models_layout.setContentsMargins(0, 0, 0, 0)
+        self.models_layout.setSpacing(6)
+        models_content.addWidget(self.models_container)
+        models_content.addStretch(1)
+        self.configuration_tabs.addTab(models_page, "2  Region models")
+
+        calibration_page, calibration_content = self._stage_page(
+            "Calibration map",
+            "Upload conversion_factor_map.json exported from Manual calibration.",
+        )
+        calibration_row = QHBoxLayout()
+        self.calibration_path_label = self._path_label()
+        calibration_row.addWidget(self.calibration_path_label, 1)
+        self.calibration_upload_button = QPushButton("Upload calibration map")
+        calibration_row.addWidget(self.calibration_upload_button)
+        calibration_content.addLayout(calibration_row)
+        calibration_content.addStretch(1)
+        self.configuration_tabs.addTab(calibration_page, "3  Calibration")
+
+        save_page, save_content = self._stage_page(
+            "Save profile",
+            "Review the region-to-model mapping and save these inputs for a future automated run.",
+        )
+        save_row = QHBoxLayout()
+        self.status_label = QLabel("Start with the video processing manifest in step 1.")
         self.status_label.setObjectName("ProfileStatusLabel")
         self.status_label.setWordWrap(True)
-        footer_layout.addWidget(self.status_label, 1)
-        self.save_profile_button = QPushButton("Save profile")
+        save_row.addWidget(self.status_label, 1)
+        self.save_profile_button = QPushButton("Save new profile")
         self.save_profile_button.setObjectName("PrimaryButton")
-        footer_layout.addWidget(self.save_profile_button)
-        root.addWidget(footer)
+        save_row.addWidget(self.save_profile_button)
+        save_content.addLayout(save_row)
+        save_content.addStretch(1)
+        self.configuration_tabs.addTab(save_page, "4  Review + save")
+        self.configuration_tabs.setMinimumHeight(190)
+        configuration_layout.addWidget(self.configuration_tabs)
+        root.addWidget(self.configuration_menu)
+        self.configuration_menu.setVisible(False)
         root.addStretch(1)
+        self._render_model_rows()
 
-    def _asset_card(self, key: str) -> QFrame:
-        title_text, description_text = ASSET_DETAILS[key]
-        card = QFrame()
-        card.setObjectName("ProfileAssetCard")
-        card.setProperty("assetKey", key)
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(12)
+    @staticmethod
+    def _field_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("FieldLabel")
+        return label
 
-        text_block = QWidget()
-        text_layout = QVBoxLayout(text_block)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(3)
-        title = QLabel(title_text)
-        title.setObjectName("AssetTitle")
-        text_layout.addWidget(title)
-        description = QLabel(description_text)
-        description.setObjectName("AssetDescription")
-        description.setWordWrap(True)
-        text_layout.addWidget(description)
-        path_label = QLabel("Not selected")
-        path_label.setObjectName("AssetPath")
-        path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        path_label.setWordWrap(True)
-        text_layout.addWidget(path_label)
-        self.asset_path_labels[key] = path_label
-        layout.addWidget(text_block, 1)
+    @staticmethod
+    def _path_label() -> QLabel:
+        label = QLabel("Not selected")
+        label.setObjectName("AssetPath")
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        label.setWordWrap(True)
+        return label
 
-        button_column = QVBoxLayout()
-        button_column.setSpacing(6)
-        upload_button = QPushButton("Upload file")
-        upload_button.setObjectName("AssetUploadButton")
-        upload_button.setProperty("assetKey", key)
-        self.asset_upload_buttons[key] = upload_button
-        button_column.addWidget(upload_button)
-        if key == "deeplabcut_model":
-            self.model_folder_button = QPushButton("Upload folder")
-            self.model_folder_button.setObjectName("ModelFolderButton")
-            button_column.addWidget(self.model_folder_button)
-        button_column.addStretch(1)
-        layout.addLayout(button_column)
-        return card
+    @staticmethod
+    def _stage_page(title: str, description: str) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        page.setObjectName("ProfileStagePage")
+        content = QVBoxLayout(page)
+        content.setContentsMargins(14, 12, 14, 12)
+        content.setSpacing(6)
+        title_label = QLabel(title)
+        title_label.setObjectName("ProfileStageTitle")
+        content.addWidget(title_label)
+        description_label = QLabel(description)
+        description_label.setObjectName("ProfileStageDescription")
+        description_label.setWordWrap(True)
+        content.addWidget(description_label)
+        return page, content
 
     def _connect_signals(self) -> None:
         self.profile_selector.currentIndexChanged.connect(self._profile_selection_changed)
         self.new_profile_button.clicked.connect(self._new_profile)
+        self.duplicate_profile_button.clicked.connect(self._duplicate_profile)
         self.delete_profile_button.clicked.connect(self._delete_profile)
+        self.configuration_menu_button.toggled.connect(self._toggle_configuration_menu)
+        self.manifest_upload_button.clicked.connect(self._choose_processing_manifest)
+        self.calibration_upload_button.clicked.connect(self._choose_calibration_map)
         self.save_profile_button.clicked.connect(self._save_profile)
-        self.asset_upload_buttons["calibration_map"].clicked.connect(self._choose_calibration_map)
-        self.asset_upload_buttons["deeplabcut_model"].clicked.connect(self._choose_model_file)
-        self.model_folder_button.clicked.connect(self._choose_model_folder)
-        self.asset_upload_buttons["processing_manifest"].clicked.connect(self._choose_processing_manifest)
+        self.upload_videos_button.clicked.connect(self._choose_videos)
+        self.remove_videos_button.clicked.connect(self._remove_selected_videos)
+        self.clear_videos_button.clicked.connect(self._clear_videos)
+        self.video_list.paths_dropped.connect(self._add_video_paths)
 
     def _refresh_profiles(self, selected_id: str | None = None) -> None:
         profiles = self._store.list_profiles()
@@ -191,11 +313,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
         if not profiles:
             self.profile_selector.addItem("No saved profiles", None)
             self.profile_selector.setEnabled(False)
-            self.delete_profile_button.setEnabled(False)
+            self.duplicate_profile_button.setEnabled(False)
             del blocker
             self._show_new_profile()
             return
-
         self.profile_selector.setEnabled(True)
         for profile in profiles:
             self.profile_selector.addItem(profile.name, profile.id)
@@ -225,54 +346,68 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._show_new_profile()
         self.profile_name.setFocus()
 
+    def _duplicate_profile(self) -> None:
+        if self._current_profile_id is None or not self._confirm_discard_changes():
+            return
+        source = self._store.load(self._current_profile_id)
+        duplicate_name, accepted = QInputDialog.getText(
+            self,
+            "Duplicate profile",
+            "Name for the duplicated profile:",
+            QLineEdit.Normal,
+            f"{source.name} copy",
+        )
+        duplicate_name = duplicate_name.strip()
+        if not accepted or not duplicate_name:
+            return
+        try:
+            duplicate = self._store.save(
+                duplicate_name,
+                source.processing_manifest,
+                source.calibration_map,
+                source.deeplabcut_models,
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Could not duplicate profile", str(exc))
+            return
+        self._refresh_profiles(duplicate.id)
+        self.status_label.setText(f'Profile duplicated as "{duplicate.name}".')
+
+    def _toggle_configuration_menu(self, expanded: bool) -> None:
+        self.configuration_menu.setVisible(expanded)
+        self.configuration_menu_button.setText(
+            "Profile configuration  ▾" if expanded else "Profile configuration  ▸"
+        )
+
     def _show_new_profile(self) -> None:
         self._current_profile_id = None
         self.profile_name.clear()
-        self._asset_sources = {key: None for key in ASSET_KEYS}
+        self._manifest_source = None
+        self._calibration_source = None
+        self._regions = ()
+        self._model_sources = {}
         self._saved_snapshot = None
-        self._refresh_asset_labels()
+        self._refresh_paths()
+        self._render_model_rows()
         self.delete_profile_button.setEnabled(False)
+        self.duplicate_profile_button.setEnabled(False)
         self.save_profile_button.setText("Save new profile")
-        self.status_label.setText("Choose all three inputs, then save the profile.")
+        self.status_label.setText("Start with the video processing manifest in step 1.")
 
     def _load_profile(self, profile: AutomatedPipelineProfile) -> None:
         self._current_profile_id = profile.id
         self.profile_name.setText(profile.name)
-        self._asset_sources = {key: path for key, path in profile.asset_paths().items()}
-        self._refresh_asset_labels()
+        self._manifest_source = profile.processing_manifest
+        self._calibration_source = profile.calibration_map
+        self._regions = regions_from_processing_manifest(profile.processing_manifest)
+        self._model_sources = {region: profile.deeplabcut_models.get(region) for region in self._regions}
+        self._refresh_paths()
+        self._render_model_rows()
         self._saved_snapshot = self._snapshot()
         self.delete_profile_button.setEnabled(True)
+        self.duplicate_profile_button.setEnabled(True)
         self.save_profile_button.setText("Save changes")
         self.status_label.setText(f'Profile "{profile.name}" is selected. Saving does not run the pipeline.')
-
-    def _choose_calibration_map(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Choose calibration map",
-            str(find_project_root(Path.cwd()) / "outputs" / "calibration"),
-            "Calibration map (conversion_factor_map.json);;JSON files (*.json);;All files (*)",
-        )
-        if path:
-            self._set_asset_source("calibration_map", Path(path))
-
-    def _choose_model_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Choose DeepLabCut model file or archive",
-            str(Path.home()),
-            "Model files (*.zip *.tar *.gz *.h5 *.pt *.pth *.yaml *.yml);;All files (*)",
-        )
-        if path:
-            self._set_asset_source("deeplabcut_model", Path(path))
-
-    def _choose_model_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self,
-            "Choose DeepLabCut model or project folder",
-            str(Path.home()),
-        )
-        if path:
-            self._set_asset_source("deeplabcut_model", Path(path))
 
     def _choose_processing_manifest(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -282,33 +417,192 @@ class AutomatedPipelineProfilesWidget(QWidget):
             "Processing manifest (processing_manifest.json);;JSON files (*.json);;All files (*)",
         )
         if path:
-            self._set_asset_source("processing_manifest", Path(path))
+            self._set_manifest_source(Path(path))
 
-    def _set_asset_source(self, key: str, path: Path) -> None:
-        if key not in self._asset_sources:
-            raise ValueError(f"Unknown automated profile asset: {key}")
-        self._asset_sources[key] = path.expanduser().resolve()
-        self._refresh_asset_labels()
-        self.status_label.setText("Selection updated. Save the profile to keep this change.")
+    def _set_manifest_source(self, path: Path) -> bool:
+        path = path.expanduser().resolve()
+        try:
+            regions = regions_from_processing_manifest(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Could not read regions", str(exc))
+            return False
+        previous_models = self._model_sources
+        self._manifest_source = path
+        self._regions = regions
+        self._model_sources = {region: previous_models.get(region) for region in regions}
+        self._refresh_paths()
+        self._render_model_rows()
+        self.status_label.setText(
+            f"Detected {len(regions)} region(s). Upload one model per region in step 2."
+        )
+        return True
 
-    def _refresh_asset_labels(self) -> None:
-        for key, label in self.asset_path_labels.items():
-            path = self._asset_sources[key]
-            label.setText(str(path) if path is not None else "Not selected")
-            label.setToolTip(str(path) if path is not None else "")
+    def _choose_calibration_map(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose calibration map",
+            str(find_project_root(Path.cwd()) / "outputs" / "calibration"),
+            "Calibration map (conversion_factor_map.json);;JSON files (*.json);;All files (*)",
+        )
+        if path:
+            self._calibration_source = Path(path).expanduser().resolve()
+            self._refresh_paths()
+            self.status_label.setText("Calibration selected. Save the profile after every region has a model.")
+
+    def _choose_videos(self) -> None:
+        extensions = " ".join(f"*{extension}" for extension in sorted(VIDEO_EXTENSIONS))
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Upload videos for automated processing",
+            str(Path.home()),
+            f"Video files ({extensions});;All files (*)",
+        )
+        self._add_video_paths([Path(path) for path in paths])
+
+    def _add_video_paths(self, paths: object) -> None:
+        added = 0
+        skipped = 0
+        known_paths = {str(path) for path in self._video_paths}
+        for raw_path in paths if isinstance(paths, (list, tuple)) else ():
+            path = Path(raw_path).expanduser().resolve()
+            key = str(path)
+            if not path.is_file() or path.suffix.lower() not in VIDEO_EXTENSIONS or key in known_paths:
+                skipped += 1
+                continue
+            self._video_paths.append(path)
+            known_paths.add(key)
+            item = QListWidgetItem(path.name)
+            item.setData(Qt.UserRole, key)
+            item.setToolTip(key)
+            self.video_list.addItem(item)
+            added += 1
+        self._update_video_count()
+        if added:
+            self._append_console(f"[Videos] Added {added} video(s); {len(self._video_paths)} queued.")
+        if skipped:
+            self._append_console(f"[Videos] Skipped {skipped} unsupported or duplicate item(s).")
+
+    def _remove_selected_videos(self) -> None:
+        selected = self.video_list.selectedItems()
+        if not selected:
+            return
+        removed_paths = {str(item.data(Qt.UserRole)) for item in selected}
+        for item in selected:
+            self.video_list.takeItem(self.video_list.row(item))
+        self._video_paths = [path for path in self._video_paths if str(path) not in removed_paths]
+        self._update_video_count()
+        self._append_console(f"[Videos] Removed {len(removed_paths)} video(s).")
+
+    def _clear_videos(self) -> None:
+        if not self._video_paths:
+            return
+        count = len(self._video_paths)
+        self._video_paths.clear()
+        self.video_list.clear()
+        self._update_video_count()
+        self._append_console(f"[Videos] Cleared {count} video(s).")
+
+    def _update_video_count(self) -> None:
+        count = len(self._video_paths)
+        self.video_count_label.setText(f"{count} video" if count == 1 else f"{count} videos")
+        self.video_list.viewport().update()
+
+    def _append_console(self, message: str) -> None:
+        self.automation_console.appendPlainText(message)
+
+    def _choose_model_file(self, region: str) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Choose DeepLabCut model for {region}",
+            str(Path.home()),
+            "Model files (*.zip *.tar *.gz *.h5 *.pt *.pth *.yaml *.yml);;All files (*)",
+        )
+        if path:
+            self._set_model_source(region, Path(path))
+
+    def _choose_model_folder(self, region: str) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self,
+            f"Choose DeepLabCut model folder for {region}",
+            str(Path.home()),
+        )
+        if path:
+            self._set_model_source(region, Path(path))
+
+    def _set_model_source(self, region: str, path: Path) -> None:
+        if region not in self._model_sources:
+            raise ValueError(f"Unknown manifest region: {region}")
+        self._model_sources[region] = path.expanduser().resolve()
+        self._render_model_rows()
+        selected = sum(path is not None for path in self._model_sources.values())
+        self.status_label.setText(f"Models selected for {selected} of {len(self._regions)} regions.")
+
+    def _render_model_rows(self) -> None:
+        while self.models_layout.count():
+            item = self.models_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        if not self._regions:
+            placeholder = QLabel("Upload the manifest in step 1 to detect regions and unlock model uploads.")
+            placeholder.setObjectName("ModelsPlaceholder")
+            placeholder.setWordWrap(True)
+            self.models_layout.addWidget(placeholder)
+            return
+        for region in self._regions:
+            row = QFrame()
+            row.setObjectName("RegionModelRow")
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(8, 6, 8, 6)
+            layout.setSpacing(8)
+            region_label = QLabel(region)
+            region_label.setObjectName("RegionName")
+            region_label.setMinimumWidth(110)
+            layout.addWidget(region_label)
+            model_path = self._model_sources.get(region)
+            path_label = self._path_label()
+            path_label.setText(str(model_path) if model_path is not None else "Model required")
+            path_label.setToolTip(str(model_path) if model_path is not None else "")
+            layout.addWidget(path_label, 1)
+            file_button = QPushButton("Upload file")
+            file_button.clicked.connect(lambda _checked=False, name=region: self._choose_model_file(name))
+            layout.addWidget(file_button)
+            folder_button = QPushButton("Upload folder")
+            folder_button.clicked.connect(lambda _checked=False, name=region: self._choose_model_folder(name))
+            layout.addWidget(folder_button)
+            self.models_layout.addWidget(row)
+
+    def _refresh_paths(self) -> None:
+        self._set_path_label(self.manifest_path_label, self._manifest_source)
+        self._set_path_label(self.calibration_path_label, self._calibration_source)
+        if self._regions:
+            self.regions_label.setText("Detected regions: " + " → ".join(self._regions))
+        else:
+            self.regions_label.setText("No regions detected yet.")
+
+    @staticmethod
+    def _set_path_label(label: QLabel, path: Path | None) -> None:
+        label.setText(str(path) if path is not None else "Not selected")
+        label.setToolTip(str(path) if path is not None else "")
 
     def _save_profile(self) -> None:
         name = self.profile_name.text().strip()
-        missing = [ASSET_DETAILS[key][0] for key, path in self._asset_sources.items() if path is None]
         if not name:
             QMessageBox.warning(self, "Profile name required", "Enter a name for this profile.")
             return
-        if missing:
+        if self._manifest_source is None:
+            QMessageBox.warning(self, "Manifest required", "Complete step 1 by uploading a processing manifest.")
+            return
+        missing_models = [region for region in self._regions if self._model_sources.get(region) is None]
+        if missing_models:
             QMessageBox.warning(
                 self,
-                "Profile inputs required",
-                "Choose all three profile inputs before saving:\n• " + "\n• ".join(missing),
+                "Region models required",
+                "Upload one DeepLabCut model for each region:\n• " + "\n• ".join(missing_models),
             )
+            return
+        if self._calibration_source is None:
+            QMessageBox.warning(self, "Calibration required", "Complete step 3 by uploading a calibration map.")
             return
         if self._current_profile_id is not None:
             if not self._is_dirty():
@@ -316,17 +610,17 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 return
             if not self._confirm_replace_profile(name):
                 return
-
         try:
             profile = self._store.save(
                 name,
-                {key: path for key, path in self._asset_sources.items() if path is not None},
+                self._manifest_source,
+                self._calibration_source,
+                {region: path for region, path in self._model_sources.items() if path is not None},
                 self._current_profile_id,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not save profile", str(exc))
             return
-
         self._refresh_profiles(profile.id)
         self.status_label.setText(f'Profile "{profile.name}" saved. No pipeline was started.')
 
@@ -378,7 +672,9 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def _snapshot(self) -> tuple[str, ...]:
         return (
             self.profile_name.text().strip(),
-            *(str(self._asset_sources[key]) if self._asset_sources[key] is not None else "" for key in ASSET_KEYS),
+            str(self._manifest_source or ""),
+            *(f"{region}\0{self._model_sources.get(region) or ''}" for region in self._regions),
+            str(self._calibration_source or ""),
         )
 
     def _is_dirty(self) -> bool:
@@ -401,41 +697,178 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     background: {theme.BACKGROUND};
                     color: {theme.TEXT};
                 }
-                QFrame#ProfileHeader, QFrame#ProfileAssetCard, QFrame#ProfileFooter {
+                QFrame#ProfileHeader, QFrame#MainAutomationMenu {
                     background: {theme.SURFACE};
                     border: 1px solid {theme.BORDER};
                     border-radius: 3px;
                 }
-                QLabel#AutomatedProfileTitle {
+                QLabel#AutomatedProfileTitle, QLabel#MainAutomationTitle,
+                QLabel#ProfileConfigurationTitle, QLabel#ProfileStageTitle {
                     color: {theme.TEXT};
-                    font-size: 16px;
+                    font-size: 15px;
                     font-weight: 650;
                 }
-                QLabel#AutomatedProfileDescription, QLabel#AssetDescription,
-                QLabel#AssetPath, QLabel#ProfileStatusLabel {
+                QLabel#AutomatedProfileDescription, QLabel#ProfileStageDescription,
+                QLabel#DetectedRegionsLabel, QLabel#ModelsPlaceholder, QLabel#ProfileStatusLabel {
                     color: {theme.CONNECTOR};
                     font-size: 12px;
                 }
-                QLabel#FieldLabel {
+                QLabel#AutomationPanelTitle {
+                    color: {theme.TEXT};
+                    font-weight: 650;
+                }
+                QLabel#VideoCountLabel {
+                    color: {theme.CONNECTOR};
+                    font-size: 12px;
+                }
+                QLabel#FieldLabel, QLabel#RegionName {
                     color: {theme.TEXT};
                     font-weight: 600;
                     min-width: 48px;
                 }
-                QLabel#AssetTitle {
+                QFrame#VideoDropPanel, QFrame#AutomationConsolePanel {
+                    background: {theme.BACKGROUND};
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 2px;
+                }
+                QListWidget#AutomationVideoDropList {
+                    background: {theme.SURFACE};
+                    border: 2px dashed {theme.BORDER};
+                    border-radius: 3px;
                     color: {theme.TEXT};
+                    padding: 6px;
+                }
+                QListWidget#AutomationVideoDropList:focus {
+                    border-color: {theme.PRIMARY};
+                }
+                QPlainTextEdit#AutomationConsole {
+                    background: {theme.CANVAS};
+                    border: 1px solid {theme.BORDER};
+                    color: {theme.CANVAS_TEXT};
+                    font-family: monospace;
+                    font-size: 11px;
+                }
+                QPushButton#RunPipelineButton {
+                    background: {theme.PRIMARY};
+                    border-color: {theme.PRIMARY};
+                    color: {theme.PRIMARY_TEXT};
                     font-size: 14px;
-                    font-weight: 600;
+                    font-weight: 700;
+                    min-width: 150px;
+                    padding: 9px 16px;
+                }
+                QPushButton#RunPipelineButton:disabled {
+                    background: {theme.PANEL};
+                    border-color: {theme.BORDER};
+                    color: {theme.CONNECTOR};
+                }
+                QTabWidget#ProfileConfigurationTabs::pane {
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER};
+                }
+                QTabWidget#ProfileConfigurationTabs QTabBar::tab {
+                    background: {theme.PANEL};
+                }
+                QTabWidget#ProfileConfigurationTabs QTabBar::tab:selected {
+                    background: {theme.SURFACE};
+                    color: {theme.TEXT};
+                    font-weight: 650;
+                }
+                QWidget#ProfileStagePage {
+                    background: {theme.SURFACE};
+                }
+                QFrame#RegionModelRow {
+                    background: {theme.BACKGROUND};
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 2px;
                 }
                 QLabel#AssetPath {
                     background: {theme.BACKGROUND};
                     border: 1px solid {theme.BORDER};
                     border-radius: 2px;
+                    color: {theme.CONNECTOR};
+                    font-size: 12px;
                     padding: 4px 6px;
                 }
                 QPushButton#DeleteProfileButton:hover {
                     border-color: {theme.STATUS_ERROR};
                     color: {theme.STATUS_ERROR};
                 }
+                QPushButton#SmallProfileButton {
+                    min-height: 16px;
+                    padding: 4px 7px;
+                    font-size: 11px;
+                }
+                QPushButton#ConfigurationMenuButton {
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER};
+                    color: {theme.TEXT};
+                    font-size: 14px;
+                    font-weight: 650;
+                    padding: 9px 12px;
+                    text-align: left;
+                }
+                QPushButton#ConfigurationMenuButton:checked {
+                    background: {theme.PANEL};
+                    border-bottom-left-radius: 0;
+                    border-bottom-right-radius: 0;
+                }
+                QFrame#ProfileConfigurationMenu {
+                    background: {theme.SURFACE};
+                    border: 0;
+                }
                 """
             )
         )
+
+
+class VideoDropList(QListWidget):
+    paths_dropped = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QListWidget.DropOnly)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._video_paths(event.mimeData().urls()):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if self._video_paths(event.mimeData().urls()):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        paths = self._video_paths(event.mimeData().urls())
+        if not paths:
+            event.ignore()
+            return
+        self.paths_dropped.emit(paths)
+        event.acceptProposedAction()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self.count():
+            return
+        painter = QPainter(self.viewport())
+        painter.setPen(self.palette().color(QPalette.ColorRole.PlaceholderText))
+        painter.drawText(
+            self.viewport().rect().adjusted(20, 20, -20, -20),
+            Qt.AlignCenter | Qt.TextWordWrap,
+            "Drag & drop videos here\n\nor use Upload videos",
+        )
+
+    @staticmethod
+    def _video_paths(urls) -> list[Path]:
+        paths = []
+        for url in urls:
+            if not url.isLocalFile():
+                continue
+            path = Path(url.toLocalFile()).expanduser().resolve()
+            if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS:
+                paths.append(path)
+        return paths
