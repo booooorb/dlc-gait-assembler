@@ -400,7 +400,6 @@ class DeepLabCutWidget(QWidget):
                 border-radius: 0;
                 background: {theme.CANVAS};
                 color: {theme.CANVAS_TEXT};
-                font-family: Menlo, Consolas, monospace;
                 font-size: 13px;
                 padding: 12px;
                 selection-background-color: {theme.SOFT};
@@ -423,6 +422,7 @@ class TerminalPane(QPlainTextEdit):
         self.viewport().setObjectName("TerminalViewport")
         self.setUndoRedoEnabled(False)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setFont(theme.fixed_width_font())
         self.setMaximumBlockCount(5000)
         self._prompt_position = 0
         self._history: list[str] = []

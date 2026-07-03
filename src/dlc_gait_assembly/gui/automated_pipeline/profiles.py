@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPainter, QPalette
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor,
+    QDragEnterEvent,
+    QDropEvent,
+    QImage,
+    QPainter,
+    QPalette,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -16,13 +28,17 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
+    QSlider,
+    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.services.analysis_manifests import read_analysis_manifest
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.automated_profiles import (
     AutomatedPipelineProfile,
@@ -31,9 +47,80 @@ from dlc_gait_assembly.services.automated_profiles import (
 )
 from dlc_gait_assembly.services.project_paths import find_project_root
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+
+PIPELINE_STAGES = (
+    "Video processing",
+    "Inspect video regions",
+    "DLC analyzing videos",
+    "Inspect analyzed videos",
+    "Stickplot generation",
+    "Inspect stickplot",
+    "Gait analysis",
+)
+PIPELINE_STAGE_LABELS = (
+    "Video processing",
+    "Inspect regions",
+    "DLC video analysis",
+    "Inspect DLC videos",
+    "Generate stickplot",
+    "Inspect stickplot",
+    "Gait analysis",
+)
+PIPELINE_PREVIEW_MESSAGES = (
+    "Preparing and processing source videos",
+    "Preparing processed region videos for inspection",
+    "Running DeepLabCut pose estimation",
+    "Preparing analyzed videos for inspection",
+    "Generating gait stickplots",
+    "Reviewing generated stickplots",
+    "Running gait analysis",
+)
+PIPELINE_STAGE_ACTIVITY = (
+    "Processing",
+    "Preparing review",
+    "Analyzing poses",
+    "Preparing review",
+    "Generating",
+    "Preparing review",
+    "Analyzing gait",
+)
+PIPELINE_REVIEW_GATES = {
+    1: {
+        "title": "Confirm processed video regions",
+        "description": "Check that every cropped region is correct before pose analysis continues. Double-click a video for a large preview.",
+        "preview": "Processed region-video previews appear here.",
+        "setting": "video processing manifest",
+        "tab": 0,
+        "replay_stage": 0,
+    },
+    3: {
+        "title": "Confirm DeepLabCut analyzed videos",
+        "description": "Check the tracking overlays and confirm that each region used the correct model. Double-click a video for a large preview.",
+        "preview": "DeepLabCut overlay-video previews appear here.",
+        "setting": "region model configuration",
+        "tab": 1,
+        "replay_stage": 2,
+    },
+    5: {
+        "title": "Confirm generated stickplot",
+        "description": "Check the generated stickplot before the final gait analysis runs. Double-click the stickplot for a large view.",
+        "preview": "The generated stickplot preview appears here.",
+        "setting": "gait analysis manifest",
+        "tab": 2,
+        "replay_stage": 4,
+    },
+}
+
 
 class AutomatedPipelineProfilesWidget(QWidget):
-    """Ordered, profile-only setup UI for the future automated pipeline."""
+    """Switchable automation workspace and profile-configuration workspace."""
+
+    workspace_changed = Signal(str)
 
     def __init__(self, store: AutomatedProfileStore | None = None):
         super().__init__()
@@ -44,9 +131,27 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._current_profile_id: str | None = None
         self._manifest_source: Path | None = None
         self._calibration_source: Path | None = None
+        self._analysis_manifest_source: Path | None = None
         self._regions: tuple[str, ...] = ()
         self._model_sources: dict[str, Path | None] = {}
         self._video_paths: list[Path] = []
+        self._large_preview_dialog: AutomationVideoPreviewDialog | None = None
+        self._large_review_dialog: QDialog | None = None
+        self._hover_capture = None
+        self._hover_preview_path: Path | None = None
+        self._hover_preview_timer = QTimer(self)
+        self._hover_preview_timer.timeout.connect(self._advance_hover_preview)
+        self._pipeline_running = False
+        self._pipeline_demo_stage = -1
+        self._pipeline_demo_progress = 0.0
+        self._pipeline_demo_total_videos = 0
+        self._pipeline_demo_last_processed = -1
+        self._pipeline_demo_complete = False
+        self._pipeline_demo_waiting_for_review: int | None = None
+        self._pipeline_demo_blocked_stage: int | None = None
+        self._pipeline_demo_timer = QTimer(self)
+        self._pipeline_demo_timer.setInterval(120)
+        self._pipeline_demo_timer.timeout.connect(self._advance_pipeline_demo)
         self._saved_snapshot: tuple[str, ...] | None = None
         self._build_ui()
         self._connect_signals()
@@ -63,16 +168,17 @@ class AutomatedPipelineProfilesWidget(QWidget):
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(16, 12, 16, 12)
         header_layout.setSpacing(8)
-        title = QLabel("Automated pipeline profiles")
+        title = QLabel("Automated pipeline")
         title.setObjectName("AutomatedProfileTitle")
         header_layout.addWidget(title)
         description = QLabel(
-            "Set up the pipeline in order. The manifest defines the video regions; each detected "
-            "region then requires its own DeepLabCut model. Saving does not run the pipeline."
+            "Select a saved profile, add videos, and monitor the automated workflow. "
+            "Profile inputs are managed in their own configuration window."
         )
         description.setObjectName("AutomatedProfileDescription")
         description.setWordWrap(True)
         header_layout.addWidget(description)
+        self.profile_header_description = description
 
         selector_row = QHBoxLayout()
         selector_row.setSpacing(8)
@@ -81,26 +187,23 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.profile_selector.setObjectName("ProfileSelector")
         self.profile_selector.setAccessibleName("Saved automated pipeline profile")
         selector_row.addWidget(self.profile_selector, 1)
-        self.new_profile_button = QPushButton("New profile")
-        selector_row.addWidget(self.new_profile_button)
         self.duplicate_profile_button = QPushButton("Duplicate")
         self.duplicate_profile_button.setObjectName("SmallProfileButton")
         self.duplicate_profile_button.setToolTip("Create a separately named copy of the selected profile.")
         selector_row.addWidget(self.duplicate_profile_button)
-        self.delete_profile_button = QPushButton("Delete profile")
-        self.delete_profile_button.setObjectName("DeleteProfileButton")
-        selector_row.addWidget(self.delete_profile_button)
+        self.open_profile_configuration_button = QPushButton("Manage profiles")
+        self.open_profile_configuration_button.setObjectName("OpenProfileConfigurationButton")
+        selector_row.addWidget(self.open_profile_configuration_button)
         header_layout.addLayout(selector_row)
 
-        name_row = QHBoxLayout()
-        name_row.setSpacing(8)
-        name_row.addWidget(self._field_label("Name"))
-        self.profile_name = QLineEdit()
-        self.profile_name.setObjectName("ProfileNameInput")
-        self.profile_name.setPlaceholderText("Example: Treadmill camera setup")
-        name_row.addWidget(self.profile_name, 1)
-        header_layout.addLayout(name_row)
-        root.addWidget(header)
+        self.workspace_stack = QStackedWidget()
+        self.workspace_stack.setObjectName("AutomationWorkspaceStack")
+        automation_page = QWidget()
+        automation_page.setObjectName("MainAutomationPage")
+        main_layout = QVBoxLayout(automation_page)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(8)
+        main_layout.addWidget(header)
 
         automation_menu = QFrame()
         automation_menu.setObjectName("MainAutomationMenu")
@@ -111,11 +214,12 @@ class AutomatedPipelineProfilesWidget(QWidget):
         automation_title.setObjectName("MainAutomationTitle")
         automation_layout.addWidget(automation_title)
         automation_description = QLabel(
-            "Add the videos for an automated run. The console will report pipeline activity once execution is connected."
+            "Add videos for an automated run. RUN currently previews the pipeline stages and logs without processing files."
         )
         automation_description.setObjectName("AutomatedProfileDescription")
         automation_description.setWordWrap(True)
         automation_layout.addWidget(automation_description)
+        self.automation_description = automation_description
 
         automation_content = QHBoxLayout()
         automation_content.setSpacing(10)
@@ -143,10 +247,40 @@ class AutomatedPipelineProfilesWidget(QWidget):
         video_layout.addLayout(video_toolbar)
         self.video_list = VideoDropList()
         self.video_list.setObjectName("AutomationVideoDropList")
+        self.video_list.setAccessibleDescription(
+            "Hover over a video to play a preview. Double-click to open the expanded preview."
+        )
         self.video_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.video_list.setMinimumHeight(180)
+        self.video_list.setMinimumHeight(310)
         video_layout.addWidget(self.video_list, 1)
-        automation_content.addWidget(video_panel, 3)
+
+        self.video_hover_card = QFrame(self.video_list.viewport())
+        self.video_hover_card.setObjectName("VideoHoverCard")
+        self.video_hover_card.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.video_hover_card.setFixedSize(276, 206)
+        hover_layout = QVBoxLayout(self.video_hover_card)
+        hover_layout.setContentsMargins(8, 8, 8, 8)
+        hover_layout.setSpacing(5)
+        self.video_hover_preview = QLabel("Loading preview…")
+        self.video_hover_preview.setObjectName("VideoHoverPreview")
+        self.video_hover_preview.setAlignment(Qt.AlignCenter)
+        self.video_hover_preview.setFixedSize(258, 145)
+        hover_layout.addWidget(self.video_hover_preview)
+        self.video_hover_name = QLabel()
+        self.video_hover_name.setObjectName("VideoHoverName")
+        hover_layout.addWidget(self.video_hover_name)
+        self.video_hover_details = QLabel("Double-click for expanded preview")
+        self.video_hover_details.setObjectName("VideoHoverDetails")
+        hover_layout.addWidget(self.video_hover_details)
+        self.video_hover_card.hide()
+        self.video_panel = video_panel
+        self.pipeline_status_panel = self._build_pipeline_status_panel()
+        self.automation_input_stack = QStackedWidget()
+        self.automation_input_stack.setObjectName("AutomationInputStack")
+        self.automation_input_stack.addWidget(self.video_panel)
+        self.automation_input_stack.addWidget(self.pipeline_status_panel)
+        self.automation_input_stack.setCurrentWidget(self.video_panel)
+        automation_content.addWidget(self.automation_input_stack, 3)
 
         console_panel = QFrame()
         console_panel.setObjectName("AutomationConsolePanel")
@@ -159,38 +293,70 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.automation_console = QPlainTextEdit()
         self.automation_console.setObjectName("AutomationConsole")
         self.automation_console.setReadOnly(True)
-        self.automation_console.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.automation_console.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self.automation_console.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.automation_console.setFont(theme.fixed_width_font())
         self.automation_console.setPlainText(
             "[Ready] Select a saved profile and add videos.\n"
-            "[Info] Pipeline execution is not connected yet."
+            "[Preview mode] RUN animates the interface only; no processing is performed."
         )
         console_layout.addWidget(self.automation_console, 1)
         automation_content.addWidget(console_panel, 2)
         automation_layout.addLayout(automation_content, 1)
 
         run_row = QHBoxLayout()
-        self.run_readiness_label = QLabel("RUN is unavailable until pipeline execution is implemented.")
+        self.run_readiness_label = QLabel("Preview mode: RUN will not process or change any files.")
         self.run_readiness_label.setObjectName("ProfileStatusLabel")
         run_row.addWidget(self.run_readiness_label, 1)
         self.run_pipeline_button = QPushButton("RUN pipeline")
         self.run_pipeline_button.setObjectName("RunPipelineButton")
-        self.run_pipeline_button.setEnabled(False)
-        self.run_pipeline_button.setToolTip("Pipeline execution is not connected yet.")
+        self.run_pipeline_button.setEnabled(True)
+        self.run_pipeline_button.setToolTip("Play a visual pipeline preview without processing files.")
         run_row.addWidget(self.run_pipeline_button)
         automation_layout.addLayout(run_row)
-        root.addWidget(automation_menu)
+        main_layout.addWidget(automation_menu, 1)
+        self.workspace_stack.addWidget(automation_page)
+        self.automation_page = automation_page
 
-        self.configuration_menu_button = QPushButton("Profile configuration  ▸")
-        self.configuration_menu_button.setObjectName("ConfigurationMenuButton")
-        self.configuration_menu_button.setCheckable(True)
-        self.configuration_menu_button.setAccessibleName("Open profile configuration menu")
-        root.addWidget(self.configuration_menu_button)
-
-        self.configuration_menu = QFrame()
-        self.configuration_menu.setObjectName("ProfileConfigurationMenu")
-        configuration_layout = QVBoxLayout(self.configuration_menu)
+        configuration_page = QWidget()
+        configuration_page.setObjectName("ProfileConfigurationPage")
+        configuration_layout = QVBoxLayout(configuration_page)
         configuration_layout.setContentsMargins(0, 0, 0, 0)
-        configuration_layout.setSpacing(0)
+        configuration_layout.setSpacing(8)
+
+        configuration_toolbar = QFrame()
+        configuration_toolbar.setObjectName("ProfileConfigurationToolbar")
+        toolbar_layout = QHBoxLayout(configuration_toolbar)
+        toolbar_layout.setContentsMargins(12, 10, 12, 10)
+        self.back_to_automation_button = QPushButton("← Back to automation")
+        self.back_to_automation_button.setObjectName("BackToAutomationButton")
+        toolbar_layout.addWidget(self.back_to_automation_button)
+        configuration_title = QLabel("Manage automated profiles")
+        configuration_title.setObjectName("ProfileConfigurationTitle")
+        toolbar_layout.addWidget(configuration_title)
+        toolbar_layout.addStretch(1)
+        configuration_layout.addWidget(configuration_toolbar)
+
+        management = QFrame()
+        management.setObjectName("ProfileManagementPanel")
+        management_layout = QHBoxLayout(management)
+        management_layout.setContentsMargins(12, 10, 12, 10)
+        management_layout.setSpacing(8)
+        self.new_profile_button = QPushButton("New profile")
+        management_layout.addWidget(self.new_profile_button)
+        management_layout.addWidget(self._field_label("Profile"))
+        self.configuration_profile_selector = QComboBox()
+        self.configuration_profile_selector.setObjectName("ConfigurationProfileSelector")
+        management_layout.addWidget(self.configuration_profile_selector, 1)
+        management_layout.addWidget(self._field_label("Name"))
+        self.profile_name = QLineEdit()
+        self.profile_name.setObjectName("ProfileNameInput")
+        self.profile_name.setPlaceholderText("Example: Treadmill camera setup")
+        management_layout.addWidget(self.profile_name, 1)
+        self.delete_profile_button = QPushButton("Delete profile")
+        self.delete_profile_button.setObjectName("DeleteProfileButton")
+        management_layout.addWidget(self.delete_profile_button)
+        configuration_layout.addWidget(management)
 
         self.configuration_tabs = QTabWidget()
         self.configuration_tabs.setObjectName("ProfileConfigurationTabs")
@@ -227,17 +393,27 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.configuration_tabs.addTab(models_page, "2  Region models")
 
         calibration_page, calibration_content = self._stage_page(
-            "Calibration map",
-            "Upload conversion_factor_map.json exported from Manual calibration.",
+            "Gait analysis inputs",
+            "Add the calibration map and the analysis manifest exported from the manual tools.",
         )
+        calibration_content.addWidget(self._field_label("Calibration map"))
         calibration_row = QHBoxLayout()
         self.calibration_path_label = self._path_label()
         calibration_row.addWidget(self.calibration_path_label, 1)
         self.calibration_upload_button = QPushButton("Upload calibration map")
         calibration_row.addWidget(self.calibration_upload_button)
         calibration_content.addLayout(calibration_row)
+
+        calibration_content.addSpacing(10)
+        calibration_content.addWidget(self._field_label("Gait analysis manifest"))
+        analysis_row = QHBoxLayout()
+        self.analysis_manifest_path_label = self._path_label()
+        analysis_row.addWidget(self.analysis_manifest_path_label, 1)
+        self.analysis_manifest_upload_button = QPushButton("Upload analysis manifest")
+        analysis_row.addWidget(self.analysis_manifest_upload_button)
+        calibration_content.addLayout(analysis_row)
         calibration_content.addStretch(1)
-        self.configuration_tabs.addTab(calibration_page, "3  Calibration")
+        self.configuration_tabs.addTab(calibration_page, "3  Gait analysis")
 
         save_page, save_content = self._stage_page(
             "Save profile",
@@ -254,11 +430,11 @@ class AutomatedPipelineProfilesWidget(QWidget):
         save_content.addLayout(save_row)
         save_content.addStretch(1)
         self.configuration_tabs.addTab(save_page, "4  Review + save")
-        self.configuration_tabs.setMinimumHeight(190)
+        self.configuration_tabs.setMinimumHeight(320)
         configuration_layout.addWidget(self.configuration_tabs)
-        root.addWidget(self.configuration_menu)
-        self.configuration_menu.setVisible(False)
-        root.addStretch(1)
+        self.workspace_stack.addWidget(configuration_page)
+        self.configuration_page = configuration_page
+        root.addWidget(self.workspace_stack, 1)
         self._render_model_rows()
 
     @staticmethod
@@ -291,58 +467,205 @@ class AutomatedPipelineProfilesWidget(QWidget):
         content.addWidget(description_label)
         return page, content
 
+    def _build_pipeline_status_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("PipelineStatusPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 5, 6, 5)
+        layout.setSpacing(4)
+
+        header = QHBoxLayout()
+        title = QLabel("Automated pipeline progress")
+        title.setObjectName("AutomationPanelTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        self.pipeline_video_progress_label = QLabel("0 / 0 videos processed")
+        self.pipeline_video_progress_label.setObjectName("PipelineVideoProgress")
+        header.addWidget(self.pipeline_video_progress_label)
+        layout.addLayout(header)
+
+        stage_row = QHBoxLayout()
+        stage_row.setSpacing(5)
+        self.pipeline_stage_cards: list[QFrame] = []
+        self.pipeline_stage_status_labels: list[QLabel] = []
+        for index, stage_title in enumerate(PIPELINE_STAGE_LABELS):
+            if index:
+                connector = QLabel("→")
+                connector.setObjectName("PipelineConnector")
+                connector.setAlignment(Qt.AlignCenter)
+                stage_row.addWidget(connector)
+            card = QFrame()
+            card.setObjectName("PipelineStageCard")
+            card.setProperty("pipelineState", "pending")
+            card.setFixedHeight(86)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(4, 4, 4, 4)
+            card_layout.setSpacing(2)
+            number = QLabel(str(index + 1))
+            number.setObjectName("PipelineStageNumber")
+            number.setAlignment(Qt.AlignCenter)
+            card_layout.addWidget(number)
+            name = QLabel(stage_title)
+            name.setObjectName("PipelineStageName")
+            name.setAlignment(Qt.AlignCenter)
+            name.setWordWrap(True)
+            card_layout.addWidget(name, 1)
+            status = QLabel("Waiting")
+            status.setObjectName("PipelineStageStatus")
+            status.setAlignment(Qt.AlignCenter)
+            status.setWordWrap(True)
+            card_layout.addWidget(status)
+            stage_row.addWidget(card, 1)
+            self.pipeline_stage_cards.append(card)
+            self.pipeline_stage_status_labels.append(status)
+        layout.addLayout(stage_row)
+
+        self.pipeline_current_stage_label = QLabel("Waiting to start")
+        self.pipeline_current_stage_label.setObjectName("PipelineCurrentStage")
+        layout.addWidget(self.pipeline_current_stage_label)
+        self.pipeline_progress_bar = QProgressBar()
+        self.pipeline_progress_bar.setObjectName("PipelineProgressBar")
+        self.pipeline_progress_bar.setRange(0, 100)
+        self.pipeline_progress_bar.setValue(0)
+        self.pipeline_progress_bar.setTextVisible(True)
+        layout.addWidget(self.pipeline_progress_bar)
+        self.pipeline_progress_detail = QLabel(
+            "Stages run in order; inspection stages pause for review."
+        )
+        self.pipeline_progress_detail.setObjectName("PipelineProgressDetail")
+        layout.addWidget(self.pipeline_progress_detail)
+
+        self.pipeline_review_panel = QFrame()
+        self.pipeline_review_panel.setObjectName("PipelineReviewPanel")
+        review_layout = QHBoxLayout(self.pipeline_review_panel)
+        review_layout.setContentsMargins(6, 6, 6, 6)
+        review_layout.setSpacing(6)
+        self.pipeline_review_preview_stack = QStackedWidget()
+        self.pipeline_review_preview_stack.setObjectName("PipelineReviewPreviewStack")
+        self.pipeline_review_preview_stack.setMinimumSize(240, 78)
+        self.pipeline_review_video_list = QListWidget()
+        self.pipeline_review_video_list.setObjectName("PipelineReviewVideoList")
+        self.pipeline_review_video_list.setWordWrap(False)
+        self.pipeline_review_video_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAlwaysOff
+        )
+        self.pipeline_review_preview_stack.addWidget(self.pipeline_review_video_list)
+        self.pipeline_component_tabs = QTabWidget()
+        self.pipeline_component_tabs.setObjectName("PipelineComponentTabs")
+        self.pipeline_component_tabs.setDocumentMode(True)
+        self.pipeline_component_tabs.tabBar().setExpanding(True)
+        self.pipeline_review_preview_stack.addWidget(self.pipeline_component_tabs)
+        self.pipeline_component_video_lists: dict[str, QListWidget] = {}
+        self.pipeline_stickplot_preview = DoubleClickLabel()
+        self.pipeline_stickplot_preview.setObjectName("PipelineStickplotPreview")
+        self.pipeline_stickplot_preview.setAlignment(Qt.AlignCenter)
+        self.pipeline_stickplot_preview.setScaledContents(True)
+        self.pipeline_review_preview_stack.addWidget(self.pipeline_stickplot_preview)
+        review_layout.addWidget(self.pipeline_review_preview_stack, 1)
+        review_copy = QVBoxLayout()
+        self.pipeline_review_title = QLabel()
+        self.pipeline_review_title.setObjectName("PipelineReviewTitle")
+        review_copy.addWidget(self.pipeline_review_title)
+        self.pipeline_review_description = QLabel()
+        self.pipeline_review_description.setObjectName("PipelineReviewDescription")
+        self.pipeline_review_description.setWordWrap(True)
+        review_copy.addWidget(self.pipeline_review_description)
+        review_copy.addStretch(1)
+        review_buttons = QHBoxLayout()
+        self.pipeline_change_settings_button = QPushButton("Change configuration")
+        self.pipeline_change_settings_button.setObjectName("PipelineChangeSettingsButton")
+        self.pipeline_needs_changes_button = QPushButton("Needs changes")
+        self.pipeline_needs_changes_button.setObjectName("RemoveButton")
+        self.pipeline_approve_button = QPushButton("Confirm and continue")
+        self.pipeline_approve_button.setObjectName("PrimaryButton")
+        review_buttons.addWidget(self.pipeline_change_settings_button)
+        review_buttons.addStretch(1)
+        review_buttons.addWidget(self.pipeline_needs_changes_button)
+        review_buttons.addWidget(self.pipeline_approve_button)
+        review_copy.addLayout(review_buttons)
+        review_layout.addLayout(review_copy, 2)
+        self.pipeline_review_panel.hide()
+        layout.addWidget(self.pipeline_review_panel)
+        layout.addStretch(1)
+        return panel
+
     def _connect_signals(self) -> None:
         self.profile_selector.currentIndexChanged.connect(self._profile_selection_changed)
+        self.configuration_profile_selector.currentIndexChanged.connect(
+            self._configuration_profile_selection_changed
+        )
         self.new_profile_button.clicked.connect(self._new_profile)
         self.duplicate_profile_button.clicked.connect(self._duplicate_profile)
         self.delete_profile_button.clicked.connect(self._delete_profile)
-        self.configuration_menu_button.toggled.connect(self._toggle_configuration_menu)
+        self.open_profile_configuration_button.clicked.connect(self._show_profile_configuration)
+        self.back_to_automation_button.clicked.connect(self._show_automation_menu)
         self.manifest_upload_button.clicked.connect(self._choose_processing_manifest)
         self.calibration_upload_button.clicked.connect(self._choose_calibration_map)
+        self.analysis_manifest_upload_button.clicked.connect(self._choose_analysis_manifest)
         self.save_profile_button.clicked.connect(self._save_profile)
         self.upload_videos_button.clicked.connect(self._choose_videos)
         self.remove_videos_button.clicked.connect(self._remove_selected_videos)
         self.clear_videos_button.clicked.connect(self._clear_videos)
         self.video_list.paths_dropped.connect(self._add_video_paths)
+        self.video_list.itemEntered.connect(self._start_hover_preview)
+        self.video_list.pointer_left.connect(self._stop_hover_preview)
+        self.video_list.itemDoubleClicked.connect(self._open_large_video_preview)
+        self.run_pipeline_button.clicked.connect(self._toggle_pipeline_demo)
+        self.pipeline_approve_button.clicked.connect(self._approve_pipeline_review)
+        self.pipeline_needs_changes_button.clicked.connect(self._reject_pipeline_review)
+        self.pipeline_change_settings_button.clicked.connect(self._open_pipeline_fix_settings)
+        self.pipeline_review_video_list.itemDoubleClicked.connect(
+            self._open_pipeline_review_video
+        )
+        self.pipeline_stickplot_preview.double_clicked.connect(
+            self._open_large_stickplot_preview
+        )
 
     def _refresh_profiles(self, selected_id: str | None = None) -> None:
         profiles = self._store.list_profiles()
         self._profiles = {profile.id: profile for profile in profiles}
-        blocker = QSignalBlocker(self.profile_selector)
-        self.profile_selector.clear()
+        selectors = (self.profile_selector, self.configuration_profile_selector)
+        blockers = [QSignalBlocker(selector) for selector in selectors]
+        for selector in selectors:
+            selector.clear()
         if not profiles:
-            self.profile_selector.addItem("No saved profiles", None)
-            self.profile_selector.setEnabled(False)
+            for selector in selectors:
+                selector.addItem("No saved profiles", None)
+                selector.setEnabled(False)
             self.duplicate_profile_button.setEnabled(False)
-            del blocker
+            del blockers
             self._show_new_profile()
             return
-        self.profile_selector.setEnabled(True)
-        for profile in profiles:
-            self.profile_selector.addItem(profile.name, profile.id)
+        for selector in selectors:
+            selector.setEnabled(True)
+            for profile in profiles:
+                selector.addItem(profile.name, profile.id)
         profile_ids = [profile.id for profile in profiles]
         selected_id = selected_id if selected_id in profile_ids else profile_ids[0]
-        self.profile_selector.setCurrentIndex(profile_ids.index(selected_id))
-        del blocker
+        for selector in selectors:
+            selector.setCurrentIndex(profile_ids.index(selected_id))
+        del blockers
         self._load_profile(self._profiles[selected_id])
 
     def _profile_selection_changed(self, index: int) -> None:
-        profile_id = self.profile_selector.itemData(index)
+        self._profile_id_selected(self.profile_selector.itemData(index))
+
+    def _configuration_profile_selection_changed(self, index: int) -> None:
+        self._profile_id_selected(self.configuration_profile_selector.itemData(index))
+
+    def _profile_id_selected(self, profile_id: str | None) -> None:
         if not profile_id or profile_id == self._current_profile_id:
             return
         if not self._confirm_discard_changes():
-            blocker = QSignalBlocker(self.profile_selector)
             self._select_combo_id(self._current_profile_id)
-            del blocker
             return
         self._load_profile(self._profiles[profile_id])
+        self._select_combo_id(profile_id)
 
     def _new_profile(self) -> None:
         if not self._confirm_discard_changes():
             return
-        blocker = QSignalBlocker(self.profile_selector)
-        self.profile_selector.setCurrentIndex(-1)
-        del blocker
+        self._select_combo_id(None)
         self._show_new_profile()
         self.profile_name.setFocus()
 
@@ -366,6 +689,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 source.processing_manifest,
                 source.calibration_map,
                 source.deeplabcut_models,
+                analysis_manifest=source.analysis_manifest,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not duplicate profile", str(exc))
@@ -373,17 +697,20 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._refresh_profiles(duplicate.id)
         self.status_label.setText(f'Profile duplicated as "{duplicate.name}".')
 
-    def _toggle_configuration_menu(self, expanded: bool) -> None:
-        self.configuration_menu.setVisible(expanded)
-        self.configuration_menu_button.setText(
-            "Profile configuration  ▾" if expanded else "Profile configuration  ▸"
-        )
+    def _show_profile_configuration(self) -> None:
+        self.workspace_stack.setCurrentWidget(self.configuration_page)
+        self.workspace_changed.emit("profiles")
+
+    def _show_automation_menu(self) -> None:
+        self.workspace_stack.setCurrentWidget(self.automation_page)
+        self.workspace_changed.emit("run")
 
     def _show_new_profile(self) -> None:
         self._current_profile_id = None
         self.profile_name.clear()
         self._manifest_source = None
         self._calibration_source = None
+        self._analysis_manifest_source = None
         self._regions = ()
         self._model_sources = {}
         self._saved_snapshot = None
@@ -399,6 +726,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.profile_name.setText(profile.name)
         self._manifest_source = profile.processing_manifest
         self._calibration_source = profile.calibration_map
+        self._analysis_manifest_source = profile.analysis_manifest
         self._regions = regions_from_processing_manifest(profile.processing_manifest)
         self._model_sources = {region: profile.deeplabcut_models.get(region) for region in self._regions}
         self._refresh_paths()
@@ -447,7 +775,29 @@ class AutomatedPipelineProfilesWidget(QWidget):
         if path:
             self._calibration_source = Path(path).expanduser().resolve()
             self._refresh_paths()
-            self.status_label.setText("Calibration selected. Save the profile after every region has a model.")
+            self.status_label.setText("Calibration selected. Add the analysis manifest below it.")
+
+    def _choose_analysis_manifest(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose gait analysis manifest",
+            str(find_project_root(Path.cwd()) / "outputs" / "gait_analysis"),
+            "Analysis manifest (analysis_manifest.json);;JSON files (*.json);;All files (*)",
+        )
+        if path:
+            self._set_analysis_manifest_source(Path(path))
+
+    def _set_analysis_manifest_source(self, path: Path) -> bool:
+        path = path.expanduser().resolve()
+        try:
+            read_analysis_manifest(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Could not read analysis manifest", str(exc))
+            return False
+        self._analysis_manifest_source = path
+        self._refresh_paths()
+        self.status_label.setText("Gait analysis settings selected. Review and save the profile.")
+        return True
 
     def _choose_videos(self) -> None:
         extensions = " ".join(f"*{extension}" for extension in sorted(VIDEO_EXTENSIONS))
@@ -473,10 +823,11 @@ class AutomatedPipelineProfilesWidget(QWidget):
             known_paths.add(key)
             item = QListWidgetItem(path.name)
             item.setData(Qt.UserRole, key)
-            item.setToolTip(key)
             self.video_list.addItem(item)
             added += 1
         self._update_video_count()
+        if added and self.video_list.currentRow() < 0:
+            self.video_list.setCurrentRow(0)
         if added:
             self._append_console(f"[Videos] Added {added} video(s); {len(self._video_paths)} queued.")
         if skipped:
@@ -486,6 +837,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         selected = self.video_list.selectedItems()
         if not selected:
             return
+        self._stop_hover_preview()
         removed_paths = {str(item.data(Qt.UserRole)) for item in selected}
         for item in selected:
             self.video_list.takeItem(self.video_list.row(item))
@@ -496,9 +848,11 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def _clear_videos(self) -> None:
         if not self._video_paths:
             return
+        self._release_hover_capture()
         count = len(self._video_paths)
         self._video_paths.clear()
         self.video_list.clear()
+        self.video_hover_card.hide()
         self._update_video_count()
         self._append_console(f"[Videos] Cleared {count} video(s).")
 
@@ -509,6 +863,578 @@ class AutomatedPipelineProfilesWidget(QWidget):
 
     def _append_console(self, message: str) -> None:
         self.automation_console.appendPlainText(message)
+
+    def _toggle_pipeline_demo(self) -> None:
+        if self._pipeline_demo_complete:
+            self._pipeline_demo_complete = False
+            self.pipeline_review_panel.hide()
+            self.set_pipeline_running(False)
+            self.run_pipeline_button.setText("RUN pipeline")
+            self.run_readiness_label.setText(
+                "Preview mode: RUN will not process or change any files."
+            )
+            return
+        if self._pipeline_demo_blocked_stage is not None:
+            self._resume_pipeline_demo()
+            return
+        if self._pipeline_demo_waiting_for_review is not None:
+            return
+        if self._pipeline_demo_timer.isActive():
+            self._pipeline_demo_timer.stop()
+            self._pipeline_demo_waiting_for_review = None
+            self._pipeline_demo_blocked_stage = None
+            self.pipeline_review_panel.hide()
+            self.set_pipeline_running(False)
+            self.run_pipeline_button.setText("RUN pipeline")
+            self.run_readiness_label.setText("Pipeline preview stopped. No files were changed.")
+            self._append_console("[Preview] Stopped. No processing was performed.")
+            return
+
+        self._pipeline_demo_stage = 0
+        self._pipeline_demo_progress = 0.0
+        self._pipeline_demo_total_videos = len(self._video_paths) or 4
+        self._pipeline_demo_last_processed = -1
+        self._pipeline_demo_complete = False
+        self._pipeline_demo_waiting_for_review = None
+        self._pipeline_demo_blocked_stage = None
+        self.pipeline_review_panel.hide()
+        self.set_pipeline_running(True)
+        self.run_pipeline_button.setText("Stop preview")
+        self.run_readiness_label.setText(
+            "Pipeline UI preview is playing. No files are being processed."
+        )
+        self._append_console("[Preview] Pipeline UI preview started; no files will be changed.")
+        self._begin_pipeline_demo_stage(0)
+
+    def _begin_pipeline_demo_stage(self, stage_index: int) -> None:
+        self.pipeline_progress_detail.show()
+        self._pipeline_demo_stage = stage_index
+        self._pipeline_demo_progress = 0.0
+        if stage_index == 0:
+            self._pipeline_demo_last_processed = -1
+        self._append_console(
+            f"[{stage_index + 1}/{len(PIPELINE_STAGES)}] "
+            f"{PIPELINE_PREVIEW_MESSAGES[stage_index]}."
+        )
+        self.set_pipeline_stage(
+            stage_index,
+            progress=0,
+            processed_videos=0 if stage_index == 0 else None,
+            total_videos=self._pipeline_demo_total_videos if stage_index == 0 else None,
+            status_text=PIPELINE_STAGE_ACTIVITY[stage_index],
+        )
+        self._pipeline_demo_timer.start()
+
+    def _advance_pipeline_demo(self) -> None:
+        if (
+            self._pipeline_demo_waiting_for_review is not None
+            or self._pipeline_demo_blocked_stage is not None
+        ):
+            return
+        if not 0 <= self._pipeline_demo_stage < len(PIPELINE_STAGES):
+            return
+        self._pipeline_demo_progress = min(100.0, self._pipeline_demo_progress + 8.0)
+        processed_videos = None
+        total_videos = None
+        if self._pipeline_demo_stage == 0:
+            total_videos = self._pipeline_demo_total_videos
+            processed_videos = min(
+                total_videos,
+                round(total_videos * self._pipeline_demo_progress / 100.0),
+            )
+            if processed_videos != self._pipeline_demo_last_processed:
+                self._pipeline_demo_last_processed = processed_videos
+                self._append_console(
+                    f"[Video processing] {processed_videos} / {total_videos} videos processed."
+                )
+
+        self.set_pipeline_stage(
+            self._pipeline_demo_stage,
+            progress=self._pipeline_demo_progress,
+            processed_videos=processed_videos,
+            total_videos=total_videos,
+            status_text=PIPELINE_STAGE_ACTIVITY[self._pipeline_demo_stage],
+        )
+        if self._pipeline_demo_progress < 100:
+            return
+
+        completed_stage = self._pipeline_demo_stage
+        if completed_stage in PIPELINE_REVIEW_GATES:
+            self._pause_for_pipeline_review(completed_stage)
+            return
+        self._append_console(f"[Complete] {PIPELINE_STAGES[completed_stage]}.")
+        next_stage = completed_stage + 1
+        if next_stage >= len(PIPELINE_STAGES):
+            self._pipeline_demo_timer.stop()
+            self._pipeline_demo_complete = True
+            self.complete_pipeline("Pipeline preview complete")
+            self.run_pipeline_button.setText("Back to videos")
+            self.run_readiness_label.setText(
+                "Preview complete. No files were changed."
+            )
+            self._append_console("[Preview complete] No processing was performed.")
+            return
+        self._begin_pipeline_demo_stage(next_stage)
+
+    def _pause_for_pipeline_review(self, stage_index: int) -> None:
+        gate = PIPELINE_REVIEW_GATES[stage_index]
+        self._pipeline_demo_timer.stop()
+        self._pipeline_demo_waiting_for_review = stage_index
+        self.pipeline_review_title.setText(str(gate["title"]))
+        self.pipeline_review_description.setText(str(gate["description"]))
+        self._populate_pipeline_review_preview(stage_index)
+        self.pipeline_change_settings_button.hide()
+        self.pipeline_needs_changes_button.show()
+        self.pipeline_approve_button.show()
+        self.pipeline_review_panel.show()
+        self.pipeline_stage_status_labels[stage_index].setText("Awaiting confirmation")
+        self.pipeline_current_stage_label.setText(f"Manual check: {gate['title']}")
+        self.pipeline_progress_detail.setText(
+            "The pipeline is paused until this preview is confirmed."
+        )
+        self.pipeline_progress_detail.hide()
+        self.run_pipeline_button.setText("Awaiting confirmation")
+        self.run_pipeline_button.setEnabled(False)
+        self.run_readiness_label.setText(
+            "Review the preview, then confirm it or request changes."
+        )
+        self._append_console(f"[Manual check] {gate['title']}. Pipeline paused.")
+
+    def _populate_pipeline_review_preview(self, stage_index: int) -> None:
+        if stage_index == 5:
+            self.pipeline_stickplot_preview.setPixmap(_demo_stickplot_pixmap(640, 240))
+            self.pipeline_stickplot_preview.setToolTip(
+                "Double-click to open the stickplot in a large viewer."
+            )
+            self.pipeline_review_preview_stack.setCurrentWidget(
+                self.pipeline_stickplot_preview
+            )
+            return
+
+        self.pipeline_review_video_list.clear()
+        component_names = self._regions or ("Full frame",)
+        regions = ", ".join(component_names)
+        enhancements = self._processing_enhancement_summary()
+        preview_paths: list[Path | None] = list(self._video_paths)
+        if not preview_paths:
+            preview_paths = [None] * self._pipeline_demo_total_videos
+        if stage_index == 1:
+            for index, path in enumerate(preview_paths, start=1):
+                source_name = path.name if path is not None else f"Demo video {index}.mp4"
+                display_name = source_name
+                details = f"Regions: {regions}  •  Enhancements: {enhancements}"
+                item = QListWidgetItem(f"{display_name}  —  {details}")
+                item.setData(Qt.UserRole, str(path) if path is not None else "")
+                item.setData(Qt.UserRole + 1, details)
+                item.setData(Qt.UserRole + 2, display_name)
+                item.setToolTip("Double-click for a large preview.")
+                self.pipeline_review_video_list.addItem(item)
+        else:
+            self.pipeline_component_video_lists.clear()
+            while self.pipeline_component_tabs.count():
+                page = self.pipeline_component_tabs.widget(0)
+                self.pipeline_component_tabs.removeTab(0)
+                page.deleteLater()
+            for component in component_names:
+                model_source = self._model_sources.get(component)
+                model_name = model_source.name if model_source is not None else "configured model"
+                component_list = QListWidget()
+                component_list.setObjectName("PipelineReviewVideoList")
+                component_list.setWordWrap(False)
+                component_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                component_list.itemDoubleClicked.connect(
+                    self._open_pipeline_review_video
+                )
+                self.pipeline_component_tabs.addTab(component_list, component)
+                self.pipeline_component_tabs.setTabToolTip(
+                    self.pipeline_component_tabs.count() - 1,
+                    f"{component} component • {model_name}",
+                )
+                self.pipeline_component_video_lists[component] = component_list
+                component_slug = component.replace(" ", "_")
+                for index, path in enumerate(preview_paths, start=1):
+                    source_name = path.name if path is not None else f"Demo video {index}.mp4"
+                    display_name = f"{Path(source_name).stem}_{component_slug}_DLC.mp4"
+                    details = f"Component: {component}  •  Model: {model_name}"
+                    item = QListWidgetItem(f"{display_name}  —  {details}")
+                    item.setData(Qt.UserRole, str(path) if path is not None else "")
+                    item.setData(Qt.UserRole + 1, details)
+                    item.setData(Qt.UserRole + 2, display_name)
+                    item.setToolTip("Double-click for a large component preview.")
+                    component_list.addItem(item)
+            self.pipeline_review_preview_stack.setCurrentWidget(
+                self.pipeline_component_tabs
+            )
+            return
+        self.pipeline_review_preview_stack.setCurrentWidget(
+            self.pipeline_review_video_list
+        )
+
+    def _processing_enhancement_summary(self) -> str:
+        if self._manifest_source is None:
+            return "manifest settings"
+        try:
+            data = json.loads(self._manifest_source.read_text(encoding="utf-8"))
+            enhancements = data["operations"].get("enhancements", {})
+        except (OSError, KeyError, TypeError, json.JSONDecodeError):
+            return "manifest settings"
+        if not isinstance(enhancements, dict):
+            return "manifest settings"
+        neutral_one = {"contrast", "saturation", "gamma"}
+        active = []
+        for name, value in enhancements.items():
+            if isinstance(value, bool):
+                enabled = value
+            elif isinstance(value, (int, float)):
+                enabled = value != (1 if name in neutral_one else 0)
+            else:
+                enabled = value not in (None, "", "none", "None")
+            if enabled:
+                active.append(name.replace("_", " "))
+        return ", ".join(active) if active else "none"
+
+    def _open_pipeline_review_video(self, item: QListWidgetItem) -> None:
+        if item.data(Qt.UserRole + 3) == "component_header":
+            return
+        path_text = str(item.data(Qt.UserRole) or "")
+        title = str(item.data(Qt.UserRole + 2) or item.text().splitlines()[0])
+        details = str(item.data(Qt.UserRole + 1) or "")
+        try:
+            if path_text and Path(path_text).is_file():
+                dialog: QDialog = AutomationVideoPreviewDialog(
+                    Path(path_text),
+                    self,
+                    subtitle=f"{details}\nDemo preview uses the queued source video until output exists.",
+                )
+            else:
+                dialog = PipelineTextPreviewDialog(
+                    title,
+                    f"{details}\n\nNo generated video exists in UI preview mode.",
+                    self,
+                )
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Could not preview video", str(exc))
+            return
+        self._show_large_review_dialog(dialog)
+
+    def _open_large_stickplot_preview(self) -> None:
+        self._show_large_review_dialog(
+            PipelineImagePreviewDialog(
+                "Generated stickplot preview",
+                _demo_stickplot_pixmap(1200, 700),
+                self,
+            )
+        )
+
+    def _show_large_review_dialog(self, dialog: QDialog) -> None:
+        if self._large_review_dialog is not None:
+            self._large_review_dialog.close()
+        self._large_review_dialog = dialog
+        dialog.finished.connect(
+            lambda _result, closed_dialog=dialog: self._large_review_closed(closed_dialog)
+        )
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _large_review_closed(self, dialog: QDialog) -> None:
+        if self._large_review_dialog is dialog:
+            self._large_review_dialog = None
+
+    def _approve_pipeline_review(self) -> None:
+        stage_index = self._pipeline_demo_waiting_for_review
+        if stage_index is None:
+            return
+        self._pipeline_demo_waiting_for_review = None
+        self.pipeline_review_panel.hide()
+        self.run_pipeline_button.setEnabled(True)
+        self.run_pipeline_button.setText("Stop preview")
+        self.run_readiness_label.setText(
+            "Preview confirmed. Continuing the pipeline UI preview."
+        )
+        self._append_console(f"[Confirmed] {PIPELINE_STAGES[stage_index]}.")
+        self._append_console(f"[Complete] {PIPELINE_STAGES[stage_index]}.")
+        self._begin_pipeline_demo_stage(stage_index + 1)
+
+    def _reject_pipeline_review(self) -> None:
+        stage_index = self._pipeline_demo_waiting_for_review
+        if stage_index is None:
+            return
+        gate = PIPELINE_REVIEW_GATES[stage_index]
+        self._pipeline_demo_waiting_for_review = None
+        self._pipeline_demo_blocked_stage = stage_index
+        self.pipeline_review_title.setText("Pipeline paused — changes required")
+        self.pipeline_review_description.setText(
+            f"Update the {gate['setting']}. Resuming will replay the preceding stage and "
+            "show this preview check again."
+        )
+        self.pipeline_change_settings_button.setText(f"Open {gate['setting']}")
+        self.pipeline_change_settings_button.show()
+        self.pipeline_needs_changes_button.hide()
+        self.pipeline_approve_button.hide()
+        card = self.pipeline_stage_cards[stage_index]
+        card.setProperty("pipelineState", "blocked")
+        card.style().unpolish(card)
+        card.style().polish(card)
+        self.pipeline_stage_status_labels[stage_index].setText("Changes required")
+        self.pipeline_current_stage_label.setText("Pipeline paused for configuration changes")
+        self.pipeline_progress_detail.setText(
+            f"Change the {gate['setting']}, then resume the preview."
+        )
+        self.run_pipeline_button.setEnabled(True)
+        self.run_pipeline_button.setText("Resume preview")
+        self.run_readiness_label.setText(
+            f"Paused: update the {gate['setting']} before resuming."
+        )
+        self._append_console(
+            f"[Changes required] Update the {gate['setting']}; pipeline remains paused."
+        )
+
+    def _open_pipeline_fix_settings(self) -> None:
+        stage_index = self._pipeline_demo_blocked_stage
+        if stage_index is None:
+            return
+        gate = PIPELINE_REVIEW_GATES[stage_index]
+        self._show_profile_configuration()
+        self.configuration_tabs.setCurrentIndex(int(gate["tab"]))
+
+    def _resume_pipeline_demo(self) -> None:
+        stage_index = self._pipeline_demo_blocked_stage
+        if stage_index is None:
+            return
+        replay_stage = int(PIPELINE_REVIEW_GATES[stage_index]["replay_stage"])
+        self._pipeline_demo_blocked_stage = None
+        self.pipeline_review_panel.hide()
+        self.run_pipeline_button.setText("Stop preview")
+        self.run_readiness_label.setText(
+            "Replaying the preceding stage before the manual check appears again."
+        )
+        self._append_console(
+            f"[Resume] Replaying {PIPELINE_STAGES[replay_stage]} before re-checking the preview."
+        )
+        self._begin_pipeline_demo_stage(replay_stage)
+
+    def set_pipeline_running(self, running: bool) -> None:
+        """Swap the video queue for pipeline progress without starting any work."""
+        was_running = self._pipeline_running
+        self._pipeline_running = running
+        self.profile_header_description.setVisible(not running)
+        self.automation_description.setVisible(not running)
+        if running:
+            self._stop_hover_preview()
+            self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
+            if not was_running:
+                total = len(self._video_paths)
+                self.set_pipeline_stage(
+                    0,
+                    progress=0,
+                    processed_videos=0,
+                    total_videos=total,
+                    status_text="Preparing videos",
+                )
+        else:
+            self.automation_input_stack.setCurrentWidget(self.video_panel)
+            self.pipeline_progress_detail.show()
+
+    def set_pipeline_stage(
+        self,
+        stage_index: int,
+        *,
+        progress: float | None = None,
+        processed_videos: int | None = None,
+        total_videos: int | None = None,
+        status_text: str | None = None,
+    ) -> None:
+        """Update the ordered progress view for a future pipeline controller."""
+        if not 0 <= stage_index < len(PIPELINE_STAGES):
+            raise ValueError(f"Pipeline stage index must be between 0 and {len(PIPELINE_STAGES) - 1}.")
+        self._pipeline_running = True
+        if self._pipeline_demo_waiting_for_review is None:
+            self.pipeline_progress_detail.show()
+        self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
+        active_status = status_text or "In progress"
+        for index, (card, label) in enumerate(
+            zip(self.pipeline_stage_cards, self.pipeline_stage_status_labels)
+        ):
+            if index < stage_index:
+                state, text = "complete", "Complete"
+            elif index == stage_index:
+                state, text = "active", active_status
+            else:
+                state, text = "pending", "Waiting"
+            card.setProperty("pipelineState", state)
+            label.setText(text)
+            card.style().unpolish(card)
+            card.style().polish(card)
+
+        stage_title = PIPELINE_STAGES[stage_index]
+        self.pipeline_current_stage_label.setText(f"Current stage: {stage_title}")
+        if processed_videos is not None or total_videos is not None:
+            processed = max(0, processed_videos or 0)
+            total = max(0, total_videos or 0)
+            self.pipeline_video_progress_label.setText(
+                f"{processed} / {total} videos processed"
+            )
+
+        if progress is None:
+            self.pipeline_progress_bar.setRange(0, 0)
+            self.pipeline_progress_bar.setFormat("Working…")
+            self.pipeline_progress_detail.setText(active_status)
+            return
+
+        stage_progress = max(0.0, min(100.0, float(progress)))
+        overall = round(((stage_index + stage_progress / 100.0) / len(PIPELINE_STAGES)) * 100)
+        self.pipeline_progress_bar.setRange(0, 100)
+        self.pipeline_progress_bar.setValue(overall)
+        self.pipeline_progress_bar.setFormat(f"Overall progress  %p%")
+        self.pipeline_progress_detail.setText(
+            f"{stage_title}: {stage_progress:g}% complete"
+        )
+
+    def complete_pipeline(self, status_text: str = "Pipeline complete") -> None:
+        self._pipeline_running = False
+        self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
+        for card, label in zip(self.pipeline_stage_cards, self.pipeline_stage_status_labels):
+            card.setProperty("pipelineState", "complete")
+            label.setText("Complete")
+            card.style().unpolish(card)
+            card.style().polish(card)
+        self.pipeline_current_stage_label.setText(status_text)
+        self.pipeline_progress_bar.setRange(0, 100)
+        self.pipeline_progress_bar.setValue(100)
+        self.pipeline_progress_bar.setFormat("Overall progress  %p%")
+        self.pipeline_progress_detail.show()
+        self.pipeline_progress_detail.setText("All automated stages completed.")
+
+    def _start_hover_preview(self, item: QListWidgetItem) -> None:
+        self._release_hover_capture()
+        path = Path(str(item.data(Qt.UserRole)))
+        self._show_hover_card(item, path)
+        self.video_hover_preview.setPixmap(QPixmap())
+        if cv2 is None:
+            self.video_hover_preview.setText("Preview unavailable")
+            return
+        capture = cv2.VideoCapture(str(path))
+        if not capture.isOpened():
+            capture.release()
+            self.video_hover_preview.setText("Could not play preview")
+            return
+        self._hover_capture = capture
+        self._hover_preview_path = path
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = frame_count / fps if fps > 0 else 0
+        details = []
+        if width > 0 and height > 0:
+            details.append(f"{width}×{height}")
+        if fps > 0:
+            fps_text = f"{fps:.2f}".rstrip("0").rstrip(".")
+            details.append(f"{fps_text} fps")
+        if duration > 0:
+            details.append(f"{duration:.1f} s")
+        details.append(self._format_file_size(path.stat().st_size))
+        self.video_hover_details.setText("  •  ".join(details))
+        interval = round(1000 / fps) if fps > 0 else 83
+        self._hover_preview_timer.start(max(33, min(150, interval)))
+        self._advance_hover_preview()
+
+    def _advance_hover_preview(self) -> None:
+        capture = self._hover_capture
+        if capture is None:
+            return
+        success, frame = capture.read()
+        if not success or frame is None:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            success, frame = capture.read()
+        if not success or frame is None:
+            self._release_hover_capture()
+            self.video_hover_preview.setPixmap(QPixmap())
+            self.video_hover_preview.setText("Could not play preview")
+            return
+        self._render_hover_preview_frame(frame)
+
+    def _stop_hover_preview(self) -> None:
+        self._release_hover_capture()
+        self.video_hover_card.hide()
+
+    def _release_hover_capture(self) -> None:
+        self._hover_preview_timer.stop()
+        if self._hover_capture is not None:
+            self._hover_capture.release()
+        self._hover_capture = None
+        self._hover_preview_path = None
+
+    def _show_hover_card(self, item: QListWidgetItem, path: Path) -> None:
+        display_name = path.name if len(path.name) <= 36 else f"{path.stem[:29]}…{path.suffix}"
+        self.video_hover_name.setText(display_name)
+        self.video_hover_name.setToolTip(str(path))
+        self.video_hover_details.setText("Double-click for expanded preview")
+        viewport = self.video_list.viewport()
+        item_rect = self.video_list.visualItemRect(item)
+        margin = 8
+        x = max(margin, viewport.width() - self.video_hover_card.width() - margin)
+        y = item_rect.bottom() + 5
+        if y + self.video_hover_card.height() > viewport.height() - margin:
+            y = item_rect.top() - self.video_hover_card.height() - 5
+        y = max(margin, y)
+        self.video_hover_card.move(x, y)
+        self.video_hover_card.raise_()
+        self.video_hover_card.show()
+
+    @staticmethod
+    def _format_file_size(size: int) -> str:
+        if size >= 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f} MB"
+        if size >= 1024:
+            return f"{size / 1024:.1f} KB"
+        return f"{size} B"
+
+    def _render_hover_preview_frame(self, frame) -> None:
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        height, width, channels = rgb.shape
+        image = QImage(rgb.data, width, height, channels * width, QImage.Format_RGB888).copy()
+        pixmap = QPixmap.fromImage(image).scaled(
+            self.video_hover_preview.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.video_hover_preview.setText("")
+        self.video_hover_preview.setPixmap(pixmap)
+
+    def _open_large_video_preview(self, item: QListWidgetItem | None = None) -> None:
+        item = item or self.video_list.currentItem()
+        if item is None:
+            return
+        path = Path(str(item.data(Qt.UserRole)))
+        try:
+            dialog = AutomationVideoPreviewDialog(path, self)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Could not preview video", str(exc))
+            return
+        if self._large_preview_dialog is not None:
+            self._large_preview_dialog.close()
+        self._large_preview_dialog = dialog
+        dialog.finished.connect(
+            lambda _result, closed_dialog=dialog: self._large_preview_closed(closed_dialog)
+        )
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _large_preview_closed(self, dialog: AutomationVideoPreviewDialog) -> None:
+        if self._large_preview_dialog is dialog:
+            self._large_preview_dialog = None
+
+    def closeEvent(self, event) -> None:
+        self._pipeline_demo_timer.stop()
+        self._release_hover_capture()
+        if self._large_preview_dialog is not None:
+            self._large_preview_dialog.close()
+        if self._large_review_dialog is not None:
+            self._large_review_dialog.close()
+        super().closeEvent(event)
 
     def _choose_model_file(self, region: str) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -575,6 +1501,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def _refresh_paths(self) -> None:
         self._set_path_label(self.manifest_path_label, self._manifest_source)
         self._set_path_label(self.calibration_path_label, self._calibration_source)
+        self._set_path_label(
+            self.analysis_manifest_path_label,
+            self._analysis_manifest_source,
+        )
         if self._regions:
             self.regions_label.setText("Detected regions: " + " → ".join(self._regions))
         else:
@@ -604,6 +1534,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
         if self._calibration_source is None:
             QMessageBox.warning(self, "Calibration required", "Complete step 3 by uploading a calibration map.")
             return
+        if self._analysis_manifest_source is None:
+            QMessageBox.warning(
+                self,
+                "Analysis manifest required",
+                "Complete step 3 by uploading a gait analysis manifest.",
+            )
+            return
         if self._current_profile_id is not None:
             if not self._is_dirty():
                 self.status_label.setText("No profile changes to save.")
@@ -616,7 +1553,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 self._manifest_source,
                 self._calibration_source,
                 {region: path for region, path in self._model_sources.items() if path is not None},
-                self._current_profile_id,
+                profile_id=self._current_profile_id,
+                analysis_manifest=self._analysis_manifest_source,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not save profile", str(exc))
@@ -675,6 +1613,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             str(self._manifest_source or ""),
             *(f"{region}\0{self._model_sources.get(region) or ''}" for region in self._regions),
             str(self._calibration_source or ""),
+            str(self._analysis_manifest_source or ""),
         )
 
     def _is_dirty(self) -> bool:
@@ -683,11 +1622,16 @@ class AutomatedPipelineProfilesWidget(QWidget):
         return self._snapshot() != self._saved_snapshot
 
     def _select_combo_id(self, profile_id: str | None) -> None:
-        for index in range(self.profile_selector.count()):
-            if self.profile_selector.itemData(index) == profile_id:
-                self.profile_selector.setCurrentIndex(index)
-                return
-        self.profile_selector.setCurrentIndex(-1)
+        selectors = (self.profile_selector, self.configuration_profile_selector)
+        blockers = [QSignalBlocker(selector) for selector in selectors]
+        for selector in selectors:
+            target_index = -1
+            for index in range(selector.count()):
+                if selector.itemData(index) == profile_id:
+                    target_index = index
+                    break
+            selector.setCurrentIndex(target_index)
+        del blockers
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -697,7 +1641,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     background: {theme.BACKGROUND};
                     color: {theme.TEXT};
                 }
-                QFrame#ProfileHeader, QFrame#MainAutomationMenu {
+                QFrame#ProfileHeader, QFrame#MainAutomationMenu,
+                QFrame#ProfileConfigurationToolbar, QFrame#ProfileManagementPanel {
                     background: {theme.SURFACE};
                     border: 1px solid {theme.BORDER};
                     border-radius: 3px;
@@ -726,10 +1671,138 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     font-weight: 600;
                     min-width: 48px;
                 }
-                QFrame#VideoDropPanel, QFrame#AutomationConsolePanel {
+                QFrame#VideoDropPanel, QFrame#AutomationConsolePanel,
+                QFrame#PipelineStatusPanel {
                     background: {theme.BACKGROUND};
                     border: 1px solid {theme.BORDER};
                     border-radius: 2px;
+                }
+                QStackedWidget#AutomationInputStack {
+                    background: {theme.BACKGROUND};
+                    border: 0;
+                }
+                QFrame#PipelineStageCard {
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 3px;
+                    min-width: 72px;
+                    min-height: 72px;
+                }
+                QFrame#PipelineStageCard[pipelineState="active"] {
+                    background: {theme.SOFT};
+                    border: 2px solid {theme.PRIMARY};
+                }
+                QFrame#PipelineStageCard[pipelineState="complete"] {
+                    background: {theme.SURFACE};
+                    border: 2px solid {theme.STATUS_READY};
+                }
+                QFrame#PipelineStageCard[pipelineState="blocked"] {
+                    background: {theme.SURFACE};
+                    border: 2px solid {theme.STATUS_ERROR};
+                }
+                QLabel#PipelineStageNumber {
+                    color: {theme.CONNECTOR};
+                    font-size: 15px;
+                    font-weight: 700;
+                }
+                QFrame#PipelineStageCard[pipelineState="active"] QLabel#PipelineStageNumber {
+                    color: {theme.PRIMARY};
+                }
+                QFrame#PipelineStageCard[pipelineState="complete"] QLabel#PipelineStageNumber {
+                    color: {theme.STATUS_READY};
+                }
+                QFrame#PipelineStageCard[pipelineState="blocked"] QLabel#PipelineStageNumber {
+                    color: {theme.STATUS_ERROR};
+                }
+                QLabel#PipelineStageName {
+                    color: {theme.TEXT};
+                    font-size: 11px;
+                    font-weight: 650;
+                }
+                QLabel#PipelineStageStatus, QLabel#PipelineProgressDetail,
+                QLabel#PipelineVideoProgress {
+                    color: {theme.CONNECTOR};
+                    font-size: 10px;
+                }
+                QLabel#PipelineCurrentStage {
+                    color: {theme.TEXT};
+                    font-size: 12px;
+                    font-weight: 650;
+                }
+                QLabel#PipelineConnector {
+                    color: {theme.CONNECTOR};
+                    font-size: 16px;
+                    font-weight: 700;
+                    max-width: 14px;
+                }
+                QProgressBar#PipelineProgressBar {
+                    min-height: 22px;
+                    text-align: center;
+                    font-weight: 650;
+                }
+                QProgressBar#PipelineProgressBar::chunk {
+                    background: {theme.PRIMARY};
+                }
+                QFrame#PipelineReviewPanel {
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.PRIMARY};
+                    border-radius: 3px;
+                }
+                QStackedWidget#PipelineReviewPreviewStack,
+                QListWidget#PipelineReviewVideoList,
+                QLabel#PipelineStickplotPreview {
+                    background: {theme.CANVAS};
+                    border: 1px solid {theme.BORDER};
+                    color: {theme.CANVAS_TEXT};
+                    font-size: 10px;
+                }
+                QListWidget#PipelineReviewVideoList::item {
+                    background: {theme.CANVAS};
+                    color: {theme.CANVAS_TEXT};
+                    padding: 6px;
+                    border-bottom: 1px solid {theme.BORDER};
+                }
+                QListWidget#PipelineReviewVideoList::item:selected {
+                    background: {theme.SOFT};
+                    color: {theme.TEXT};
+                }
+                QTabWidget#PipelineComponentTabs::pane {
+                    background: {theme.CANVAS};
+                    border: 1px solid {theme.BORDER};
+                }
+                QTabWidget#PipelineComponentTabs QTabBar::tab {
+                    padding: 4px 8px;
+                    font-size: 10px;
+                }
+                QLabel#PipelineReviewTitle {
+                    color: {theme.TEXT};
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                QLabel#PipelineReviewDescription {
+                    color: {theme.CONNECTOR};
+                    font-size: 11px;
+                }
+                QFrame#VideoHoverCard {
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 5px;
+                }
+                QLabel#VideoHoverPreview {
+                    background: {theme.CANVAS};
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 2px;
+                    color: {theme.CANVAS_TEXT};
+                    font-size: 11px;
+                }
+                QLabel#VideoHoverName {
+                    color: {theme.TEXT};
+                    font-size: 11px;
+                    font-weight: 650;
+                }
+                QLabel#VideoHoverDetails {
+                    color: {theme.CONNECTOR};
+                    font-size: 10px;
                 }
                 QListWidget#AutomationVideoDropList {
                     background: {theme.SURFACE};
@@ -745,7 +1818,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     background: {theme.CANVAS};
                     border: 1px solid {theme.BORDER};
                     color: {theme.CANVAS_TEXT};
-                    font-family: monospace;
                     font-size: 11px;
                 }
                 QPushButton#RunPipelineButton {
@@ -799,36 +1871,303 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     padding: 4px 7px;
                     font-size: 11px;
                 }
-                QPushButton#ConfigurationMenuButton {
-                    background: {theme.SURFACE};
+                QPushButton#OpenProfileConfigurationButton {
+                    background: {theme.PRIMARY};
+                    border-color: {theme.PRIMARY};
+                    color: {theme.PRIMARY_TEXT};
+                    font-weight: 650;
+                }
+                QPushButton#OpenProfileConfigurationButton:hover {
+                    background: {theme.SOFT};
+                    border-color: {theme.TEXT};
+                    color: {theme.TEXT};
+                }
+                QPushButton#BackToAutomationButton {
+                    background: {theme.BACKGROUND};
                     border: 1px solid {theme.BORDER};
                     color: {theme.TEXT};
-                    font-size: 14px;
                     font-weight: 650;
-                    padding: 9px 12px;
-                    text-align: left;
                 }
-                QPushButton#ConfigurationMenuButton:checked {
-                    background: {theme.PANEL};
-                    border-bottom-left-radius: 0;
-                    border-bottom-right-radius: 0;
-                }
-                QFrame#ProfileConfigurationMenu {
-                    background: {theme.SURFACE};
-                    border: 0;
+                QWidget#MainAutomationPage, QWidget#ProfileConfigurationPage,
+                QStackedWidget#AutomationWorkspaceStack {
+                    background: {theme.BACKGROUND};
                 }
                 """
             )
         )
 
 
+class AutomationVideoPreviewDialog(QDialog):
+    def __init__(
+        self,
+        path: Path,
+        parent: QWidget | None = None,
+        *,
+        subtitle: str | None = None,
+    ):
+        if cv2 is None:
+            raise OSError("OpenCV is not available for video preview.")
+        super().__init__(parent)
+        self._path = path.expanduser().resolve()
+        self._capture = cv2.VideoCapture(str(self._path))
+        if not self._capture.isOpened():
+            self._capture.release()
+            raise ValueError(f"Could not open video: {self._path.name}")
+        frame_count_value = self._capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        fps_value = self._capture.get(cv2.CAP_PROP_FPS)
+        self._frame_count = max(1, int(frame_count_value)) if frame_count_value > 0 else 1
+        self._fps = float(fps_value) if fps_value > 0 else 0.0
+        self._source_pixmap = QPixmap()
+
+        self.setWindowTitle(f"Video preview — {self._path.name}")
+        self.setMinimumSize(720, 500)
+        self.resize(960, 680)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(10)
+
+        title = QLabel(self._path.name)
+        title.setObjectName("LargeVideoPreviewTitle")
+        title.setWordWrap(True)
+        root.addWidget(title)
+        if subtitle:
+            subtitle_label = QLabel(subtitle)
+            subtitle_label.setObjectName("LargeVideoPreviewSubtitle")
+            subtitle_label.setWordWrap(True)
+            root.addWidget(subtitle_label)
+        self.preview = QLabel("Loading preview…")
+        self.preview.setObjectName("LargeVideoPreview")
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setMinimumSize(680, 380)
+        root.addWidget(self.preview, 1)
+
+        slider_row = QHBoxLayout()
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.setObjectName("VideoPreviewSlider")
+        self.frame_slider.setRange(0, self._frame_count - 1)
+        self.frame_slider.setSingleStep(1)
+        self.frame_slider.setPageStep(max(1, self._frame_count // 20))
+        self.frame_label = QLabel()
+        self.frame_label.setObjectName("VideoPreviewFrameLabel")
+        self.frame_label.setMinimumWidth(150)
+        self.frame_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        slider_row.addWidget(self.frame_slider, 1)
+        slider_row.addWidget(self.frame_label)
+        root.addLayout(slider_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+        self.frame_slider.valueChanged.connect(self._load_frame)
+        self.setStyleSheet(
+            theme.stylesheet(
+                """
+                QLabel#LargeVideoPreviewTitle {
+                    color: {theme.TEXT};
+                    font-size: 14px;
+                    font-weight: 650;
+                }
+                QLabel#LargeVideoPreviewSubtitle {
+                    color: {theme.CONNECTOR};
+                    font-size: 11px;
+                }
+                QLabel#LargeVideoPreview {
+                    background: {theme.CANVAS};
+                    border: 1px solid {theme.BORDER};
+                    color: {theme.CANVAS_TEXT};
+                }
+                QLabel#VideoPreviewFrameLabel {
+                    color: {theme.CONNECTOR};
+                    font-size: 11px;
+                }
+                """
+            )
+        )
+        self._load_frame(0)
+
+    def _load_frame(self, frame_index: int) -> None:
+        self._capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        success, frame = self._capture.read()
+        if not success or frame is None:
+            self.preview.setPixmap(QPixmap())
+            self.preview.setText("Could not read this frame")
+            return
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        height, width, channels = rgb.shape
+        image = QImage(rgb.data, width, height, channels * width, QImage.Format_RGB888).copy()
+        self._source_pixmap = QPixmap.fromImage(image)
+        self._render_frame()
+        seconds = frame_index / self._fps if self._fps > 0 else 0.0
+        self.frame_label.setText(
+            f"{frame_index + 1:,} / {self._frame_count:,}   {seconds:.2f} s"
+        )
+
+    def _render_frame(self) -> None:
+        if self._source_pixmap.isNull():
+            return
+        self.preview.setText("")
+        self.preview.setPixmap(
+            self._source_pixmap.scaled(
+                self.preview.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._render_frame()
+
+    def closeEvent(self, event) -> None:
+        self._capture.release()
+        super().closeEvent(event)
+
+
+class DoubleClickLabel(QLabel):
+    double_clicked = Signal()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.double_clicked.emit()
+        event.accept()
+
+
+class PipelineImagePreviewDialog(QDialog):
+    def __init__(self, title: str, pixmap: QPixmap, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._source_pixmap = pixmap
+        self.setWindowTitle(title)
+        self.setMinimumSize(720, 500)
+        self.resize(960, 680)
+        layout = QVBoxLayout(self)
+        heading = QLabel(title)
+        heading.setObjectName("LargeVideoPreviewTitle")
+        layout.addWidget(heading)
+        self.preview = QLabel()
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setObjectName("LargeVideoPreview")
+        layout.addWidget(self.preview, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.setStyleSheet(
+            theme.stylesheet(
+                """
+                QLabel#LargeVideoPreviewTitle {
+                    color: {theme.TEXT};
+                    font-size: 14px;
+                    font-weight: 650;
+                }
+                QLabel#LargeVideoPreview {
+                    background: {theme.CANVAS};
+                    border: 1px solid {theme.BORDER};
+                }
+                """
+            )
+        )
+        self._render_preview()
+
+    def _render_preview(self) -> None:
+        self.preview.setPixmap(
+            self._source_pixmap.scaled(
+                self.preview.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._render_preview()
+
+
+class PipelineTextPreviewDialog(QDialog):
+    def __init__(self, title: str, details: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(620, 360)
+        layout = QVBoxLayout(self)
+        heading = QLabel(title)
+        heading.setObjectName("LargeVideoPreviewTitle")
+        layout.addWidget(heading)
+        preview = QLabel(details)
+        preview.setObjectName("LargeVideoPreview")
+        preview.setAlignment(Qt.AlignCenter)
+        preview.setWordWrap(True)
+        layout.addWidget(preview, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.setStyleSheet(
+            theme.stylesheet(
+                """
+                QLabel#LargeVideoPreviewTitle {
+                    color: {theme.TEXT};
+                    font-size: 14px;
+                    font-weight: 650;
+                }
+                QLabel#LargeVideoPreview {
+                    background: {theme.CANVAS};
+                    border: 1px solid {theme.BORDER};
+                    color: {theme.CANVAS_TEXT};
+                    padding: 24px;
+                }
+                """
+            )
+        )
+
+
+def _demo_stickplot_pixmap(width: int, height: int) -> QPixmap:
+    pixmap = QPixmap(width, height)
+    pixmap.fill(QColor("white"))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    margin = max(18, width // 28)
+    baseline = height - margin * 2
+    painter.setPen(QPen(QColor("#b9b2a8"), max(1, width // 600)))
+    painter.drawLine(margin, baseline, width - margin, baseline)
+    painter.setPen(QPen(QColor(theme.PRIMARY), max(2, width // 300)))
+    pose_count = 6
+    spacing = (width - margin * 2) / pose_count
+    scale = max(0.7, min(width / 900, height / 420))
+    for pose in range(pose_count):
+        x = int(margin + spacing * (pose + 0.5))
+        phase = (pose - 2.5) / 2.5
+        hip = (x, int(baseline - 115 * scale))
+        knee = (int(x + phase * 24 * scale), int(baseline - 70 * scale))
+        ankle = (int(x - phase * 30 * scale), int(baseline - 24 * scale))
+        toe = (int(ankle[0] + 25 * scale), baseline)
+        crest = (int(x - 8 * scale), int(baseline - 155 * scale))
+        shoulder = (int(x + 12 * scale), int(baseline - 195 * scale))
+        joints = (shoulder, crest, hip, knee, ankle, toe)
+        for start, end in zip(joints, joints[1:]):
+            painter.drawLine(start[0], start[1], end[0], end[1])
+        radius = max(2, int(4 * scale))
+        for joint_x, joint_y in joints:
+            painter.drawEllipse(joint_x - radius, joint_y - radius, radius * 2, radius * 2)
+    painter.setPen(QColor("#5f5a54"))
+    painter.drawText(margin, margin, "Demo stickplot preview — double-click for large view")
+    painter.end()
+    return pixmap
+
+
 class VideoDropList(QListWidget):
     paths_dropped = Signal(object)
+    pointer_left = Signal()
 
     def __init__(self):
         super().__init__()
         self.setAcceptDrops(True)
         self.setDragDropMode(QListWidget.DropOnly)
+        self.setMouseTracking(True)
+
+    def leaveEvent(self, event) -> None:
+        self.pointer_left.emit()
+        super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        super().mouseMoveEvent(event)
+        if self.itemAt(event.position().toPoint()) is None:
+            self.pointer_left.emit()
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if self._video_paths(event.mimeData().urls()):

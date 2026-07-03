@@ -7,8 +7,10 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
+from dlc_gait_assembly.services.analysis_manifests import read_analysis_manifest
 
-PROFILE_FORMAT_VERSION = 2
+
+PROFILE_FORMAT_VERSION = 3
 
 
 def regions_from_processing_manifest(path: str | Path) -> tuple[str, ...]:
@@ -42,6 +44,7 @@ class AutomatedPipelineProfile:
     processing_manifest: Path
     calibration_map: Path
     deeplabcut_models: dict[str, Path]
+    analysis_manifest: Path | None = None
     updated_at: str = ""
 
 
@@ -73,6 +76,7 @@ class AutomatedProfileStore:
         calibration_map: str | Path,
         deeplabcut_models: dict[str, str | Path],
         profile_id: str | None = None,
+        analysis_manifest: str | Path | None = None,
     ) -> AutomatedPipelineProfile:
         clean_name = name.strip()
         if not clean_name:
@@ -80,13 +84,25 @@ class AutomatedProfileStore:
 
         manifest_source = Path(processing_manifest).expanduser().resolve()
         calibration_source = Path(calibration_map).expanduser().resolve()
+        analysis_source = (
+            Path(analysis_manifest).expanduser().resolve()
+            if analysis_manifest is not None
+            else None
+        )
+        if analysis_source is not None:
+            read_analysis_manifest(analysis_source)
         regions = regions_from_processing_manifest(manifest_source)
         if set(deeplabcut_models) != set(regions):
             raise ValueError("Choose exactly one DeepLabCut model for every region in the manifest.")
         model_sources = {
             region: Path(deeplabcut_models[region]).expanduser().resolve() for region in regions
         }
-        source_paths = (manifest_source, calibration_source, *model_sources.values())
+        source_paths = (
+            manifest_source,
+            calibration_source,
+            *model_sources.values(),
+            *((analysis_source,) if analysis_source is not None else ()),
+        )
         missing_paths = [path for path in source_paths if not path.exists()]
         if missing_paths:
             raise FileNotFoundError(f"The selected file or folder no longer exists: {missing_paths[0]}")
@@ -105,6 +121,11 @@ class AutomatedProfileStore:
             staging_dir.mkdir(parents=False, exist_ok=False)
             stored_manifest = self._copy_asset(manifest_source, staging_dir / "processing_manifest")
             stored_calibration = self._copy_asset(calibration_source, staging_dir / "calibration_map")
+            stored_analysis = (
+                self._copy_asset(analysis_source, staging_dir / "analysis_manifest")
+                if analysis_source is not None
+                else None
+            )
             stored_models: dict[str, Path] = {}
             for index, (region, source) in enumerate(model_sources.items(), start=1):
                 stored_models[region] = self._copy_asset(
@@ -112,15 +133,18 @@ class AutomatedProfileStore:
                     staging_dir / "deeplabcut_models" / f"{index:02d}",
                 )
 
+            assets = {
+                "processing_manifest": str(stored_manifest.relative_to(staging_dir)),
+                "calibration_map": str(stored_calibration.relative_to(staging_dir)),
+            }
+            if stored_analysis is not None:
+                assets["analysis_manifest"] = str(stored_analysis.relative_to(staging_dir))
             metadata = {
                 "format_version": PROFILE_FORMAT_VERSION,
                 "id": profile_id,
                 "name": clean_name,
                 "updated_at": datetime.now().astimezone().isoformat(),
-                "assets": {
-                    "processing_manifest": str(stored_manifest.relative_to(staging_dir)),
-                    "calibration_map": str(stored_calibration.relative_to(staging_dir)),
-                },
+                "assets": assets,
                 "deeplabcut_models": [
                     {"region": region, "path": str(path.relative_to(staging_dir))}
                     for region, path in stored_models.items()
@@ -175,11 +199,15 @@ class AutomatedProfileStore:
     def _load_metadata(self, metadata_path: Path) -> AutomatedPipelineProfile:
         data = json.loads(metadata_path.read_text(encoding="utf-8"))
         format_version = data.get("format_version")
-        if format_version not in (1, PROFILE_FORMAT_VERSION):
+        if format_version not in (1, 2, PROFILE_FORMAT_VERSION):
             raise ValueError("Unsupported automated profile format.")
         profile_dir = metadata_path.parent.resolve()
         manifest = self._stored_path(profile_dir, data["assets"]["processing_manifest"])
         calibration = self._stored_path(profile_dir, data["assets"]["calibration_map"])
+        analysis_relative = data["assets"].get("analysis_manifest")
+        analysis_manifest = (
+            self._stored_path(profile_dir, analysis_relative) if analysis_relative else None
+        )
         if format_version == 1:
             legacy_model = self._stored_path(profile_dir, data["assets"]["deeplabcut_model"])
             models = {region: legacy_model for region in regions_from_processing_manifest(manifest)}
@@ -188,7 +216,12 @@ class AutomatedProfileStore:
                 str(item["region"]): self._stored_path(profile_dir, item["path"])
                 for item in data["deeplabcut_models"]
             }
-        if not manifest.exists() or not calibration.exists() or not all(path.exists() for path in models.values()):
+        if (
+            not manifest.exists()
+            or not calibration.exists()
+            or (analysis_manifest is not None and not analysis_manifest.exists())
+            or not all(path.exists() for path in models.values())
+        ):
             raise FileNotFoundError("A stored profile asset is missing.")
         return AutomatedPipelineProfile(
             id=str(data["id"]),
@@ -196,6 +229,7 @@ class AutomatedProfileStore:
             processing_manifest=manifest,
             calibration_map=calibration,
             deeplabcut_models=models,
+            analysis_manifest=analysis_manifest,
             updated_at=str(data.get("updated_at", "")),
         )
 

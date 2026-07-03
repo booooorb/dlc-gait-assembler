@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 
 
 @dataclass(frozen=True)
@@ -153,6 +153,28 @@ def set_dark_mode(enabled: bool) -> None:
 
 
 set_dark_mode(False)
+
+
+def fixed_width_font() -> QFont:
+    """Return an installed fixed-width family instead of Qt's generic alias."""
+    installed = set(QFontDatabase.families())
+    for family in ("Menlo", "Monaco", "Consolas", "Courier New", "DejaVu Sans Mono"):
+        if family in installed:
+            return QFont(family)
+    return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+
+
+def interface_font() -> QFont:
+    """Resolve Qt's generic UI alias to a concrete installed family."""
+    installed = set(QFontDatabase.families())
+    general = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+    title_family = QFontDatabase.systemFont(QFontDatabase.SystemFont.TitleFont).family()
+    candidates = (title_family, ".AppleSystemUIFont", "Segoe UI", "Arial", "Helvetica", "Noto Sans")
+    family = next((candidate for candidate in candidates if candidate in installed), general.family())
+    font = QFont(family)
+    if general.pointSizeF() > 0:
+        font.setPointSizeF(general.pointSizeF())
+    return font
 
 
 def color(value: str, alpha: int | None = None) -> QColor:

@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, install_wheel_value_guard, set_tooltip
+from dlc_gait_assembly.services.analysis_manifests import write_analysis_manifest
 from dlc_gait_assembly.services.pipeline.alma import (
     AlmaSettings,
     default_alma_root,
@@ -349,6 +350,14 @@ class AlmaKinematicsWidget(QWidget):
 
         left_layout.addWidget(settings_tabs, 1)
 
+        self.export_manifest_button = QPushButton("Export analysis manifest")
+        set_tooltip(
+            self.export_manifest_button,
+            "Export the current gait-analysis settings for an automated pipeline profile.",
+            "Ctrl+Shift+E",
+        )
+        left_layout.addWidget(self.export_manifest_button)
+
         self.preview_button = QPushButton("1. Generate stick-plot preview")
         set_tooltip(
             self.preview_button,
@@ -444,6 +453,7 @@ class AlmaKinematicsWidget(QWidget):
             add_shortcut(self, "Ctrl+Shift+S", self._select_output_folder),
             add_shortcut(self, "Ctrl+F", self._load_frame_rate_from_video),
             add_shortcut(self, "Ctrl+M", self._import_calibration_map),
+            add_shortcut(self, "Ctrl+Shift+E", self._export_analysis_manifest),
             add_shortcut(self, "Ctrl+P", self._generate_stickplot_preview),
             add_shortcut(self, "Ctrl+R", self._run_analysis),
         ]
@@ -461,6 +471,7 @@ class AlmaKinematicsWidget(QWidget):
         self.calibration_method_combo.currentTextChanged.connect(self._update_calibration_method)
         self.load_fps_button.clicked.connect(self._load_frame_rate_from_video)
         self.import_calibration_map_button.clicked.connect(self._import_calibration_map)
+        self.export_manifest_button.clicked.connect(self._export_analysis_manifest)
         self.use_custom_mapping_checkbox.toggled.connect(self._update_mapping_enabled)
         self.reload_mapping_button.clicked.connect(self._load_bodypart_mapping_from_first_file)
         self.auto_mapping_button.clicked.connect(self._apply_auto_bodypart_mapping)
@@ -594,6 +605,35 @@ class AlmaKinematicsWidget(QWidget):
         self.status_label.setText("Calibration map imported.")
         self._append_log(f"Calibration map imported from {path}: {pixels_per_cm:.3f} px/cm ({source})")
         self._update_calibration_method()
+
+    def _export_analysis_manifest(self) -> None:
+        output_text = self.output_folder_edit.text().strip()
+        output_folder = Path(output_text).expanduser() if output_text else self._default_output_root()
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export gait analysis manifest",
+            str(output_folder / "analysis_manifest.json"),
+            "Analysis manifest (analysis_manifest.json);;JSON files (*.json);;All files (*)",
+        )
+        if not filename:
+            return
+
+        destination = Path(filename)
+        if destination.suffix.lower() != ".json":
+            destination = destination.with_suffix(".json")
+        try:
+            exported = write_analysis_manifest(destination, self._collect_settings())
+        except OSError as exc:
+            QMessageBox.critical(self, "Could not export analysis manifest", str(exc))
+            return
+
+        self.status_label.setText("Analysis manifest exported.")
+        self._append_log(f"Analysis manifest exported to {exported}")
+        QMessageBox.information(
+            self,
+            "Analysis manifest exported",
+            f"Saved the current gait-analysis settings to:\n{exported}",
+        )
 
     def _load_bodypart_mapping_from_first_file(self) -> None:
         if not self._selected_files:

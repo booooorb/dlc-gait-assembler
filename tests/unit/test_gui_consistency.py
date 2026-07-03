@@ -105,6 +105,7 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
 
     assert tabs is not None
     assert tabs.tabBar().expanding()
+    assert tabs.tabBar().isHidden()
     assert [tabs.tabText(index) for index in range(tabs.count())] == [
         "Manual pipeline",
         "Automated pipeline",
@@ -116,20 +117,59 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     assert all(button.isEnabled() for button in manual_page.findChildren(QPushButton, "OpenToolButton"))
     automated_profiles = automated_page.findChild(AutomatedPipelineProfilesWidget)
     assert automated_profiles is not None
+    assert automated_page.findChild(QScrollArea, "AutomatedPipelineScroll") is None
     assert not automated_page.findChildren(QPushButton, "OpenToolButton")
     configuration_tabs = automated_profiles.findChild(QTabWidget, "ProfileConfigurationTabs")
     assert [configuration_tabs.tabText(index) for index in range(configuration_tabs.count())] == [
         "1  Manifest + regions",
         "2  Region models",
-        "3  Calibration",
+        "3  Gait analysis",
         "4  Review + save",
     ]
     assert automated_profiles.run_pipeline_button.text() == "RUN pipeline"
-    assert not automated_profiles.run_pipeline_button.isEnabled()
-    assert automated_profiles.configuration_menu.isHidden()
-    automated_profiles.configuration_menu_button.click()
-    assert not automated_profiles.configuration_menu.isHidden()
+    assert automated_profiles.run_pipeline_button.isEnabled()
+    assert automated_profiles.workspace_stack.currentWidget() is automated_profiles.automation_page
+    automated_profiles.open_profile_configuration_button.click()
+    assert automated_profiles.workspace_stack.currentWidget() is automated_profiles.configuration_page
+    automated_profiles.back_to_automation_button.click()
+    assert automated_profiles.workspace_stack.currentWidget() is automated_profiles.automation_page
     menu.close()
+
+
+def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    automation_buttons = window.findChildren(QPushButton, "TopAutomationButton")
+
+    assert [button.text() for button in automation_buttons] == ["Run", "Profiles"]
+    assert window._stack.currentWidget() is window._main_menu
+    assert window._main_menu.pipeline_tabs.currentIndex() == 1
+    assert window._automation_run_button.property("activeNavigation") is True
+    assert window._active_tool_id is None
+    assert window._manual_stage_frame.isHidden()
+    window._manual_tools_button.click()
+    assert not window._manual_stage_frame.isHidden()
+    assert [button.text() for button in window._manual_stage_buttons.values()] == [
+        "Overview",
+        "Calibration",
+        "Video",
+        "DeepLabCut",
+        "Gait",
+        "PCA/RF",
+    ]
+
+    window._automation_profiles_button.click()
+    assert window._main_menu.automated_profiles.workspace_stack.currentWidget() is (
+        window._main_menu.automated_profiles.configuration_page
+    )
+    assert window._automation_profiles_button.property("activeNavigation") is True
+
+    window._manual_stage_buttons["manual_overview"].click()
+    assert window._main_menu.pipeline_tabs.currentIndex() == 0
+    assert window._manual_tools_button.property("activeManual") is True
+    assert window._manual_tools_button.isChecked()
+    assert window._manual_stage_buttons["manual_overview"].property("activeStage") is True
+    window.close()
 
 
 def test_partner_logos_use_pixel_outlines_only_in_dark_mode():
@@ -223,18 +263,19 @@ def test_runway_light_mode_has_a_distinct_settings_tab_strip():
         app.setStyleSheet(theme.application_stylesheet())
 
 
-def test_main_menu_light_mode_has_a_distinct_pipeline_tab_strip():
+def test_main_navigation_uses_one_primary_bar_instead_of_a_duplicate_tab_strip():
     app = QApplication.instance() or QApplication([])
     previous_mode = theme.IS_DARK
     menu = None
     try:
         theme.set_dark_mode(False)
-        menu = MainMenuWidget(TOOL_SPECS)
-        stylesheet = menu.styleSheet()
+        window = MainWindow(initial_theme_mode="light")
+        menu = window._main_menu
 
-        assert "QTabWidget#PipelineTabs QTabBar::tab" in stylesheet
-        assert f"background: {theme.PANEL};" in stylesheet
-        assert f"background: {theme.SURFACE};" in stylesheet
+        assert menu.pipeline_tabs.tabBar().isHidden()
+        assert window._toolbar.height() == 60
+        assert "QPushButton#TopAutomationButton" in window._shell.styleSheet()
+        window.close()
     finally:
         if menu is not None:
             menu.close()

@@ -66,6 +66,7 @@ def apply_theme_mode(app: QApplication, window: MainWindow | None, mode: str) ->
     if mode not in THEME_MODES:
         raise ValueError(f"Unknown theme mode: {mode}")
     theme.set_dark_mode(mode == "dark")
+    app.setFont(theme.interface_font())
     app.setPalette(theme.application_palette())
     app.setStyleSheet(theme.application_stylesheet())
     if window is not None:
