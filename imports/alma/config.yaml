@@ -14,6 +14,7 @@ cm_speed: ''                    # treadmill speed in cm/s (required for treadmil
 right_to_left: False            # direction of walking: "auto" (detect automatically), True (right-to-left), False (left-to-right)
 no_outlier_filter: False        # only for spontaneous walking setup (requires more testing; True to get parameters for all step cycles)
 dragging_filter: False          # only for spontaneous walking setup (requires more testing; False to get parameters also for potentially 100% dragging mice)
+kinematics_likelihood_threshold: 0.5 # minimum DLC likelihood used directly by kinematics analysis; 0 disables filtering
 drag_clearance_cm: 0.1          # minimum toe clearance above ground (cm) to not count as dragging
 drag_min_consecutive_frames: 4  # minimum consecutive frames of ground contact to count as dragging (reduces noise)
 # Camera-independent calibration (makes analysis robust to camera distance changes)

@@ -55,42 +55,41 @@ except ImportError:
 
 PIPELINE_STAGES = (
     "Video processing",
-    "Inspect video regions",
     "DLC analyzing videos",
-    "Inspect analyzed videos",
+    "Triangulate knee coordinate",
     "Stickplot generation",
-    "Inspect stickplot",
     "Gait analysis",
 )
 PIPELINE_STAGE_LABELS = (
-    "Video processing",
-    "Inspect regions",
-    "DLC video analysis",
-    "Inspect DLC videos",
-    "Generate stickplot",
-    "Inspect stickplot",
+    "Process videos",
+    "DLC analysis",
+    "Triangulate knee",
+    "Make stickplot",
     "Gait analysis",
 )
 PIPELINE_PREVIEW_MESSAGES = (
     "Preparing and processing source videos",
-    "Preparing processed region videos for inspection",
     "Running DeepLabCut pose estimation",
-    "Preparing analyzed videos for inspection",
+    "Triangulating the knee coordinate",
     "Generating gait stickplots",
-    "Reviewing generated stickplots",
     "Running gait analysis",
 )
 PIPELINE_STAGE_ACTIVITY = (
     "Processing",
-    "Preparing review",
     "Analyzing poses",
-    "Preparing review",
+    "Triangulating knee",
     "Generating",
-    "Preparing review",
     "Analyzing gait",
 )
+RUN_PREVIEW_TOOLTIP = (
+    "Start a visual walkthrough of every pipeline stage and review checkpoint. "
+    "Preview mode does not process videos or change files."
+)
+STOP_PREVIEW_TOOLTIP = (
+    "Stop the pipeline walkthrough and return to the video queue. No files have been changed."
+)
 PIPELINE_REVIEW_GATES = {
-    1: {
+    0: {
         "title": "Confirm processed video regions",
         "description": "Check that every cropped region is correct before pose analysis continues. Double-click a video for a large preview.",
         "preview": "Processed region-video previews appear here.",
@@ -98,21 +97,21 @@ PIPELINE_REVIEW_GATES = {
         "tab": 0,
         "replay_stage": 0,
     },
-    3: {
+    2: {
         "title": "Confirm DeepLabCut analyzed videos",
         "description": "Check the tracking overlays and confirm that each region used the correct model. Double-click a video for a large preview.",
         "preview": "DeepLabCut overlay-video previews appear here.",
         "setting": "region model configuration",
         "tab": 1,
-        "replay_stage": 2,
+        "replay_stage": 1,
     },
-    5: {
+    3: {
         "title": "Confirm generated stickplot",
         "description": "Check the generated stickplot before the final gait analysis runs. Double-click the stickplot for a large view.",
         "preview": "The generated stickplot preview appears here.",
         "setting": "gait analysis manifest",
         "tab": 2,
-        "replay_stage": 4,
+        "replay_stage": 3,
     },
 }
 
@@ -171,14 +170,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
         title = QLabel("Automated pipeline")
         title.setObjectName("AutomatedProfileTitle")
         header_layout.addWidget(title)
-        description = QLabel(
-            "Select a saved profile, add videos, and monitor the automated workflow. "
-            "Profile inputs are managed in their own configuration window."
-        )
-        description.setObjectName("AutomatedProfileDescription")
-        description.setWordWrap(True)
-        header_layout.addWidget(description)
-        self.profile_header_description = description
 
         selector_row = QHBoxLayout()
         selector_row.setSpacing(8)
@@ -186,13 +177,24 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.profile_selector = QComboBox()
         self.profile_selector.setObjectName("ProfileSelector")
         self.profile_selector.setAccessibleName("Saved automated pipeline profile")
+        self.profile_selector.setToolTip(
+            "Choose the saved setup this run will use. A profile contains the video "
+            "processing manifest, region-specific DeepLabCut models, calibration map, "
+            "and gait-analysis manifest."
+        )
         selector_row.addWidget(self.profile_selector, 1)
         self.duplicate_profile_button = QPushButton("Duplicate")
         self.duplicate_profile_button.setObjectName("SmallProfileButton")
-        self.duplicate_profile_button.setToolTip("Create a separately named copy of the selected profile.")
+        self.duplicate_profile_button.setToolTip(
+            "Copy the selected profile under a new name. The original profile and all "
+            "of its saved input files remain unchanged."
+        )
         selector_row.addWidget(self.duplicate_profile_button)
         self.open_profile_configuration_button = QPushButton("Manage profiles")
         self.open_profile_configuration_button.setObjectName("OpenProfileConfigurationButton")
+        self.open_profile_configuration_button.setToolTip(
+            "Open profile setup to create, edit, or delete reusable automation inputs."
+        )
         selector_row.addWidget(self.open_profile_configuration_button)
         header_layout.addLayout(selector_row)
 
@@ -210,17 +212,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
         automation_layout = QVBoxLayout(automation_menu)
         automation_layout.setContentsMargins(16, 12, 16, 12)
         automation_layout.setSpacing(8)
-        automation_title = QLabel("Main automation menu")
-        automation_title.setObjectName("MainAutomationTitle")
-        automation_layout.addWidget(automation_title)
-        automation_description = QLabel(
-            "Add videos for an automated run. RUN currently previews the pipeline stages and logs without processing files."
-        )
-        automation_description.setObjectName("AutomatedProfileDescription")
-        automation_description.setWordWrap(True)
-        automation_layout.addWidget(automation_description)
-        self.automation_description = automation_description
-
         automation_content = QHBoxLayout()
         automation_content.setSpacing(10)
         video_panel = QFrame()
@@ -237,18 +228,32 @@ class AutomatedPipelineProfilesWidget(QWidget):
         video_toolbar.addWidget(self.video_count_label)
         video_toolbar.addStretch(1)
         self.upload_videos_button = QPushButton("Upload videos")
+        self.upload_videos_button.setToolTip(
+            "Add one or more source videos to the queue. Supported video files can also "
+            "be dragged into the list below; adding a video does not modify it."
+        )
         video_toolbar.addWidget(self.upload_videos_button)
         self.remove_videos_button = QPushButton("Remove")
         self.remove_videos_button.setObjectName("RemoveButton")
+        self.remove_videos_button.setToolTip(
+            "Remove the selected videos from this queue. Files on disk are not deleted."
+        )
         video_toolbar.addWidget(self.remove_videos_button)
         self.clear_videos_button = QPushButton("Clear")
         self.clear_videos_button.setObjectName("ClearButton")
+        self.clear_videos_button.setToolTip(
+            "Remove every video from this queue. Files on disk are not deleted."
+        )
         video_toolbar.addWidget(self.clear_videos_button)
         video_layout.addLayout(video_toolbar)
         self.video_list = VideoDropList()
         self.video_list.setObjectName("AutomationVideoDropList")
         self.video_list.setAccessibleDescription(
             "Hover over a video to play a preview. Double-click to open the expanded preview."
+        )
+        self.video_list.setToolTip(
+            "Queued source videos. Hover over a row for a quick preview, double-click it "
+            "for a larger viewer, or select rows before choosing Remove."
         )
         self.video_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.video_list.setMinimumHeight(310)
@@ -287,7 +292,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         console_layout = QVBoxLayout(console_panel)
         console_layout.setContentsMargins(10, 8, 10, 10)
         console_layout.setSpacing(6)
-        console_title = QLabel("Automation log / console")
+        console_title = QLabel("Log")
         console_title.setObjectName("AutomationPanelTitle")
         console_layout.addWidget(console_title)
         self.automation_console = QPlainTextEdit()
@@ -296,22 +301,23 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.automation_console.setLineWrapMode(QPlainTextEdit.WidgetWidth)
         self.automation_console.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.automation_console.setFont(theme.fixed_width_font())
-        self.automation_console.setPlainText(
-            "[Ready] Select a saved profile and add videos.\n"
-            "[Preview mode] RUN animates the interface only; no processing is performed."
+        self.automation_console.setToolTip(
+            "Read-only activity log for the current automation preview, including stage "
+            "progress, review pauses, and errors."
         )
+        self.automation_console.setPlainText("[Ready]")
         console_layout.addWidget(self.automation_console, 1)
         automation_content.addWidget(console_panel, 2)
         automation_layout.addLayout(automation_content, 1)
 
         run_row = QHBoxLayout()
-        self.run_readiness_label = QLabel("Preview mode: RUN will not process or change any files.")
+        self.run_readiness_label = QLabel("Preview only")
         self.run_readiness_label.setObjectName("ProfileStatusLabel")
         run_row.addWidget(self.run_readiness_label, 1)
         self.run_pipeline_button = QPushButton("RUN pipeline")
         self.run_pipeline_button.setObjectName("RunPipelineButton")
         self.run_pipeline_button.setEnabled(True)
-        self.run_pipeline_button.setToolTip("Play a visual pipeline preview without processing files.")
+        self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
         run_row.addWidget(self.run_pipeline_button)
         automation_layout.addLayout(run_row)
         main_layout.addWidget(automation_menu, 1)
@@ -330,6 +336,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
         toolbar_layout.setContentsMargins(12, 10, 12, 10)
         self.back_to_automation_button = QPushButton("← Back to automation")
         self.back_to_automation_button.setObjectName("BackToAutomationButton")
+        self.back_to_automation_button.setToolTip(
+            "Return to the video queue. Unsaved profile edits remain in this window until "
+            "you close the application or select another profile."
+        )
         toolbar_layout.addWidget(self.back_to_automation_button)
         configuration_title = QLabel("Manage automated profiles")
         configuration_title.setObjectName("ProfileConfigurationTitle")
@@ -343,18 +353,33 @@ class AutomatedPipelineProfilesWidget(QWidget):
         management_layout.setContentsMargins(12, 10, 12, 10)
         management_layout.setSpacing(8)
         self.new_profile_button = QPushButton("New profile")
+        self.new_profile_button.setToolTip(
+            "Clear the profile form so you can build a new reusable automation setup. "
+            "This does not delete existing profiles."
+        )
         management_layout.addWidget(self.new_profile_button)
         management_layout.addWidget(self._field_label("Profile"))
         self.configuration_profile_selector = QComboBox()
         self.configuration_profile_selector.setObjectName("ConfigurationProfileSelector")
+        self.configuration_profile_selector.setToolTip(
+            "Load an existing profile into the form for inspection or editing."
+        )
         management_layout.addWidget(self.configuration_profile_selector, 1)
         management_layout.addWidget(self._field_label("Name"))
         self.profile_name = QLineEdit()
         self.profile_name.setObjectName("ProfileNameInput")
         self.profile_name.setPlaceholderText("Example: Treadmill camera setup")
+        self.profile_name.setToolTip(
+            "Enter a recognizable name for this complete automation setup, such as the "
+            "camera position, animal group, or experiment type."
+        )
         management_layout.addWidget(self.profile_name, 1)
         self.delete_profile_button = QPushButton("Delete profile")
         self.delete_profile_button.setObjectName("DeleteProfileButton")
+        self.delete_profile_button.setToolTip(
+            "Permanently delete the selected saved profile after confirmation. Source "
+            "manifests, models, and videos are not deleted."
+        )
         management_layout.addWidget(self.delete_profile_button)
         configuration_layout.addWidget(management)
 
@@ -363,14 +388,15 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.configuration_tabs.setDocumentMode(True)
         self.configuration_tabs.tabBar().setExpanding(True)
 
-        manifest_page, manifest_content = self._stage_page(
-            "Video processing manifest",
-            "Upload the manifest first. Its crop regions determine which model menus appear next.",
-        )
+        manifest_page, manifest_content = self._stage_page()
         manifest_row = QHBoxLayout()
         self.manifest_path_label = self._path_label()
         manifest_row.addWidget(self.manifest_path_label, 1)
         self.manifest_upload_button = QPushButton("Upload manifest")
+        self.manifest_upload_button.setToolTip(
+            "Choose a video-processing manifest JSON file. Its crop-region names create "
+            "the model slots in step 2."
+        )
         manifest_row.addWidget(self.manifest_upload_button)
         manifest_content.addLayout(manifest_row)
         self.regions_label = QLabel("No regions detected yet.")
@@ -379,11 +405,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
         manifest_content.addWidget(self.regions_label)
         manifest_content.addStretch(1)
         self.configuration_tabs.addTab(manifest_page, "1  Manifest + regions")
-
-        models_page, models_content = self._stage_page(
-            "DeepLabCut models by region",
-            "Upload one trained model for every region detected from the manifest.",
+        self.configuration_tabs.setTabToolTip(
+            0,
+            "Choose the video-processing manifest that defines cropping, trimming, "
+            "enhancement settings, and named regions.",
         )
+
+        models_page, models_content = self._stage_page()
         self.models_container = QWidget()
         self.models_layout = QVBoxLayout(self.models_container)
         self.models_layout.setContentsMargins(0, 0, 0, 0)
@@ -391,16 +419,22 @@ class AutomatedPipelineProfilesWidget(QWidget):
         models_content.addWidget(self.models_container)
         models_content.addStretch(1)
         self.configuration_tabs.addTab(models_page, "2  Region models")
-
-        calibration_page, calibration_content = self._stage_page(
-            "Gait analysis inputs",
-            "Add the calibration map and the analysis manifest exported from the manual tools.",
+        self.configuration_tabs.setTabToolTip(
+            1,
+            "Assign one trained DeepLabCut model file or model folder to each region "
+            "detected in step 1.",
         )
+
+        calibration_page, calibration_content = self._stage_page()
         calibration_content.addWidget(self._field_label("Calibration map"))
         calibration_row = QHBoxLayout()
         self.calibration_path_label = self._path_label()
         calibration_row.addWidget(self.calibration_path_label, 1)
         self.calibration_upload_button = QPushButton("Upload calibration map")
+        self.calibration_upload_button.setToolTip(
+            "Choose the calibration-map JSON exported by the Calibration tool. It converts "
+            "tracked image coordinates into physical measurements."
+        )
         calibration_row.addWidget(self.calibration_upload_button)
         calibration_content.addLayout(calibration_row)
 
@@ -410,15 +444,20 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.analysis_manifest_path_label = self._path_label()
         analysis_row.addWidget(self.analysis_manifest_path_label, 1)
         self.analysis_manifest_upload_button = QPushButton("Upload analysis manifest")
+        self.analysis_manifest_upload_button.setToolTip(
+            "Choose the gait-analysis manifest exported by the Gait tool. It stores the "
+            "analysis settings that will be reused for this profile."
+        )
         analysis_row.addWidget(self.analysis_manifest_upload_button)
         calibration_content.addLayout(analysis_row)
         calibration_content.addStretch(1)
         self.configuration_tabs.addTab(calibration_page, "3  Gait analysis")
-
-        save_page, save_content = self._stage_page(
-            "Save profile",
-            "Review the region-to-model mapping and save these inputs for a future automated run.",
+        self.configuration_tabs.setTabToolTip(
+            2,
+            "Choose the calibration map and gait-analysis manifest produced by the manual tools.",
         )
+
+        save_page, save_content = self._stage_page()
         save_row = QHBoxLayout()
         self.status_label = QLabel("Start with the video processing manifest in step 1.")
         self.status_label.setObjectName("ProfileStatusLabel")
@@ -426,10 +465,18 @@ class AutomatedPipelineProfilesWidget(QWidget):
         save_row.addWidget(self.status_label, 1)
         self.save_profile_button = QPushButton("Save new profile")
         self.save_profile_button.setObjectName("PrimaryButton")
+        self.save_profile_button.setToolTip(
+            "Validate the required inputs and save them together as a reusable profile. "
+            "Saving a profile does not start the pipeline."
+        )
         save_row.addWidget(self.save_profile_button)
         save_content.addLayout(save_row)
         save_content.addStretch(1)
         self.configuration_tabs.addTab(save_page, "4  Review + save")
+        self.configuration_tabs.setTabToolTip(
+            3,
+            "Check validation messages, then save the complete setup for future runs.",
+        )
         self.configuration_tabs.setMinimumHeight(320)
         configuration_layout.addWidget(self.configuration_tabs)
         self.workspace_stack.addWidget(configuration_page)
@@ -452,19 +499,12 @@ class AutomatedPipelineProfilesWidget(QWidget):
         return label
 
     @staticmethod
-    def _stage_page(title: str, description: str) -> tuple[QWidget, QVBoxLayout]:
+    def _stage_page() -> tuple[QWidget, QVBoxLayout]:
         page = QWidget()
         page.setObjectName("ProfileStagePage")
         content = QVBoxLayout(page)
         content.setContentsMargins(14, 12, 14, 12)
         content.setSpacing(6)
-        title_label = QLabel(title)
-        title_label.setObjectName("ProfileStageTitle")
-        content.addWidget(title_label)
-        description_label = QLabel(description)
-        description_label.setObjectName("ProfileStageDescription")
-        description_label.setWordWrap(True)
-        content.addWidget(description_label)
         return page, content
 
     def _build_pipeline_status_panel(self) -> QFrame:
@@ -488,6 +528,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         stage_row.setSpacing(5)
         self.pipeline_stage_cards: list[QFrame] = []
         self.pipeline_stage_status_labels: list[QLabel] = []
+        self.pipeline_stage_review_labels: list[QLabel] = []
         for index, stage_title in enumerate(PIPELINE_STAGE_LABELS):
             if index:
                 connector = QLabel("→")
@@ -510,6 +551,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
             name.setAlignment(Qt.AlignCenter)
             name.setWordWrap(True)
             card_layout.addWidget(name, 1)
+            review_indicator = QLabel(
+                "Review required" if index in PIPELINE_REVIEW_GATES else ""
+            )
+            review_indicator.setObjectName("PipelineReviewIndicator")
+            review_indicator.setAlignment(Qt.AlignCenter)
+            review_indicator.setVisible(index in PIPELINE_REVIEW_GATES)
+            card_layout.addWidget(review_indicator)
             status = QLabel("Waiting")
             status.setObjectName("PipelineStageStatus")
             status.setAlignment(Qt.AlignCenter)
@@ -518,6 +566,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             stage_row.addWidget(card, 1)
             self.pipeline_stage_cards.append(card)
             self.pipeline_stage_status_labels.append(status)
+            self.pipeline_stage_review_labels.append(review_indicator)
         layout.addLayout(stage_row)
 
         self.pipeline_current_stage_label = QLabel("Waiting to start")
@@ -545,6 +594,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_review_preview_stack.setMinimumSize(240, 78)
         self.pipeline_review_video_list = QListWidget()
         self.pipeline_review_video_list.setObjectName("PipelineReviewVideoList")
+        self.pipeline_review_video_list.setToolTip(
+            "Review the generated preview for each queued video. Double-click a row to "
+            "open a larger viewer before accepting or rejecting this checkpoint."
+        )
         self.pipeline_review_video_list.setWordWrap(False)
         self.pipeline_review_video_list.setHorizontalScrollBarPolicy(
             Qt.ScrollBarAlwaysOff
@@ -554,6 +607,9 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_component_tabs.setObjectName("PipelineComponentTabs")
         self.pipeline_component_tabs.setDocumentMode(True)
         self.pipeline_component_tabs.tabBar().setExpanding(True)
+        self.pipeline_component_tabs.setToolTip(
+            "Switch between region outputs to verify that each one used the correct model."
+        )
         self.pipeline_review_preview_stack.addWidget(self.pipeline_component_tabs)
         self.pipeline_component_video_lists: dict[str, QListWidget] = {}
         self.pipeline_stickplot_preview = DoubleClickLabel()
@@ -574,10 +630,20 @@ class AutomatedPipelineProfilesWidget(QWidget):
         review_buttons = QHBoxLayout()
         self.pipeline_change_settings_button = QPushButton("Change configuration")
         self.pipeline_change_settings_button.setObjectName("PipelineChangeSettingsButton")
+        self.pipeline_change_settings_button.setToolTip(
+            "Open the profile setting responsible for this rejected preview. After fixing "
+            "it, return here and resume the walkthrough."
+        )
         self.pipeline_needs_changes_button = QPushButton("Needs changes")
         self.pipeline_needs_changes_button.setObjectName("RemoveButton")
+        self.pipeline_needs_changes_button.setToolTip(
+            "Reject this checkpoint and pause the pipeline so its profile settings can be corrected."
+        )
         self.pipeline_approve_button = QPushButton("Confirm and continue")
         self.pipeline_approve_button.setObjectName("PrimaryButton")
+        self.pipeline_approve_button.setToolTip(
+            "Accept this preview as correct and continue to the next pipeline stage."
+        )
         review_buttons.addWidget(self.pipeline_change_settings_button)
         review_buttons.addStretch(1)
         review_buttons.addWidget(self.pipeline_needs_changes_button)
@@ -870,9 +936,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_review_panel.hide()
             self.set_pipeline_running(False)
             self.run_pipeline_button.setText("RUN pipeline")
-            self.run_readiness_label.setText(
-                "Preview mode: RUN will not process or change any files."
-            )
+            self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
+            self.run_readiness_label.setText("Preview only")
             return
         if self._pipeline_demo_blocked_stage is not None:
             self._resume_pipeline_demo()
@@ -886,7 +951,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_review_panel.hide()
             self.set_pipeline_running(False)
             self.run_pipeline_button.setText("RUN pipeline")
-            self.run_readiness_label.setText("Pipeline preview stopped. No files were changed.")
+            self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
+            self.run_readiness_label.setText("Stopped")
             self._append_console("[Preview] Stopped. No processing was performed.")
             return
 
@@ -900,9 +966,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_review_panel.hide()
         self.set_pipeline_running(True)
         self.run_pipeline_button.setText("Stop preview")
-        self.run_readiness_label.setText(
-            "Pipeline UI preview is playing. No files are being processed."
-        )
+        self.run_pipeline_button.setToolTip(STOP_PREVIEW_TOOLTIP)
+        self.run_readiness_label.setText("Playing preview")
         self._append_console("[Preview] Pipeline UI preview started; no files will be changed.")
         self._begin_pipeline_demo_stage(0)
 
@@ -969,9 +1034,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self._pipeline_demo_complete = True
             self.complete_pipeline("Pipeline preview complete")
             self.run_pipeline_button.setText("Back to videos")
-            self.run_readiness_label.setText(
-                "Preview complete. No files were changed."
+            self.run_pipeline_button.setToolTip(
+                "Return to the queued videos after the completed walkthrough. No files were changed."
             )
+            self.run_readiness_label.setText("Complete")
             self._append_console("[Preview complete] No processing was performed.")
             return
         self._begin_pipeline_demo_stage(next_stage)
@@ -988,6 +1054,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_approve_button.show()
         self.pipeline_review_panel.show()
         self.pipeline_stage_status_labels[stage_index].setText("Awaiting confirmation")
+        self.pipeline_stage_review_labels[stage_index].setText("Awaiting review")
         self.pipeline_current_stage_label.setText(f"Manual check: {gate['title']}")
         self.pipeline_progress_detail.setText(
             "The pipeline is paused until this preview is confirmed."
@@ -995,16 +1062,18 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_progress_detail.hide()
         self.run_pipeline_button.setText("Awaiting confirmation")
         self.run_pipeline_button.setEnabled(False)
-        self.run_readiness_label.setText(
-            "Review the preview, then confirm it or request changes."
+        self.run_pipeline_button.setToolTip(
+            "The walkthrough is paused. Use Confirm and continue or Needs changes in the review panel."
         )
+        self.run_readiness_label.setText("Review required")
         self._append_console(f"[Manual check] {gate['title']}. Pipeline paused.")
 
     def _populate_pipeline_review_preview(self, stage_index: int) -> None:
-        if stage_index == 5:
+        if stage_index == 3:
             self.pipeline_stickplot_preview.setPixmap(_demo_stickplot_pixmap(640, 240))
             self.pipeline_stickplot_preview.setToolTip(
-                "Double-click to open the stickplot in a large viewer."
+                "Inspect the generated gait stickplot for obvious tracking or stride "
+                "errors. Double-click it to open a larger viewer."
             )
             self.pipeline_review_preview_stack.setCurrentWidget(
                 self.pipeline_stickplot_preview
@@ -1018,7 +1087,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         preview_paths: list[Path | None] = list(self._video_paths)
         if not preview_paths:
             preview_paths = [None] * self._pipeline_demo_total_videos
-        if stage_index == 1:
+        if stage_index == 0:
             for index, path in enumerate(preview_paths, start=1):
                 source_name = path.name if path is not None else f"Demo video {index}.mp4"
                 display_name = source_name
@@ -1027,7 +1096,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 item.setData(Qt.UserRole, str(path) if path is not None else "")
                 item.setData(Qt.UserRole + 1, details)
                 item.setData(Qt.UserRole + 2, display_name)
-                item.setToolTip("Double-click for a large preview.")
+                item.setToolTip(
+                    "Inspect this processed output for the expected crop regions and "
+                    "enhancements. Double-click to open a larger preview."
+                )
                 self.pipeline_review_video_list.addItem(item)
         else:
             self.pipeline_component_video_lists.clear()
@@ -1060,7 +1132,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     item.setData(Qt.UserRole, str(path) if path is not None else "")
                     item.setData(Qt.UserRole + 1, details)
                     item.setData(Qt.UserRole + 2, display_name)
-                    item.setToolTip("Double-click for a large component preview.")
+                    item.setToolTip(
+                        f"Inspect the {component} tracking overlay produced with {model_name}. "
+                        "Double-click to open a larger preview."
+                    )
                     component_list.addItem(item)
             self.pipeline_review_preview_stack.setCurrentWidget(
                 self.pipeline_component_tabs
@@ -1149,9 +1224,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_review_panel.hide()
         self.run_pipeline_button.setEnabled(True)
         self.run_pipeline_button.setText("Stop preview")
-        self.run_readiness_label.setText(
-            "Preview confirmed. Continuing the pipeline UI preview."
-        )
+        self.run_pipeline_button.setToolTip(STOP_PREVIEW_TOOLTIP)
+        self.run_readiness_label.setText("Playing preview")
         self._append_console(f"[Confirmed] {PIPELINE_STAGES[stage_index]}.")
         self._append_console(f"[Complete] {PIPELINE_STAGES[stage_index]}.")
         self._begin_pipeline_demo_stage(stage_index + 1)
@@ -1177,15 +1251,18 @@ class AutomatedPipelineProfilesWidget(QWidget):
         card.style().unpolish(card)
         card.style().polish(card)
         self.pipeline_stage_status_labels[stage_index].setText("Changes required")
+        self.pipeline_stage_review_labels[stage_index].setText("Needs changes")
         self.pipeline_current_stage_label.setText("Pipeline paused for configuration changes")
         self.pipeline_progress_detail.setText(
             f"Change the {gate['setting']}, then resume the preview."
         )
         self.run_pipeline_button.setEnabled(True)
         self.run_pipeline_button.setText("Resume preview")
-        self.run_readiness_label.setText(
-            f"Paused: update the {gate['setting']} before resuming."
+        self.run_pipeline_button.setToolTip(
+            f"Replay the affected stage after updating the {gate['setting']}, then return "
+            "to this review checkpoint."
         )
+        self.run_readiness_label.setText("Changes required")
         self._append_console(
             f"[Changes required] Update the {gate['setting']}; pipeline remains paused."
         )
@@ -1206,9 +1283,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._pipeline_demo_blocked_stage = None
         self.pipeline_review_panel.hide()
         self.run_pipeline_button.setText("Stop preview")
-        self.run_readiness_label.setText(
-            "Replaying the preceding stage before the manual check appears again."
-        )
+        self.run_pipeline_button.setToolTip(STOP_PREVIEW_TOOLTIP)
+        self.run_readiness_label.setText("Replaying stage")
         self._append_console(
             f"[Resume] Replaying {PIPELINE_STAGES[replay_stage]} before re-checking the preview."
         )
@@ -1218,8 +1294,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
         """Swap the video queue for pipeline progress without starting any work."""
         was_running = self._pipeline_running
         self._pipeline_running = running
-        self.profile_header_description.setVisible(not running)
-        self.automation_description.setVisible(not running)
         if running:
             self._stop_hover_preview()
             self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
@@ -1253,8 +1327,12 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_progress_detail.show()
         self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
         active_status = status_text or "In progress"
-        for index, (card, label) in enumerate(
-            zip(self.pipeline_stage_cards, self.pipeline_stage_status_labels)
+        for index, (card, label, review_label) in enumerate(
+            zip(
+                self.pipeline_stage_cards,
+                self.pipeline_stage_status_labels,
+                self.pipeline_stage_review_labels,
+            )
         ):
             if index < stage_index:
                 state, text = "complete", "Complete"
@@ -1264,6 +1342,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 state, text = "pending", "Waiting"
             card.setProperty("pipelineState", state)
             label.setText(text)
+            if index in PIPELINE_REVIEW_GATES:
+                review_label.setText("Reviewed" if index < stage_index else "Review required")
             card.style().unpolish(card)
             card.style().polish(card)
 
@@ -1294,9 +1374,15 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def complete_pipeline(self, status_text: str = "Pipeline complete") -> None:
         self._pipeline_running = False
         self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
-        for card, label in zip(self.pipeline_stage_cards, self.pipeline_stage_status_labels):
+        for card, label, review_label in zip(
+            self.pipeline_stage_cards,
+            self.pipeline_stage_status_labels,
+            self.pipeline_stage_review_labels,
+        ):
             card.setProperty("pipelineState", "complete")
             label.setText("Complete")
+            if review_label.text():
+                review_label.setText("Reviewed")
             card.style().unpolish(card)
             card.style().polish(card)
         self.pipeline_current_stage_label.setText(status_text)
@@ -1470,9 +1556,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
             if widget is not None:
                 widget.deleteLater()
         if not self._regions:
-            placeholder = QLabel("Upload the manifest in step 1 to detect regions and unlock model uploads.")
+            placeholder = QLabel("Manifest required")
             placeholder.setObjectName("ModelsPlaceholder")
             placeholder.setWordWrap(True)
+            placeholder.setToolTip(
+                "Complete step 1 first. The manifest supplies the region names needed to "
+                "create one DeepLabCut model slot per region."
+            )
             self.models_layout.addWidget(placeholder)
             return
         for region in self._regions:
@@ -1491,9 +1581,15 @@ class AutomatedPipelineProfilesWidget(QWidget):
             path_label.setToolTip(str(model_path) if model_path is not None else "")
             layout.addWidget(path_label, 1)
             file_button = QPushButton("Upload file")
+            file_button.setToolTip(
+                f"Choose the trained DeepLabCut model file used to analyze the {region} region."
+            )
             file_button.clicked.connect(lambda _checked=False, name=region: self._choose_model_file(name))
             layout.addWidget(file_button)
             folder_button = QPushButton("Upload folder")
+            folder_button.setToolTip(
+                f"Choose the trained DeepLabCut model folder used to analyze the {region} region."
+            )
             folder_button.clicked.connect(lambda _checked=False, name=region: self._choose_model_folder(name))
             layout.addWidget(folder_button)
             self.models_layout.addWidget(row)
@@ -1685,7 +1781,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     background: {theme.SURFACE};
                     border: 1px solid {theme.BORDER};
                     border-radius: 3px;
-                    min-width: 72px;
+                    min-width: 58px;
                     min-height: 72px;
                 }
                 QFrame#PipelineStageCard[pipelineState="active"] {
@@ -1716,13 +1812,18 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 }
                 QLabel#PipelineStageName {
                     color: {theme.TEXT};
-                    font-size: 11px;
+                    font-size: 10px;
                     font-weight: 650;
                 }
                 QLabel#PipelineStageStatus, QLabel#PipelineProgressDetail,
                 QLabel#PipelineVideoProgress {
                     color: {theme.CONNECTOR};
                     font-size: 10px;
+                }
+                QLabel#PipelineReviewIndicator {
+                    color: {theme.PRIMARY};
+                    font-size: 9px;
+                    font-weight: 700;
                 }
                 QLabel#PipelineCurrentStage {
                     color: {theme.TEXT};
@@ -1733,7 +1834,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     color: {theme.CONNECTOR};
                     font-size: 16px;
                     font-weight: 700;
-                    max-width: 14px;
+                    max-width: 10px;
                 }
                 QProgressBar#PipelineProgressBar {
                     min-height: 22px;
@@ -2198,7 +2299,7 @@ class VideoDropList(QListWidget):
         painter.drawText(
             self.viewport().rect().adjusted(20, 20, -20, -20),
             Qt.AlignCenter | Qt.TextWordWrap,
-            "Drag & drop videos here\n\nor use Upload videos",
+            "Drop videos here",
         )
 
     @staticmethod

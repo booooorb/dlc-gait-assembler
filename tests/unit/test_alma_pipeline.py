@@ -6,8 +6,14 @@ from types import SimpleNamespace
 
 from dlc_gait_assembly.services.pipeline.alma import (
     AlmaSettings,
+    AlmaViewCsvSet,
+    _filter_low_confidence_coordinates,
+    _hide_low_confidence_stickplot_frames,
+    _load_kinematics_functions,
+    _merge_multiview_rustlab1_dataframe,
     pixels_per_cm_from_calibration_map,
     run_alma_gait_analysis,
+    settings_from_alma_config,
 )
 from dlc_gait_assembly.services.pipeline.rustlab1 import (
     RUSTLAB1_PARAMETER_NAMES,
@@ -63,6 +69,39 @@ def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
     assert result.dataframe.loc[1, "left__back__movement_per_step"] == 1.0
 
 
+def test_multiview_csv_set_merges_separate_views_for_rustlab1(tmp_path):
+    import pandas as pd
+
+    left_csv = tmp_path / "mouse_left.csv"
+    right_csv = tmp_path / "mouse_right.csv"
+    bottom_csv = tmp_path / "mouse_bottom.csv"
+    _write_dlc_csv(left_csv, ("back-ankle", "back-toe", "hip", "iliac_crest"))
+    _write_dlc_csv(right_csv, ("back-ankle", "back-toe", "hip", "iliac_crest"))
+    _write_dlc_csv(bottom_csv, ("center-back", "back-left", "back-right"))
+
+    view_set = AlmaViewCsvSet(
+        name="mouse",
+        left_csv=left_csv,
+        right_csv=right_csv,
+        bottom_csv=bottom_csv,
+    )
+    merged = _merge_multiview_rustlab1_dataframe(view_set, pd)
+
+    assert ("l-back-toe", "x") in merged.columns
+    assert ("r-back-ankle", "y") in merged.columns
+    assert ("d-center-back", "likelihood") in merged.columns
+
+    alma_parameters = pd.DataFrame({"stride_start (frame)": [0], "stride_end (frame)": [4]})
+    settings = AlmaSettings(calibration_method="manual", pixels_per_cm=10.0)
+    identity_kinematics = SimpleNamespace(butterworth_filter=lambda values, _fps, _cutoff: values)
+
+    result = extract_rustlab1_parameters(merged, alma_parameters, settings, identity_kinematics)
+
+    assert result.dataframe is not None
+    assert result.missing_markers == ()
+    assert set(result.available_parameters).issubset(RUSTLAB1_PARAMETER_NAMES)
+
+
 def test_pixels_per_cm_from_calibration_map_uses_overall_value(tmp_path):
     map_path = tmp_path / "conversion_factor_map.json"
     map_path.write_text(
@@ -108,6 +147,117 @@ def test_pixels_per_cm_from_calibration_map_can_use_view_axis_average(tmp_path):
 
     assert pixels_per_cm == 1 / 0.015
     assert source == "view 1"
+
+
+def test_alma_bodypart_normalization_accepts_hyphenated_iliac_crest_aliases(alma_root):
+    import pandas as pd
+
+    kinematics = _load_kinematics_functions(alma_root)
+
+    for crest_label in ("iliac-crest", "iliac_crest", "l-iliac-crest", "r-iliac-crest"):
+        columns = []
+        for bodypart in ("toe", "mtp", "ankle", "knee", "hip", crest_label):
+            for coord in ("x", "y", "likelihood"):
+                columns.append((bodypart, coord))
+
+        raw = pd.DataFrame(
+            1.0,
+            index=range(3),
+            columns=pd.MultiIndex.from_tuples(columns, names=("bodyparts", "coords")),
+        )
+
+        normalized, bodyparts, _bodyparts_raw = kinematics.fix_column_names(raw.copy())
+
+        assert "iliac crest x" in normalized.columns
+        assert "iliac crest y" in normalized.columns
+        assert "iliac crest likelihood" in normalized.columns
+        assert "iliac crest" in bodyparts
+
+        custom_normalized, _bodyparts, _bodyparts_raw = kinematics.fix_column_names(
+            raw.copy(),
+            {
+                "toe": "toe",
+                "mtp": "mtp",
+                "ankle": "ankle",
+                "knee": "knee",
+                "hip": "hip",
+            },
+        )
+
+        assert "iliac crest x" in custom_normalized.columns
+
+
+def test_low_confidence_filter_interpolates_parameters_and_masks_stickplot_frames():
+    import numpy as np
+    import pandas as pd
+
+    dataframe = pd.DataFrame()
+    for bodypart in ("toe", "mtp", "ankle", "knee", "hip", "iliac crest"):
+        dataframe[f"{bodypart} x"] = [0.0, 1000.0, 2.0, 3.0]
+        dataframe[f"{bodypart} y"] = [10.0, 1000.0, 12.0, 13.0]
+        dataframe[f"{bodypart} likelihood"] = [0.9, 0.9, 0.9, 0.9]
+    dataframe.loc[1, "toe likelihood"] = 0.1
+
+    filtered, valid_mask, messages = _filter_low_confidence_coordinates(dataframe, 0.5, pd)
+
+    assert valid_mask["toe"].tolist() == [True, False, True, True]
+    assert valid_mask["iliac crest"].tolist() == [True, True, True, True]
+    assert "interpolated 1/24 low-confidence marker sample(s)" in messages[0]
+    assert filtered.loc[1, "toe x"] == 1.0
+    assert filtered.loc[1, "iliac crest y"] == 1000.0
+
+    masked = _hide_low_confidence_stickplot_frames(filtered, valid_mask)
+
+    assert np.isnan(masked.loc[1, "toe x"])
+    assert masked.loc[1, "iliac crest y"] == 1000.0
+    assert masked.loc[2, "toe x"] == 2.0
+
+
+def test_alma_config_uses_separate_kinematics_likelihood_threshold():
+    assert settings_from_alma_config({"likelihood_threshold": 0.1}).likelihood_threshold == 0.5
+    assert settings_from_alma_config({"kinematics_likelihood_threshold": 0.7}).likelihood_threshold == 0.7
+
+
+def test_return_continuous_can_plot_one_valid_preview_stride(tmp_path, alma_root):
+    import pandas as pd
+
+    kinematics = _load_kinematics_functions(alma_root)
+    parameters = pd.DataFrame(
+        {
+            "stride_start (frame)": [0],
+            "stride_end (frame)": [3],
+            "cycle duration (s)": [0.025],
+        }
+    )
+    coords = pd.DataFrame(
+        {
+            "toe x": [0.0, 1.0, 2.0, 3.0],
+            "toe y": [10.0, 11.0, 10.0, 11.0],
+            "mtp x": [0.5, 1.5, 2.5, 3.5],
+            "mtp y": [9.0, 10.0, 9.0, 10.0],
+            "ankle x": [1.0, 2.0, 3.0, 4.0],
+            "ankle y": [8.0, 9.0, 8.0, 9.0],
+            "knee x": [1.5, 2.5, 3.5, 4.5],
+            "knee y": [7.0, 8.0, 7.0, 8.0],
+            "hip x": [2.0, 3.0, 4.0, 5.0],
+            "hip y": [6.0, 7.0, 6.0, 7.0],
+            "iliac crest x": [2.5, 3.5, 4.5, 5.5],
+            "iliac crest y": [5.0, 6.0, 5.0, 6.0],
+        }
+    )
+    stickplot_path = tmp_path / "single_stride.svg"
+
+    kinematics.return_continuous(
+        parameters,
+        n_continuous=1,
+        plot=True,
+        pd_dataframe_coords=coords,
+        bodyparts=["toe", "mtp", "ankle", "knee", "hip", "iliac crest"],
+        is_stance=[1, 1, 0, 0],
+        filename=str(stickplot_path),
+    )
+
+    assert stickplot_path.exists()
 
 
 def test_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path, alma_root, alma_fixtures_dir):
@@ -156,6 +306,7 @@ def _spontaneous_manual_50_px_per_cm_settings() -> AlmaSettings:
         step_height_max_cm=2.0,
         stride_length_min_cm=0.0,
         stride_length_max_cm=8.0,
+        likelihood_threshold=0.0,
         generate_stickplot=False,
     )
 
@@ -176,6 +327,7 @@ def _treadmill_real_alma_demo_settings() -> AlmaSettings:
         step_height_max_cm=5.0,
         stride_length_min_cm=0.0,
         stride_length_max_cm=20.0,
+        likelihood_threshold=0.0,
         generate_stickplot=False,
     )
 
@@ -230,3 +382,23 @@ def _assert_csv_text_equal(actual_path: Path, expected_path: Path) -> None:
 
 def _normalized_csv_text(path: Path) -> str:
     return path.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+def _write_dlc_csv(path: Path, markers: tuple[str, ...], frame_count: int = 5) -> None:
+    columns = [(marker, coord) for marker in markers for coord in ("x", "y", "likelihood")]
+    rows = [
+        ["scorer" for _marker, _coord in columns],
+        [marker for marker, _coord in columns],
+        [coord for _marker, coord in columns],
+    ]
+    for frame in range(frame_count):
+        values = []
+        for marker_index, (_marker, coord) in enumerate(columns):
+            if coord == "x":
+                values.append(str(frame + marker_index))
+            elif coord == "y":
+                values.append(str(frame * 2 + marker_index))
+            else:
+                values.append("1.0")
+        rows.append(values)
+    path.write_text("\n".join(",".join(row) for row in rows) + "\n", encoding="utf-8")

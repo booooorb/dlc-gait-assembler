@@ -209,7 +209,7 @@ def test_large_video_preview_opens_with_seek_slider(tmp_path):
     dialog.close()
 
     widget._pipeline_demo_total_videos = 1
-    widget._populate_pipeline_review_preview(1)
+    widget._populate_pipeline_review_preview(0)
     review_item = widget.pipeline_review_video_list.item(0)
     widget.pipeline_review_video_list.itemDoubleClicked.emit(review_item)
     review_dialog = widget._large_review_dialog
@@ -247,7 +247,7 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
     assert widget.pipeline_stage_cards[0].property("pipelineState") == "complete"
     assert widget.pipeline_stage_cards[1].property("pipelineState") == "active"
     assert widget.pipeline_stage_status_labels[1].text() == "Analyzing poses"
-    assert widget.pipeline_progress_bar.value() == 21
+    assert widget.pipeline_progress_bar.value() == 30
     assert widget.pipeline_video_progress_label.text() == "2 / 2 videos processed"
 
     widget.complete_pipeline()
@@ -281,16 +281,16 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
         if widget._pipeline_demo_waiting_for_review is not None:
             review_stage = widget._pipeline_demo_waiting_for_review
             review_stages.append(review_stage)
-            if review_stage == 1:
+            if review_stage == 0:
                 item_text = widget.pipeline_review_video_list.item(0).text()
                 assert "Regions:" in item_text
                 assert "Enhancements:" in item_text
-            elif review_stage == 3:
+            elif review_stage == 2:
                 assert widget.pipeline_component_tabs.count() == 2
                 assert widget.pipeline_component_tabs.tabText(0) == "Front"
                 assert widget.pipeline_component_tabs.tabText(1) == "Rear"
                 assert "_DLC.mp4" in widget.pipeline_component_video_lists["Front"].item(0).text()
-            elif review_stage == 5:
+            elif review_stage == 3:
                 assert widget.pipeline_review_preview_stack.currentWidget() is (
                     widget.pipeline_stickplot_preview
                 )
@@ -302,7 +302,7 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
         widget._advance_pipeline_demo()
 
     assert widget._pipeline_demo_complete
-    assert review_stages == [1, 3, 5]
+    assert review_stages == [0, 2, 3]
     assert widget.pipeline_progress_bar.value() == 100
     assert widget.run_pipeline_button.text() == "Back to videos"
     console = widget.automation_console.toPlainText()
@@ -328,7 +328,7 @@ def test_rejected_pipeline_check_opens_correct_settings_and_rechecks_on_resume(t
         if widget._pipeline_demo_waiting_for_review is not None:
             break
 
-    assert widget._pipeline_demo_waiting_for_review == 1
+    assert widget._pipeline_demo_waiting_for_review == 0
     assert widget.pipeline_review_title.text() == "Confirm processed video regions"
     assert not widget.pipeline_review_panel.isHidden()
     assert widget.pipeline_review_video_list.count() == 4
@@ -336,8 +336,8 @@ def test_rejected_pipeline_check_opens_correct_settings_and_rechecks_on_resume(t
     assert not widget.run_pipeline_button.isEnabled()
 
     widget._reject_pipeline_review()
-    assert widget._pipeline_demo_blocked_stage == 1
-    assert widget.pipeline_stage_cards[1].property("pipelineState") == "blocked"
+    assert widget._pipeline_demo_blocked_stage == 0
+    assert widget.pipeline_stage_cards[0].property("pipelineState") == "blocked"
     assert widget.run_pipeline_button.text() == "Resume preview"
 
     widget.pipeline_change_settings_button.click()
@@ -354,7 +354,7 @@ def test_rejected_pipeline_check_opens_correct_settings_and_rechecks_on_resume(t
         if widget._pipeline_demo_waiting_for_review is not None:
             break
 
-    assert widget._pipeline_demo_waiting_for_review == 1
+    assert widget._pipeline_demo_waiting_for_review == 0
     assert "Replaying Video processing" in widget.automation_console.toPlainText()
     widget.close()
     app.processEvents()

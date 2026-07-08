@@ -8,8 +8,11 @@ version = "0.1.0"
 description = "PySide6 desktop GUI for bulk video region, flip, and enhancement processing."
 requires-python = ">=3.10"
 dependencies = [
+    "numpy",
+    "pandas",
     "PySide6",
     "opencv-python",
+    "tables",
 ]
 
 [project.optional-dependencies]

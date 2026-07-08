@@ -8,6 +8,9 @@ from sklearn.mixture import GaussianMixture
 import matplotlib.pyplot as plt
 import os
 
+def normalize_bodypart_label(label):
+    return ' '.join(label.strip().lower().replace('_', ' ').replace('-', ' ').split())
+
 def read_file(file):
     
     pd_dataframe = pd.read_csv(file, header=[1,2])
@@ -29,16 +32,21 @@ def detect_bodypart_mapping(bodyparts_detected):
         'knee': ['knee', 'kneer', 'kneel', 'knee_r', 'knee_l'],
         'hip': ['hip', 'hipr', 'hipl', 'hip_r', 'hip_l'],
         'iliac crest': ['iliac crest', 'crest', 'crestr', 'crestl', 'crest_r', 'crest_l', 
-                        'iliac crestr', 'iliac crestl', 'iliacr', 'iliacl']
+                        'iliac crestr', 'iliac crestl', 'iliacr', 'iliacl',
+                        'l-iliac-crest', 'r-iliac-crest', 'iliac-crest', 'iliac_crest']
     }
     
     mapping = {}
     found_bodyparts = []
+    normalized_aliases = {
+        standard: {normalize_bodypart_label(alias) for alias in aliases}
+        for standard, aliases in bodypart_aliases.items()
+    }
     
     for detected in bodyparts_detected:
-        detected_lower = detected.lower()
-        for standard, aliases in bodypart_aliases.items():
-            if detected_lower in aliases:
+        detected_normalized = normalize_bodypart_label(detected)
+        for standard, aliases in normalized_aliases.items():
+            if detected_normalized in aliases:
                 mapping[detected] = standard
                 if standard not in found_bodyparts:
                     found_bodyparts.append(standard)
@@ -65,11 +73,16 @@ def fix_column_names(pd_dataframe, custom_mapping=None):
         if column.endswith(' y'):
             bodyparts_raw.append(column.strip(' y'))
     
+    auto_mapping, auto_bodyparts = detect_bodypart_mapping(bodyparts_raw)
     if custom_mapping is not None:
-        bodypart_mapping = custom_mapping
-        bodyparts_standard = list(set(custom_mapping.values()))
+        bodypart_mapping = {**auto_mapping, **custom_mapping}
+        bodyparts_standard = []
+        for bodypart in [*custom_mapping.values(), *auto_bodyparts]:
+            if bodypart not in bodyparts_standard:
+                bodyparts_standard.append(bodypart)
     else:
-        bodypart_mapping, bodyparts_standard = detect_bodypart_mapping(bodyparts_raw)
+        bodypart_mapping = auto_mapping
+        bodyparts_standard = auto_bodyparts
     
     col_names_standard = []
     for col in col_names:
@@ -373,6 +386,163 @@ def find_swing_stance(elevation_angle_change, start, end):
         stance_dur = end-start
 
     return stance_dur, (end-start-stance_dur)/(end-start), stance_dur/(end-start)
+
+
+def find_swing_stance_from_mask(is_stance, start, end, elevation_angle_change=None):
+    # Prefer the explicit stance mask from toe contact/speed. The old ALMA
+    # elevation-angle zero-crossing is kept as a fallback when the mask cannot
+    # identify a stance phase at the beginning of the stride.
+    cycle_dur = max(end - start, 1)
+    stance_slice = np.asarray(is_stance[start:end], dtype=bool)
+    if len(stance_slice) > 0 and stance_slice[0]:
+        swing_onsets = np.where(~stance_slice)[0]
+        if len(swing_onsets) > 0:
+            stance_dur = int(swing_onsets[0])
+        else:
+            stance_dur = len(stance_slice)
+        return stance_dur, (cycle_dur - stance_dur) / cycle_dur, stance_dur / cycle_dur
+
+    if elevation_angle_change is not None:
+        return find_swing_stance(elevation_angle_change, start, end)
+
+    return cycle_dur, 0, 1
+
+
+def _toe_contact_threshold(toe_y, toe_likelihood=None, likelihood_min=0.5):
+    # Image y increases downward, so the lower toe-y cluster is usually ground
+    # contact. A two-component GMM separates ground contact from lifted toe
+    # frames; percentile thresholds keep this usable when the sample is small.
+    toe_y = np.asarray(toe_y, dtype=float)
+    if toe_likelihood is None:
+        toe_likelihood = np.ones(len(toe_y), dtype=float)
+    else:
+        toe_likelihood = np.asarray(toe_likelihood, dtype=float)
+
+    n = min(len(toe_y), len(toe_likelihood))
+    toe_y = toe_y[:n]
+    toe_likelihood = toe_likelihood[:n]
+    valid = np.isfinite(toe_y) & np.isfinite(toe_likelihood) & (toe_likelihood > likelihood_min)
+    y_valid = toe_y[valid]
+    if len(y_valid) < 6:
+        # If likelihood filtering leaves too few samples, fall back to all
+        # finite toe-y values instead of failing the whole stickplot.
+        y_valid = toe_y[np.isfinite(toe_y)]
+    if len(y_valid) == 0:
+        return np.nan, np.nan
+
+    if len(y_valid) >= 8 and np.nanstd(y_valid) > 1e-6:
+        try:
+            gm = GaussianMixture(n_components=2, random_state=0).fit(y_valid.reshape(-1, 1))
+            means = gm.means_.reshape(-1)
+            ground_index = int(np.argmax(means))
+            air_index = 1 - ground_index
+            contact_threshold = float((means[ground_index] + means[air_index]) / 2)
+            ground_sd = math.sqrt(float(gm.covariances_[ground_index].reshape(-1)[0]))
+            return contact_threshold, float(means[ground_index] + ground_sd)
+        except ValueError:
+            pass
+
+    return float(np.nanpercentile(y_valid, 60)), float(np.nanpercentile(y_valid, 90))
+
+
+def _clean_short_boolean_runs(mask, min_run_frames=3):
+    # Collapse single-frame stance/swing flicker caused by DLC jitter. Real gait
+    # phases should last several frames at the acquisition rates used here.
+    cleaned = [bool(value) for value in mask]
+    if len(cleaned) < min_run_frames or min_run_frames <= 1:
+        return cleaned
+
+    run_start = 0
+    for t in range(1, len(cleaned) + 1):
+        if t == len(cleaned) or cleaned[t] != cleaned[t - 1]:
+            run_len = t - run_start
+            if run_len < min_run_frames:
+                prev_value = cleaned[run_start - 1] if run_start > 0 else None
+                next_value = cleaned[t] if t < len(cleaned) else None
+                fill_value = prev_value if prev_value is not None else next_value
+                if fill_value is not None:
+                    for k in range(run_start, t):
+                        cleaned[k] = fill_value
+            run_start = t
+    return cleaned
+
+
+def _robust_stance_segments_from_toe(toe_x, toe_y, toe_likelihood, frame_rate, likelihood_min=0.5, min_run_frames=3):
+    # Spontaneous walking is not treadmill-stabilized, so "toe x-change == 0"
+    # is too brittle. Use slow toe speed plus ground contact, with hysteresis,
+    # to estimate stance/swing for both parameter extraction and stickplots.
+    toe_x = np.asarray(toe_x, dtype=float)
+    toe_y = np.asarray(toe_y, dtype=float)
+    toe_likelihood = np.asarray(toe_likelihood, dtype=float)
+    n = min(len(toe_x), len(toe_y), len(toe_likelihood))
+    toe_x = toe_x[:n]
+    toe_y = toe_y[:n]
+    toe_likelihood = toe_likelihood[:n]
+    if n < 2:
+        return [], [], [], np.nan
+
+    speed = np.sqrt(np.diff(toe_x) ** 2 + np.diff(toe_y) ** 2) * frame_rate
+    aligned_y = toe_y[1:]
+    aligned_likelihood = toe_likelihood[1:]
+    contact_threshold, ground_y = _toe_contact_threshold(toe_y, toe_likelihood, likelihood_min)
+    if np.isfinite(contact_threshold):
+        toe_in_contact = aligned_y >= contact_threshold
+    else:
+        toe_in_contact = np.ones(len(speed), dtype=bool)
+
+    finite_speed = np.isfinite(speed)
+    good_likelihood = np.isfinite(aligned_likelihood) & (aligned_likelihood > likelihood_min)
+    threshold_values = speed[finite_speed & good_likelihood]
+    if len(threshold_values) < 4:
+        threshold_values = speed[finite_speed]
+    if len(threshold_values) == 0:
+        return [False] * len(speed), [], [], ground_y
+
+    # Hysteresis prevents rapid stance/swing toggling: enter stance only below
+    # the low speed threshold, but stay in stance until speed clears the higher
+    # threshold or the toe visibly leaves ground contact.
+    low_speed = float(np.nanpercentile(threshold_values, 35))
+    high_speed = float(np.nanpercentile(threshold_values, 70))
+    if high_speed <= low_speed:
+        high_speed = low_speed * 1.25 + 1e-6
+
+    is_stance = [False] * len(speed)
+    previous = bool(toe_in_contact[0] and speed[0] <= high_speed) if finite_speed[0] else False
+    is_stance[0] = previous
+    for t in range(1, len(speed)):
+        if not finite_speed[t] or not good_likelihood[t]:
+            current = previous
+        elif toe_in_contact[t] and speed[t] <= low_speed:
+            current = True
+        elif toe_in_contact[t] and previous and speed[t] <= high_speed:
+            current = True
+        elif (not toe_in_contact[t] and speed[t] >= low_speed) or speed[t] >= high_speed:
+            current = False
+        else:
+            current = previous
+        is_stance[t] = current
+        previous = current
+
+    is_stance = _clean_short_boolean_runs(is_stance, min_run_frames)
+    if not any(is_stance) or all(is_stance):
+        return is_stance, [], [], ground_y
+
+    # Stride boundaries are stance onsets. This matches ALMA's downstream
+    # assumption that a stride runs from one contact/stance onset to the next.
+    starts = []
+    if is_stance[0]:
+        starts.append(0)
+    for i in range(1, len(is_stance)):
+        if is_stance[i] and not is_stance[i - 1]:
+            starts.append(i)
+
+    ends = []
+    for i in range(1, len(starts)):
+        ends.append(starts[i] - 1)
+    if starts:
+        ends.append(len(is_stance))
+
+    return is_stance, starts, ends, ground_y
 
 
 def _detect_dragging_movement_cycles(pd_dataframe, frame_rate, cutoff_f, right_to_left):
@@ -752,58 +922,61 @@ def return_continuous(pd_dataframe_parameters, n_continuous=10, plot=False, pd_d
     if end_stride >= end or end-start <= n_continuous: # not enough continuous
         start_stride = start
         end_stride = end
+    return_end_stride = end_stride+1 if end_stride==start_stride else end_stride
     if end_stride==start_stride:
-        return
+        if not plot:
+            return pd_dataframe_parameters.iloc[start_stride:return_end_stride, :]
     else:
-        try:
-            if plot:
-                x_coords, y_coords = collect_filtered_coords(pd_dataframe_coords, bodyparts)
-                start_frame_val = pd_dataframe_parameters.iloc[start_stride]['stride_start (frame)']
-                end_frame_val = pd_dataframe_parameters.iloc[end_stride]['stride_end (frame)']
-                
-                # Check for NaN values (both actual NaN and string 'nan')
-                if pd.isna(start_frame_val) or pd.isna(end_frame_val) or \
-                   str(start_frame_val).lower() == 'nan' or str(end_frame_val).lower() == 'nan':
-                    # Skipping plot generation due to NaN values
-                    return pd_dataframe_parameters.iloc[start_stride:end_stride, :]
-                
-                start_frame = int(float(start_frame_val))
-                end_frame = int(float(end_frame_val))
-                
-                # Build full is_drag array from drag_masks and starts
-                is_drag = None
-                if drag_masks is not None and starts is not None and len(drag_masks) > 0:
-                    is_drag = np.zeros(len(is_stance), dtype=bool)
-                    for i, drag_mask in enumerate(drag_masks):
-                        if len(drag_mask) > 0 and i < len(starts):
-                            stride_start = starts[i]
-                            # Find the end of this stride to determine stance duration
-                            stride_end = len(is_stance)  # Default to end of data
-                            if i + 1 < len(starts):
-                                stride_end = starts[i + 1]
-                            
-                            # Find stance duration for this stride
-                            stance_dur = 0
-                            for frame in range(stride_start, min(stride_end, len(is_stance))):
-                                if is_stance[frame] == 1:
-                                    stance_dur += 1
-                                else:
-                                    break
-                            
-                            # Apply drag mask only during swing phase (after stance)
-                            swing_start = stride_start + stance_dur
-                            for j, is_dragging in enumerate(drag_mask):
-                                frame_idx = swing_start + j
-                                if frame_idx < len(is_drag) and frame_idx < stride_end:
-                                    # Only mark as dragging if it's during swing phase (not stance)
-                                    if is_stance[frame_idx] == 0:  # Swing phase
-                                        is_drag[frame_idx] = is_dragging
-                
-                continuous_stickplot(pd_dataframe_coords, bodyparts, is_stance, x_coords, y_coords, start_frame, end_frame, filename, is_drag, drag_min_consecutive_frames)
-        except (IndexError, ValueError) as e:
-            # Error in return_continuous - returning partial results
-            pass
-        return pd_dataframe_parameters.iloc[start_stride:end_stride, :]
+        pass
+    try:
+        if plot:
+            x_coords, y_coords = collect_filtered_coords(pd_dataframe_coords, bodyparts)
+            start_frame_val = pd_dataframe_parameters.iloc[start_stride]['stride_start (frame)']
+            end_frame_val = pd_dataframe_parameters.iloc[end_stride]['stride_end (frame)']
+            
+            # Check for NaN values (both actual NaN and string 'nan')
+            if pd.isna(start_frame_val) or pd.isna(end_frame_val) or \
+               str(start_frame_val).lower() == 'nan' or str(end_frame_val).lower() == 'nan':
+                # Skipping plot generation due to NaN values
+                return pd_dataframe_parameters.iloc[start_stride:return_end_stride, :]
+            
+            start_frame = int(float(start_frame_val))
+            end_frame = int(float(end_frame_val))
+            
+            # Build full is_drag array from drag_masks and starts
+            is_drag = None
+            if drag_masks is not None and starts is not None and len(drag_masks) > 0:
+                is_drag = np.zeros(len(is_stance), dtype=bool)
+                for i, drag_mask in enumerate(drag_masks):
+                    if len(drag_mask) > 0 and i < len(starts):
+                        stride_start = starts[i]
+                        # Find the end of this stride to determine stance duration
+                        stride_end = len(is_stance)  # Default to end of data
+                        if i + 1 < len(starts):
+                            stride_end = starts[i + 1]
+                        
+                        # Find stance duration for this stride
+                        stance_dur = 0
+                        for frame in range(stride_start, min(stride_end, len(is_stance))):
+                            if is_stance[frame] == 1:
+                                stance_dur += 1
+                            else:
+                                break
+                        
+                        # Apply drag mask only during swing phase (after stance)
+                        swing_start = stride_start + stance_dur
+                        for j, is_dragging in enumerate(drag_mask):
+                            frame_idx = swing_start + j
+                            if frame_idx < len(is_drag) and frame_idx < stride_end:
+                                # Only mark as dragging if it's during swing phase (not stance)
+                                if is_stance[frame_idx] == 0:  # Swing phase
+                                    is_drag[frame_idx] = is_dragging
+            
+            continuous_stickplot(pd_dataframe_coords, bodyparts, is_stance, x_coords, y_coords, start_frame, end_frame, filename, is_drag, drag_min_consecutive_frames)
+    except (IndexError, ValueError) as e:
+        # Error in return_continuous - returning partial results
+        pass
+    return pd_dataframe_parameters.iloc[start_stride:return_end_stride, :]
 
 
 def compute_limb_joint_angles(smooth_toe_x, smooth_toe_y, \
@@ -1497,7 +1670,8 @@ def extract_parameters(frame_rate, pd_dataframe, cutoff_f, bodypart, cm_speed=No
 
 
 def extract_spontaneous_parameters(frame_rate, pd_dataframe, cutoff_f, pixels_per_cm=49.143, no_outlier_filter=False, dragging_filter=False,
-                                   step_height_min_cm=0.0, step_height_max_cm=1.5, stride_length_min_cm=0.0, stride_length_max_cm=8.0, drag_clearance_cm=0.3, drag_min_consecutive_frames=4):
+                                   step_height_min_cm=0.0, step_height_max_cm=1.5, stride_length_min_cm=0.0, stride_length_max_cm=8.0, drag_clearance_cm=0.3, drag_min_consecutive_frames=4,
+                                   right_to_left='auto'):
     '''
     pd_dataframe: contains raw coordinates (not adjusted for treadmill movement, unfiltered)
     bodypart: which bodypart to use for stride estimation
@@ -1678,44 +1852,25 @@ def extract_spontaneous_parameters(frame_rate, pd_dataframe, cutoff_f, pixels_pe
                 starts = []
                 ends = []
 
-                # Try normal stride detection first
-                bodypart_x_change = np.diff(pd_dataframe[f'toe{direction} x'])
-                is_stance = [abs(i) <= 0.001 for i in bodypart_x_change]
-
-                # if direction == 'L': # toe L: direction right to left
-                #     is_stance = [i <= 0 for i in bodypart_x_change]
-                # elif direction == 'R': # toeR: direction left to right
-                #     is_stance = [i >= 0 for i in bodypart_x_change]
-                # else: # default direction left to right: right side visible
-                #     is_stance = [i >= 0 for i in bodypart_x_change]
-                for i in range(1, len(is_stance)):
-                    if is_stance[i] != is_stance[i-1]:
-                        if is_stance[i] and pd_dataframe[f'toe{direction} likelihood'][i] > 0.6:
-                            if len(starts) == 0:
-                                starts.append(i)
-                            elif abs(pd_dataframe[f'toe{direction} x'][starts[-1]] - pd_dataframe[f'toe{direction} x'][i])>20:
-                                starts.append(i)
-                for i in range(1, len(starts)):
-                    ends.append(starts[i]-1)
-
-                ends.append(len(is_stance))
+                # Replaces the old spontaneous-walking rule:
+                #   is_stance = abs(diff(toe_x)) <= 0.001
+                # That exact-zero x-change rule is very sensitive to marker
+                # jitter and makes stickplots mislabel stance as swing.
+                is_stance, starts, ends, treadmill_y = _robust_stance_segments_from_toe(
+                    smooth_toe_x,
+                    smooth_toe_y,
+                    pd_dataframe[f'toe{direction} likelihood'],
+                    frame_rate,
+                    likelihood_min=0.5,
+                )
 
                 starts_all.extend(starts)
                 ends_all.extend(ends)
 
                 is_stances.append(is_stance)
 
-                y = pd_dataframe[f'toe{direction} y'][pd_dataframe[f'toe{direction} likelihood'] > 0.5]
-                y_filt = y[(y < np.mean(y) + 1*np.std(y)) & (y > np.mean(y) - 1*np.std(y))]
-                _, b = np.histogram(y_filt, bins=100, density=True)
-                # fit 2 Gaussians to the pdf of toe y coord
-                gm = GaussianMixture(n_components=2, random_state=0).fit(np.array(b).reshape(-1,1))
-                # the Gaussian with larger mean corresponds to y coord during stance phase
-                # use this mean as threshold to detect dragging during swing phase
-                stance_threshold = max(gm.means_).item()
-                # use this plus SD (i.e., lower in space) as treadmill y coord, to calculate step height
-                ind_stance_gaussian = np.argmax(gm.means_)
-                treadmill_y = float(stance_threshold + np.sqrt(gm.covariances_[ind_stance_gaussian].item()))
+                if not np.isfinite(treadmill_y):
+                    treadmill_y = float(np.nanmedian(smooth_toe_y))
 
                 starts_included = []
                 ends_included = []
@@ -1730,7 +1885,14 @@ def extract_spontaneous_parameters(frame_rate, pd_dataframe, cutoff_f, pixels_pe
                     cycle_dur_frame = ends[i] - starts[i]
                     cycle_v = stride_len_cm / cycle_dur_frame * frame_rate # (px / frames) * (frames/s) = px/s
 
-                    stance_dur_frame, swing_perc, stance_perc = find_swing_stance(elevation_angle_change, starts[i], ends[i])
+                    # Use the same stance mask that colors the stickplot so the
+                    # exported stance/swing durations match the preview.
+                    stance_dur_frame, swing_perc, stance_perc = find_swing_stance_from_mask(
+                        is_stance,
+                        starts[i],
+                        ends[i],
+                        elevation_angle_change,
+                    )
                     swing_dur_sec = (cycle_dur_frame - stance_dur_frame) / frame_rate
 
                     if swing_dur_sec and stance_dur_frame > 0:
@@ -2177,7 +2339,9 @@ def continuous_stickplot(filt_corrected_df, bodyparts, is_stance, x_coords, y_co
     y_min = min(y_coords.loc[:, start:end].min())
     y_max = max(y_coords.loc[:, start:end].max())
     y_range = y_max - y_min
-    plt.figure(figsize = (x_range // y_range * 5, 5))
+    aspect_ratio = x_range / y_range if y_range and np.isfinite(x_range) and np.isfinite(y_range) else 1
+    figure_width = min(max(aspect_ratio * 5, 7.5), 18)
+    plt.figure(figsize = (figure_width, 5))
 
     for t in filt_corrected_df.index[start:end]:
         if t%2 == 0:
@@ -2218,11 +2382,13 @@ def continuous_stickplot(filt_corrected_df, bodyparts, is_stance, x_coords, y_co
             else:
                 color = '#FAAF40'  # Orange for swing
             
-            plt.plot('coord x', 'coord y', data=toe_mtp, c=color)
-            plt.plot('coord x', 'coord y', data=mtp_ankle, c=color)
-            plt.plot('coord x', 'coord y', data=ankle_knee, c=color)
-            plt.plot('coord x', 'coord y', data=knee_hip, c=color)
-            plt.plot('coord x', 'coord y', data=hip_crest, c=color)
+            for segment in (toe_mtp, mtp_ankle, ankle_knee, knee_hip, hip_crest):
+                # Confidence-filtered stickplots hide uncertain markers with NaN;
+                # skip incomplete limb segments so Matplotlib does not write
+                # Qt-hostile SVG paths containing non-finite values.
+                if not np.isfinite(segment[['coord x', 'coord y']].to_numpy(dtype=float)).all():
+                    continue
+                plt.plot('coord x', 'coord y', data=segment, c=color)
 
     plt.xlabel('x coordinate (pixel)')
     plt.ylabel('y coordinate (pixel)')

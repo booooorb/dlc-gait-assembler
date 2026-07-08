@@ -2,10 +2,27 @@
 
 ## Setup
 
+Create the environment, then install the application command once:
+
 ```bash
 conda env create -f GAIT_ASSEMBLER.yaml
 conda activate gait-assembler
-python gait_assembler.py
+python -m pip install -e .
+```
+
+After installation, the app can be launched from **any directory** as long as the
+`gait-assembler` environment is active:
+
+```bash
+conda activate gait-assembler
+dlc-gait-assembler
+```
+
+You do not need to navigate back to the repository before launching it. If performing
+the one-time installation from another directory, provide the repository path directly:
+
+```bash
+python -m pip install -e /path/to/dlc-gait-assembler
 ```
 
 ## Imports

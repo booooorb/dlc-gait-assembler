@@ -23,6 +23,7 @@ from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWi
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.gait_analysis.window import GaitAnalysisWidget
+from dlc_gait_assembly.gui.knee_correction import KneeCorrectionWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
@@ -38,6 +39,7 @@ HEADER_STAGE_LABELS = {
     "manual_calibration": "Calibration",
     "video_processing": "Video",
     "deeplabcut": "DeepLabCut",
+    "knee_correction": "Knee",
     "gait_parameter_analysis": "Gait",
     "pca_random_forest": "PCA/RF",
 }
@@ -73,6 +75,13 @@ TOOL_SPECS = [
         DeepLabCutWidget,
         True,
         description="Train, evaluate, and analyze pose estimation projects.",
+    ),
+    ToolSpec(
+        "knee_correction",
+        "Knee Correction",
+        KneeCorrectionWidget,
+        True,
+        description="Correct knee coordinates in paired DeepLabCut CSV and H5 labels.",
     ),
     ToolSpec(
         "gait_parameter_analysis",
@@ -183,11 +192,19 @@ class MainWindow(QMainWindow):
         self._automation_run_button = QPushButton("Run")
         self._automation_run_button.setObjectName("TopAutomationButton")
         self._automation_run_button.setProperty("activeNavigation", True)
+        self._automation_run_button.setToolTip(
+            "Open the automation run screen to select a saved profile, queue source "
+            "videos, and monitor pipeline progress."
+        )
         self._automation_run_button.clicked.connect(self._show_automated_pipeline)
         primary_layout.addWidget(self._automation_run_button)
         self._automation_profiles_button = QPushButton("Profiles")
         self._automation_profiles_button.setObjectName("TopAutomationButton")
         self._automation_profiles_button.setProperty("activeNavigation", False)
+        self._automation_profiles_button.setToolTip(
+            "Create and manage reusable automation profiles containing processing, "
+            "DeepLabCut, calibration, and gait-analysis inputs."
+        )
         self._automation_profiles_button.clicked.connect(self._show_automated_profiles)
         primary_layout.addWidget(self._automation_profiles_button)
 
@@ -199,9 +216,12 @@ class MainWindow(QMainWindow):
         manual_tools_button = QToolButton()
         manual_tools_button.setObjectName("ManualPipelineButton")
         manual_tools_button.setText("MANUAL PIPELINE  ›")
-        manual_tools_button.setToolTip("Expand backup tools and editors used to create automation inputs.")
+        manual_tools_button.setToolTip(
+            "Open the manual pipeline overview and expand its tools."
+        )
         manual_tools_button.setCheckable(True)
         manual_tools_button.toggled.connect(self._set_manual_pipeline_expanded)
+        manual_tools_button.clicked.connect(lambda _checked=False: self._show_main_menu())
         self._manual_tools_button = manual_tools_button
         primary_layout.addWidget(manual_tools_button)
 
@@ -211,13 +231,6 @@ class MainWindow(QMainWindow):
         manual_stage_layout.setContentsMargins(4, 0, 0, 0)
         manual_stage_layout.setSpacing(2)
         self._manual_stage_buttons: dict[str, QPushButton] = {}
-        overview_button = QPushButton("Overview")
-        overview_button.setObjectName("ManualStageButton")
-        overview_button.setProperty("manualStage", "manual_overview")
-        overview_button.setProperty("activeStage", False)
-        overview_button.clicked.connect(self._show_main_menu)
-        self._manual_stage_buttons["manual_overview"] = overview_button
-        manual_stage_layout.addWidget(overview_button)
         self._stage_navigation_buttons = {}
         for spec in TOOL_SPECS:
             button = QPushButton(HEADER_STAGE_LABELS[spec.id])
@@ -551,7 +564,7 @@ class MainWindow(QMainWindow):
         )
         manual_active = not self._automation_menu_active
         self._manual_tools_button.setProperty("activeManual", manual_active)
-        active_manual_stage = self._active_tool_id or ("manual_overview" if manual_active else None)
+        active_manual_stage = self._active_tool_id
         for stage_id, stage_button in self._manual_stage_buttons.items():
             stage_button.setProperty("activeStage", stage_id == active_manual_stage)
             stage_button.style().unpolish(stage_button)

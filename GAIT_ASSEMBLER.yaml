@@ -6,6 +6,8 @@ dependencies:
   - pyside6
   - opencv
   - numpy
+  - pandas
+  - pytables
   - ffmpeg
   - pytest
   - pip

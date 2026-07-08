@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -16,7 +17,8 @@ from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.app import THEME_SETTING_KEY, resolved_theme_mode
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.gait_analysis.ladder_window import LadderAnalysisWidget
-from dlc_gait_assembly.gui.gait_analysis.window import AlmaKinematicsWidget
+from dlc_gait_assembly.gui.gait_analysis.window import AlmaKinematicsWidget, _auto_bodypart_label
+from dlc_gait_assembly.gui.knee_correction import KneeCorrectionWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
 from dlc_gait_assembly.gui.main_window import MainMenuWidget, MainWindow, PartnerLogoLabel, TOOL_SPECS
@@ -51,6 +53,7 @@ def test_every_tool_workspace_uses_the_shared_workspace_contract(monkeypatch):
         ManualCalibrationWidget(),
         VideoEditorWidget(),
         DeepLabCutWidget(),
+        KneeCorrectionWidget(),
         AlmaKinematicsWidget(),
         LadderAnalysisWidget(),
         PcaRandomForestWidget(),
@@ -66,6 +69,10 @@ def test_every_tool_workspace_uses_the_shared_workspace_contract(monkeypatch):
     deep_lab_cut = widgets[2]
     assert deep_lab_cut.findChild(type(deep_lab_cut.status_label), "StatusDot") is None
     assert deep_lab_cut.findChild(type(deep_lab_cut.status_label), "StatusPill") is None
+
+    knee_correction = widgets[3]
+    assert knee_correction.settings_tabs.objectName() == "KneeCorrectionSettingsTabs"
+    assert "QTabWidget#KneeCorrectionSettingsTabs QTabBar::tab:selected" in knee_correction.styleSheet()
 
     for widget in widgets:
         release_resources = getattr(widget, "release_resources", None)
@@ -136,6 +143,53 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     menu.close()
 
 
+def test_automation_menus_keep_guidance_in_control_tooltips():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    widget = window._main_menu.automated_profiles
+
+    assert not widget.findChildren(QLabel, "AutomatedProfileDescription")
+    assert not widget.findChildren(QLabel, "ProfileStageDescription")
+    assert not widget.findChildren(QLabel, "ProfileStageTitle")
+    assert widget.automation_console.toPlainText() == "[Ready]"
+    assert widget.run_readiness_label.text() == "Preview only"
+
+    interactive_controls = [
+        window._automation_run_button,
+        window._automation_profiles_button,
+        widget.profile_selector,
+        widget.duplicate_profile_button,
+        widget.open_profile_configuration_button,
+        widget.upload_videos_button,
+        widget.remove_videos_button,
+        widget.clear_videos_button,
+        widget.video_list,
+        widget.automation_console,
+        widget.run_pipeline_button,
+        widget.back_to_automation_button,
+        widget.new_profile_button,
+        widget.configuration_profile_selector,
+        widget.profile_name,
+        widget.delete_profile_button,
+        widget.manifest_upload_button,
+        widget.calibration_upload_button,
+        widget.analysis_manifest_upload_button,
+        widget.save_profile_button,
+        widget.pipeline_review_video_list,
+        widget.pipeline_component_tabs,
+        widget.pipeline_change_settings_button,
+        widget.pipeline_needs_changes_button,
+        widget.pipeline_approve_button,
+    ]
+    assert all(control.toolTip().strip() for control in interactive_controls)
+    assert all(
+        widget.configuration_tabs.tabToolTip(index).strip()
+        for index in range(widget.configuration_tabs.count())
+    )
+    window.close()
+    app.processEvents()
+
+
 def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right():
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
@@ -150,10 +204,10 @@ def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right()
     window._manual_tools_button.click()
     assert not window._manual_stage_frame.isHidden()
     assert [button.text() for button in window._manual_stage_buttons.values()] == [
-        "Overview",
         "Calibration",
         "Video",
         "DeepLabCut",
+        "Knee",
         "Gait",
         "PCA/RF",
     ]
@@ -164,11 +218,11 @@ def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right()
     )
     assert window._automation_profiles_button.property("activeNavigation") is True
 
-    window._manual_stage_buttons["manual_overview"].click()
+    window._manual_tools_button.click()
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
     assert window._manual_tools_button.property("activeManual") is True
     assert window._manual_tools_button.isChecked()
-    assert window._manual_stage_buttons["manual_overview"].property("activeStage") is True
+    assert window._active_tool_id is None
     window.close()
 
 
@@ -252,6 +306,10 @@ def test_runway_light_mode_has_a_distinct_settings_tab_strip():
 
         assert runway.settings_tabs.objectName() == "RunwaySettingsTabs"
         assert runway.settings_tabs.tabBar().expanding()
+        mapping_index = runway.settings_tabs.indexOf(runway.mapping_tab)
+        assert mapping_index >= 0
+        assert runway.settings_tabs.tabText(mapping_index) == "Mapping"
+        assert _auto_bodypart_label(["iliac-crest"], "iliac crest") == "iliac-crest"
         assert "QTabWidget#RunwaySettingsTabs QTabBar::tab" in stylesheet
         assert f"background: {theme.PANEL};" in stylesheet
         assert f"background: {theme.SURFACE};" in stylesheet
@@ -261,6 +319,87 @@ def test_runway_light_mode_has_a_distinct_settings_tab_strip():
         theme.set_dark_mode(previous_mode)
         app.setPalette(theme.application_palette())
         app.setStyleSheet(theme.application_stylesheet())
+
+
+def test_runway_preview_uses_selected_multiview_set_and_visible_stride_count(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    captured: dict[str, object] = {}
+
+    class _Signal:
+        def connect(self, *_args):
+            pass
+
+    class _PreviewThread:
+        progress_updated = _Signal()
+        log_message = _Signal()
+        preview_ready = _Signal()
+        preview_failed = _Signal()
+        finished = _Signal()
+
+        def __init__(self, csv_files, settings, _alma_root):
+            captured["csvs"] = [Path(path).name for _label, path in csv_files]
+            captured["strides"] = settings.n_continuous_strides
+
+        def start(self):
+            captured["started"] = True
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(
+        "dlc_gait_assembly.gui.gait_analysis.window.StickPlotPreviewThread",
+        _PreviewThread,
+    )
+    widget = AlmaKinematicsWidget()
+    widget._missing_required_bodyparts = lambda _settings: []
+    paths = [
+        tmp_path / "first_left.csv",
+        tmp_path / "first_right.csv",
+        tmp_path / "first_bottom.csv",
+        tmp_path / "second_left.csv",
+        tmp_path / "second_right.csv",
+        tmp_path / "second_bottom.csv",
+    ]
+    for path in paths:
+        path.write_text(
+            "scorer,a,a,a\nbodyparts,toe,toe,toe\ncoords,x,y,likelihood\n",
+            encoding="utf-8",
+        )
+
+    widget._add_csv_paths(paths)
+    widget.file_list.setCurrentRow(4)
+    widget.continuous_strides_spin.setValue(7)
+    widget._generate_stickplot_preview()
+
+    assert len(widget._view_sets) == 2
+    assert widget.view_set_table.topLevelItemCount() == 2
+    assert widget.view_set_table.currentItem().text(0) == "second"
+    assert captured == {"csvs": ["second_left.csv", "second_right.csv"], "strides": 7, "started": True}
+    assert widget.preview_stack.maximumHeight() <= 220
+    widget.close()
+    app.processEvents()
+
+
+def test_runway_requires_complete_left_right_bottom_csv_sets(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    widget = AlmaKinematicsWidget()
+    left = tmp_path / "mouse_left.csv"
+    right = tmp_path / "mouse_right.csv"
+    for path in (left, right):
+        path.write_text(
+            "scorer,a,a,a\nbodyparts,toe,toe,toe\ncoords,x,y,likelihood\n",
+            encoding="utf-8",
+        )
+
+    widget._add_csv_paths([left, right])
+
+    assert widget._view_sets == []
+    assert not widget.preview_button.isEnabled()
+    assert "missing bottom" in widget.view_set_status_label.text().lower()
+    assert widget.view_set_table.topLevelItemCount() == 1
+    assert "Missing bottom" in widget.view_set_table.topLevelItem(0).text(4)
+    widget.close()
+    app.processEvents()
 
 
 def test_main_navigation_uses_one_primary_bar_instead_of_a_duplicate_tab_strip():
