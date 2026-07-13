@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -34,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import install_wheel_value_guard, set_tooltip
+from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.pipeline.ladder import (
     DualLadderRunResult,
@@ -253,7 +253,7 @@ class LadderAnalysisWidget(QWidget):
 
         self.run_button = QPushButton("Run ALMA ladder detection")
         self.run_button.setObjectName("PrimaryButton")
-        self.progress = QProgressBar()
+        self.progress = DynamicProgressBar(accent_role="tool_1")
         self.progress.setRange(0, 100)
         self.status_label = QLabel("Choose a DeepLabCut coordinate CSV to begin.")
         self.status_label.setWordWrap(True)
@@ -490,6 +490,7 @@ class LadderAnalysisWidget(QWidget):
             return
         output_folder = Path(self.output_edit.text()).expanduser().resolve()
         self.progress.setRange(0, 0)
+        self.progress.set_active(True)
         if self._is_dual_mode():
             self.status_label.setText("Running paired left/right ALMA ladder detection…")
             self._worker = DualLadderAnalysisThread(
@@ -516,6 +517,7 @@ class LadderAnalysisWidget(QWidget):
         self._events = list(result.events)
         self._populate_event_table()
         self.progress.setRange(0, 100)
+        self.progress.set_active(False)
         self.progress.setValue(100)
         self.status_label.setText(
             f"Detected {len(self._events)} event(s). "
@@ -527,11 +529,13 @@ class LadderAnalysisWidget(QWidget):
 
     def _detection_failed(self, message: str) -> None:
         self.progress.setRange(0, 100)
+        self.progress.set_active(False)
         self.status_label.setText("Ladder detection failed.")
         QMessageBox.critical(self, "ALMA ladder analysis failed", message)
 
     def _worker_finished(self) -> None:
         self._worker = None
+        self.progress.set_active(False)
         self._update_run_state()
 
     def _populate_event_table(self) -> None:

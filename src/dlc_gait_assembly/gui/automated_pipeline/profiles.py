@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QSlider,
     QStackedWidget,
@@ -38,7 +37,11 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.gui import theme
-from dlc_gait_assembly.services.analysis_manifests import read_analysis_manifest
+from dlc_gait_assembly.gui.shared.progress import CircularProgressIndicator, DynamicProgressBar
+from dlc_gait_assembly.services.analysis_manifests import (
+    read_analysis_manifest,
+    read_knee_analysis_manifest,
+)
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.automated_profiles import (
     AutomatedPipelineProfile,
@@ -131,6 +134,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._manifest_source: Path | None = None
         self._calibration_source: Path | None = None
         self._analysis_manifest_source: Path | None = None
+        self._knee_manifest_source: Path | None = None
         self._regions: tuple[str, ...] = ()
         self._model_sources: dict[str, Path | None] = {}
         self._video_paths: list[Path] = []
@@ -149,7 +153,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._pipeline_demo_waiting_for_review: int | None = None
         self._pipeline_demo_blocked_stage: int | None = None
         self._pipeline_demo_timer = QTimer(self)
-        self._pipeline_demo_timer.setInterval(120)
+        self._pipeline_demo_timer.setInterval(60)
         self._pipeline_demo_timer.timeout.connect(self._advance_pipeline_demo)
         self._saved_snapshot: tuple[str, ...] | None = None
         self._build_ui()
@@ -180,7 +184,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.profile_selector.setToolTip(
             "Choose the saved setup this run will use. A profile contains the video "
             "processing manifest, region-specific DeepLabCut models, calibration map, "
-            "and gait-analysis manifest."
+            "gait-analysis manifest, and optional knee-analysis manifest."
         )
         selector_row.addWidget(self.profile_selector, 1)
         self.duplicate_profile_button = QPushButton("Duplicate")
@@ -394,8 +398,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         manifest_row.addWidget(self.manifest_path_label, 1)
         self.manifest_upload_button = QPushButton("Upload manifest")
         self.manifest_upload_button.setToolTip(
-            "Choose a video-processing manifest JSON file. Its crop-region names create "
-            "the model slots in step 2."
+            "Choose a video settings or processing manifest JSON file. Its crop-region "
+            "names create the model slots in step 2."
         )
         manifest_row.addWidget(self.manifest_upload_button)
         manifest_content.addLayout(manifest_row)
@@ -407,8 +411,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.configuration_tabs.addTab(manifest_page, "1  Manifest + regions")
         self.configuration_tabs.setTabToolTip(
             0,
-            "Choose the video-processing manifest that defines cropping, trimming, "
-            "enhancement settings, and named regions.",
+            "Choose the video settings or processing manifest that defines cropping, "
+            "trimming, enhancement settings, and named regions.",
         )
 
         models_page, models_content = self._stage_page()
@@ -450,11 +454,24 @@ class AutomatedPipelineProfilesWidget(QWidget):
         )
         analysis_row.addWidget(self.analysis_manifest_upload_button)
         calibration_content.addLayout(analysis_row)
+
+        calibration_content.addSpacing(10)
+        calibration_content.addWidget(self._field_label("Knee analysis manifest"))
+        knee_row = QHBoxLayout()
+        self.knee_manifest_path_label = self._path_label()
+        knee_row.addWidget(self.knee_manifest_path_label, 1)
+        self.knee_manifest_upload_button = QPushButton("Upload knee manifest")
+        self.knee_manifest_upload_button.setToolTip(
+            "Choose the knee-analysis manifest exported by the Knee tool. It stores "
+            "the knee lengths, label choices, confidence cutoff, and correction direction."
+        )
+        knee_row.addWidget(self.knee_manifest_upload_button)
+        calibration_content.addLayout(knee_row)
         calibration_content.addStretch(1)
         self.configuration_tabs.addTab(calibration_page, "3  Gait analysis")
         self.configuration_tabs.setTabToolTip(
             2,
-            "Choose the calibration map and gait-analysis manifest produced by the manual tools.",
+            "Choose the calibration map plus gait and knee manifests produced by the manual tools.",
         )
 
         save_page, save_content = self._stage_page()
@@ -529,6 +546,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_stage_cards: list[QFrame] = []
         self.pipeline_stage_status_labels: list[QLabel] = []
         self.pipeline_stage_review_labels: list[QLabel] = []
+        self.pipeline_stage_progress_bars: list[CircularProgressIndicator] = []
         for index, stage_title in enumerate(PIPELINE_STAGE_LABELS):
             if index:
                 connector = QLabel("→")
@@ -538,14 +556,18 @@ class AutomatedPipelineProfilesWidget(QWidget):
             card = QFrame()
             card.setObjectName("PipelineStageCard")
             card.setProperty("pipelineState", "pending")
-            card.setFixedHeight(86)
+            card.setFixedHeight(116)
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(4, 4, 4, 4)
+            card_layout.setContentsMargins(4, 5, 4, 5)
             card_layout.setSpacing(2)
-            number = QLabel(str(index + 1))
-            number.setObjectName("PipelineStageNumber")
-            number.setAlignment(Qt.AlignCenter)
-            card_layout.addWidget(number)
+            stage_progress = CircularProgressIndicator(accent_role="primary")
+            stage_progress.setObjectName("PipelineStageProgress")
+            stage_progress.setRange(0, 100)
+            stage_progress.setValue(0)
+            stage_progress.setTextVisible(False)
+            stage_progress.set_center_text(str(index + 1))
+            stage_progress.setFixedSize(52, 52)
+            card_layout.addWidget(stage_progress, 0, Qt.AlignHCenter)
             name = QLabel(stage_title)
             name.setObjectName("PipelineStageName")
             name.setAlignment(Qt.AlignCenter)
@@ -567,12 +589,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_stage_cards.append(card)
             self.pipeline_stage_status_labels.append(status)
             self.pipeline_stage_review_labels.append(review_indicator)
+            self.pipeline_stage_progress_bars.append(stage_progress)
         layout.addLayout(stage_row)
 
         self.pipeline_current_stage_label = QLabel("Waiting to start")
         self.pipeline_current_stage_label.setObjectName("PipelineCurrentStage")
         layout.addWidget(self.pipeline_current_stage_label)
-        self.pipeline_progress_bar = QProgressBar()
+        self.pipeline_progress_bar = DynamicProgressBar(accent_role="primary")
         self.pipeline_progress_bar.setObjectName("PipelineProgressBar")
         self.pipeline_progress_bar.setRange(0, 100)
         self.pipeline_progress_bar.setValue(0)
@@ -668,6 +691,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.manifest_upload_button.clicked.connect(self._choose_processing_manifest)
         self.calibration_upload_button.clicked.connect(self._choose_calibration_map)
         self.analysis_manifest_upload_button.clicked.connect(self._choose_analysis_manifest)
+        self.knee_manifest_upload_button.clicked.connect(self._choose_knee_manifest)
         self.save_profile_button.clicked.connect(self._save_profile)
         self.upload_videos_button.clicked.connect(self._choose_videos)
         self.remove_videos_button.clicked.connect(self._remove_selected_videos)
@@ -756,6 +780,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 source.calibration_map,
                 source.deeplabcut_models,
                 analysis_manifest=source.analysis_manifest,
+                knee_manifest=source.knee_manifest,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not duplicate profile", str(exc))
@@ -777,6 +802,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._manifest_source = None
         self._calibration_source = None
         self._analysis_manifest_source = None
+        self._knee_manifest_source = None
         self._regions = ()
         self._model_sources = {}
         self._saved_snapshot = None
@@ -793,6 +819,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._manifest_source = profile.processing_manifest
         self._calibration_source = profile.calibration_map
         self._analysis_manifest_source = profile.analysis_manifest
+        self._knee_manifest_source = profile.knee_manifest
         self._regions = regions_from_processing_manifest(profile.processing_manifest)
         self._model_sources = {region: profile.deeplabcut_models.get(region) for region in self._regions}
         self._refresh_paths()
@@ -806,9 +833,9 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def _choose_processing_manifest(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Choose video processing manifest",
+            "Choose video settings or processing manifest",
             str(find_project_root(Path.cwd()) / "outputs" / "videos"),
-            "Processing manifest (processing_manifest.json);;JSON files (*.json);;All files (*)",
+            "Video manifest (*.json);;JSON files (*.json);;All files (*)",
         )
         if path:
             self._set_manifest_source(Path(path))
@@ -841,7 +868,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         if path:
             self._calibration_source = Path(path).expanduser().resolve()
             self._refresh_paths()
-            self.status_label.setText("Calibration selected. Add the analysis manifest below it.")
+            self.status_label.setText("Calibration selected. Add the gait manifest and optional knee manifest below it.")
 
     def _choose_analysis_manifest(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -863,6 +890,28 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._analysis_manifest_source = path
         self._refresh_paths()
         self.status_label.setText("Gait analysis settings selected. Review and save the profile.")
+        return True
+
+    def _choose_knee_manifest(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose knee analysis manifest",
+            str(find_project_root(Path.cwd()) / "outputs" / "knee_correction"),
+            "Knee analysis manifest (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if path:
+            self._set_knee_manifest_source(Path(path))
+
+    def _set_knee_manifest_source(self, path: Path) -> bool:
+        path = path.expanduser().resolve()
+        try:
+            read_knee_analysis_manifest(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Could not read knee manifest", str(exc))
+            return False
+        self._knee_manifest_source = path
+        self._refresh_paths()
+        self.status_label.setText("Knee analysis settings selected. Review and save the profile.")
         return True
 
     def _choose_videos(self) -> None:
@@ -998,7 +1047,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             return
         if not 0 <= self._pipeline_demo_stage < len(PIPELINE_STAGES):
             return
-        self._pipeline_demo_progress = min(100.0, self._pipeline_demo_progress + 8.0)
+        self._pipeline_demo_progress = min(100.0, self._pipeline_demo_progress + 4.0)
         processed_videos = None
         total_videos = None
         if self._pipeline_demo_stage == 0:
@@ -1060,6 +1109,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
             "The pipeline is paused until this preview is confirmed."
         )
         self.pipeline_progress_detail.hide()
+        self.pipeline_progress_bar.set_active(False)
+        self._set_pipeline_stage_progress(stage_index, 100, False, "ready")
         self.run_pipeline_button.setText("Awaiting confirmation")
         self.run_pipeline_button.setEnabled(False)
         self.run_pipeline_button.setToolTip(
@@ -1252,6 +1303,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         card.style().polish(card)
         self.pipeline_stage_status_labels[stage_index].setText("Changes required")
         self.pipeline_stage_review_labels[stage_index].setText("Needs changes")
+        self._set_pipeline_stage_progress(stage_index, 100, False, "error")
         self.pipeline_current_stage_label.setText("Pipeline paused for configuration changes")
         self.pipeline_progress_detail.setText(
             f"Change the {gate['setting']}, then resume the preview."
@@ -1297,6 +1349,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         if running:
             self._stop_hover_preview()
             self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
+            self.pipeline_progress_bar.set_accent_role("running")
+            self.pipeline_progress_bar.set_active(True)
             if not was_running:
                 total = len(self._video_paths)
                 self.set_pipeline_stage(
@@ -1309,6 +1363,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         else:
             self.automation_input_stack.setCurrentWidget(self.video_panel)
             self.pipeline_progress_detail.show()
+            self.pipeline_progress_bar.set_active(False)
 
     def set_pipeline_stage(
         self,
@@ -1327,6 +1382,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_progress_detail.show()
         self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
         active_status = status_text or "In progress"
+        stage_progress = None if progress is None else max(0.0, min(100.0, float(progress)))
         for index, (card, label, review_label) in enumerate(
             zip(
                 self.pipeline_stage_cards,
@@ -1336,10 +1392,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
         ):
             if index < stage_index:
                 state, text = "complete", "Complete"
+                self._set_pipeline_stage_progress(index, 100, False, "ready")
             elif index == stage_index:
                 state, text = "active", active_status
+                self._set_pipeline_stage_progress(index, stage_progress, True, "running")
             else:
                 state, text = "pending", "Waiting"
+                self._set_pipeline_stage_progress(index, 0, False, "primary")
             card.setProperty("pipelineState", state)
             label.setText(text)
             if index in PIPELINE_REVIEW_GATES:
@@ -1357,15 +1416,18 @@ class AutomatedPipelineProfilesWidget(QWidget):
             )
 
         if progress is None:
+            self.pipeline_progress_bar.set_accent_role("running")
             self.pipeline_progress_bar.setRange(0, 0)
+            self.pipeline_progress_bar.set_active(True)
             self.pipeline_progress_bar.setFormat("Working…")
             self.pipeline_progress_detail.setText(active_status)
             return
 
-        stage_progress = max(0.0, min(100.0, float(progress)))
         overall = round(((stage_index + stage_progress / 100.0) / len(PIPELINE_STAGES)) * 100)
+        self.pipeline_progress_bar.set_accent_role("running")
         self.pipeline_progress_bar.setRange(0, 100)
         self.pipeline_progress_bar.setValue(overall)
+        self.pipeline_progress_bar.set_active(True)
         self.pipeline_progress_bar.setFormat(f"Overall progress  %p%")
         self.pipeline_progress_detail.setText(
             f"{stage_title}: {stage_progress:g}% complete"
@@ -1374,23 +1436,44 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def complete_pipeline(self, status_text: str = "Pipeline complete") -> None:
         self._pipeline_running = False
         self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
-        for card, label, review_label in zip(
+        for index, (card, label, review_label) in enumerate(zip(
             self.pipeline_stage_cards,
             self.pipeline_stage_status_labels,
             self.pipeline_stage_review_labels,
-        ):
+        )):
             card.setProperty("pipelineState", "complete")
             label.setText("Complete")
             if review_label.text():
                 review_label.setText("Reviewed")
+            self._set_pipeline_stage_progress(index, 100, False, "ready")
             card.style().unpolish(card)
             card.style().polish(card)
         self.pipeline_current_stage_label.setText(status_text)
+        self.pipeline_progress_bar.set_accent_role("ready")
         self.pipeline_progress_bar.setRange(0, 100)
         self.pipeline_progress_bar.setValue(100)
+        self.pipeline_progress_bar.set_active(False)
         self.pipeline_progress_bar.setFormat("Overall progress  %p%")
         self.pipeline_progress_detail.show()
         self.pipeline_progress_detail.setText("All automated stages completed.")
+
+    def _set_pipeline_stage_progress(
+        self,
+        stage_index: int,
+        value: float | None,
+        active: bool,
+        accent_role: str,
+    ) -> None:
+        if not 0 <= stage_index < len(self.pipeline_stage_progress_bars):
+            return
+        bar = self.pipeline_stage_progress_bars[stage_index]
+        bar.set_accent_role(accent_role)
+        if value is None:
+            bar.setRange(0, 0)
+        else:
+            bar.setRange(0, 100)
+            bar.setValue(round(max(0.0, min(100.0, value))))
+        bar.set_active(active)
 
     def _start_hover_preview(self, item: QListWidgetItem) -> None:
         self._release_hover_capture()
@@ -1601,6 +1684,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.analysis_manifest_path_label,
             self._analysis_manifest_source,
         )
+        self._set_path_label(self.knee_manifest_path_label, self._knee_manifest_source)
         if self._regions:
             self.regions_label.setText("Detected regions: " + " → ".join(self._regions))
         else:
@@ -1651,6 +1735,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 {region: path for region, path in self._model_sources.items() if path is not None},
                 profile_id=self._current_profile_id,
                 analysis_manifest=self._analysis_manifest_source,
+                knee_manifest=self._knee_manifest_source,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not save profile", str(exc))
@@ -1710,6 +1795,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             *(f"{region}\0{self._model_sources.get(region) or ''}" for region in self._regions),
             str(self._calibration_source or ""),
             str(self._analysis_manifest_source or ""),
+            str(self._knee_manifest_source or ""),
         )
 
     def _is_dirty(self) -> bool:
@@ -1796,19 +1882,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     background: {theme.SURFACE};
                     border: 2px solid {theme.STATUS_ERROR};
                 }
-                QLabel#PipelineStageNumber {
-                    color: {theme.CONNECTOR};
-                    font-size: 15px;
-                    font-weight: 700;
-                }
-                QFrame#PipelineStageCard[pipelineState="active"] QLabel#PipelineStageNumber {
-                    color: {theme.PRIMARY};
-                }
-                QFrame#PipelineStageCard[pipelineState="complete"] QLabel#PipelineStageNumber {
-                    color: {theme.STATUS_READY};
-                }
-                QFrame#PipelineStageCard[pipelineState="blocked"] QLabel#PipelineStageNumber {
-                    color: {theme.STATUS_ERROR};
+                QProgressBar#PipelineStageProgress {
+                    background: transparent;
+                    border: 0;
+                    min-width: 52px;
+                    max-width: 52px;
+                    min-height: 52px;
+                    max-height: 52px;
                 }
                 QLabel#PipelineStageName {
                     color: {theme.TEXT};

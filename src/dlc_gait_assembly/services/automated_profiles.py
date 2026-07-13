@@ -7,10 +7,13 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
-from dlc_gait_assembly.services.analysis_manifests import read_analysis_manifest
+from dlc_gait_assembly.services.analysis_manifests import (
+    read_analysis_manifest,
+    read_knee_analysis_manifest,
+)
 
 
-PROFILE_FORMAT_VERSION = 3
+PROFILE_FORMAT_VERSION = 4
 
 
 def regions_from_processing_manifest(path: str | Path) -> tuple[str, ...]:
@@ -19,20 +22,20 @@ def regions_from_processing_manifest(path: str | Path) -> tuple[str, ...]:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         crop_regions = data["operations"]["crop_regions"]
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise ValueError("This is not a valid video processing manifest.") from exc
+        raise ValueError("This is not a valid video settings or processing manifest.") from exc
 
     if not isinstance(crop_regions, list):
-        raise ValueError("The video processing manifest has an invalid region list.")
+        raise ValueError("The video manifest has an invalid region list.")
     if not crop_regions:
         return ("Full frame",)
 
     regions: list[str] = []
     for index, item in enumerate(crop_regions, start=1):
         if not isinstance(item, dict):
-            raise ValueError("The video processing manifest has an invalid region entry.")
+            raise ValueError("The video manifest has an invalid region entry.")
         name = str(item.get("name", "")).strip() or f"Region {index}"
         if name in regions:
-            raise ValueError(f'The video processing manifest contains duplicate region name "{name}".')
+            raise ValueError(f'The video manifest contains duplicate region name "{name}".')
         regions.append(name)
     return tuple(regions)
 
@@ -45,6 +48,7 @@ class AutomatedPipelineProfile:
     calibration_map: Path
     deeplabcut_models: dict[str, Path]
     analysis_manifest: Path | None = None
+    knee_manifest: Path | None = None
     updated_at: str = ""
 
 
@@ -77,6 +81,7 @@ class AutomatedProfileStore:
         deeplabcut_models: dict[str, str | Path],
         profile_id: str | None = None,
         analysis_manifest: str | Path | None = None,
+        knee_manifest: str | Path | None = None,
     ) -> AutomatedPipelineProfile:
         clean_name = name.strip()
         if not clean_name:
@@ -89,8 +94,15 @@ class AutomatedProfileStore:
             if analysis_manifest is not None
             else None
         )
+        knee_source = (
+            Path(knee_manifest).expanduser().resolve()
+            if knee_manifest is not None
+            else None
+        )
         if analysis_source is not None:
             read_analysis_manifest(analysis_source)
+        if knee_source is not None:
+            read_knee_analysis_manifest(knee_source)
         regions = regions_from_processing_manifest(manifest_source)
         if set(deeplabcut_models) != set(regions):
             raise ValueError("Choose exactly one DeepLabCut model for every region in the manifest.")
@@ -102,6 +114,7 @@ class AutomatedProfileStore:
             calibration_source,
             *model_sources.values(),
             *((analysis_source,) if analysis_source is not None else ()),
+            *((knee_source,) if knee_source is not None else ()),
         )
         missing_paths = [path for path in source_paths if not path.exists()]
         if missing_paths:
@@ -126,6 +139,11 @@ class AutomatedProfileStore:
                 if analysis_source is not None
                 else None
             )
+            stored_knee = (
+                self._copy_asset(knee_source, staging_dir / "knee_manifest")
+                if knee_source is not None
+                else None
+            )
             stored_models: dict[str, Path] = {}
             for index, (region, source) in enumerate(model_sources.items(), start=1):
                 stored_models[region] = self._copy_asset(
@@ -139,6 +157,8 @@ class AutomatedProfileStore:
             }
             if stored_analysis is not None:
                 assets["analysis_manifest"] = str(stored_analysis.relative_to(staging_dir))
+            if stored_knee is not None:
+                assets["knee_manifest"] = str(stored_knee.relative_to(staging_dir))
             metadata = {
                 "format_version": PROFILE_FORMAT_VERSION,
                 "id": profile_id,
@@ -199,7 +219,7 @@ class AutomatedProfileStore:
     def _load_metadata(self, metadata_path: Path) -> AutomatedPipelineProfile:
         data = json.loads(metadata_path.read_text(encoding="utf-8"))
         format_version = data.get("format_version")
-        if format_version not in (1, 2, PROFILE_FORMAT_VERSION):
+        if format_version not in (1, 2, 3, PROFILE_FORMAT_VERSION):
             raise ValueError("Unsupported automated profile format.")
         profile_dir = metadata_path.parent.resolve()
         manifest = self._stored_path(profile_dir, data["assets"]["processing_manifest"])
@@ -208,6 +228,8 @@ class AutomatedProfileStore:
         analysis_manifest = (
             self._stored_path(profile_dir, analysis_relative) if analysis_relative else None
         )
+        knee_relative = data["assets"].get("knee_manifest")
+        knee_manifest = self._stored_path(profile_dir, knee_relative) if knee_relative else None
         if format_version == 1:
             legacy_model = self._stored_path(profile_dir, data["assets"]["deeplabcut_model"])
             models = {region: legacy_model for region in regions_from_processing_manifest(manifest)}
@@ -220,6 +242,7 @@ class AutomatedProfileStore:
             not manifest.exists()
             or not calibration.exists()
             or (analysis_manifest is not None and not analysis_manifest.exists())
+            or (knee_manifest is not None and not knee_manifest.exists())
             or not all(path.exists() for path in models.values())
         ):
             raise FileNotFoundError("A stored profile asset is missing.")
@@ -230,6 +253,7 @@ class AutomatedProfileStore:
             calibration_map=calibration,
             deeplabcut_models=models,
             analysis_manifest=analysis_manifest,
+            knee_manifest=knee_manifest,
             updated_at=str(data.get("updated_at", "")),
         )
 

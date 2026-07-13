@@ -174,6 +174,7 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
         widget.manifest_upload_button,
         widget.calibration_upload_button,
         widget.analysis_manifest_upload_button,
+        widget.knee_manifest_upload_button,
         widget.save_profile_button,
         widget.pipeline_review_video_list,
         widget.pipeline_component_tabs,

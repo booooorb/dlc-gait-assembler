@@ -13,11 +13,16 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QInputDialog
 
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
-from dlc_gait_assembly.services.analysis_manifests import write_analysis_manifest
+from dlc_gait_assembly.gui.shared.progress import CircularProgressIndicator
+from dlc_gait_assembly.services.analysis_manifests import (
+    write_analysis_manifest,
+    write_knee_analysis_manifest,
+)
 from dlc_gait_assembly.services.automated_profiles import (
     AutomatedProfileStore,
     regions_from_processing_manifest,
 )
+from dlc_gait_assembly.services.knee_correction import KneeCorrectionSettings
 from dlc_gait_assembly.services.pipeline.alma import AlmaSettings
 
 
@@ -51,10 +56,19 @@ def _profile_sources(tmp_path: Path, suffix: str = "") -> dict:
         tmp_path / f"analysis_manifest{suffix}.json",
         AlmaSettings(frame_rate=240.0),
     )
+    knee_manifest = write_knee_analysis_manifest(
+        tmp_path / f"knee_analysis_manifest{suffix}.json",
+        KneeCorrectionSettings(
+            hip_knee_length_cm=1.5,
+            knee_ankle_length_cm=1.7,
+            pixels_per_cm=42.0,
+        ),
+    )
     return {
         "analysis_manifest": analysis_manifest,
         "calibration_map": calibration,
         "deeplabcut_models": models,
+        "knee_manifest": knee_manifest,
         "processing_manifest": manifest,
     }
 
@@ -67,6 +81,7 @@ def _save(store: AutomatedProfileStore, name: str, sources: dict, profile_id: st
         sources["deeplabcut_models"],
         profile_id,
         analysis_manifest=sources["analysis_manifest"],
+        knee_manifest=sources["knee_manifest"],
     )
 
 
@@ -85,6 +100,8 @@ def test_profile_store_copies_replaces_and_deletes_owned_assets(tmp_path):
     assert profile.processing_manifest.name == "processing_manifest.json"
     assert profile.analysis_manifest is not None
     assert profile.analysis_manifest.name == "analysis_manifest.json"
+    assert profile.knee_manifest is not None
+    assert profile.knee_manifest.name == "knee_analysis_manifest.json"
     assert first_sources["calibration_map"].exists()
     assert all(path.exists() for path in first_sources["deeplabcut_models"].values())
     assert [saved.id for saved in store.list_profiles()] == [profile.id]
@@ -126,6 +143,7 @@ def test_profile_widget_requires_confirmation_before_replace_or_delete(tmp_path,
         widget._set_model_source(region, path)
     widget._calibration_source = first_sources["calibration_map"]
     assert widget._set_analysis_manifest_source(first_sources["analysis_manifest"])
+    assert widget._set_knee_manifest_source(first_sources["knee_manifest"])
     widget._refresh_paths()
     widget._save_profile()
     profile_id = widget._current_profile_id
@@ -234,6 +252,12 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
 
     assert widget.automation_input_stack.currentWidget() is widget.pipeline_status_panel
     assert widget.pipeline_stage_cards[0].property("pipelineState") == "active"
+    assert len(widget.pipeline_stage_progress_bars) == len(widget.pipeline_stage_cards)
+    assert all(
+        isinstance(bar, CircularProgressIndicator)
+        for bar in widget.pipeline_stage_progress_bars
+    )
+    assert widget.pipeline_stage_progress_bars[0].value() == 0
     assert widget.pipeline_video_progress_label.text() == "0 / 2 videos processed"
 
     widget.set_pipeline_stage(
@@ -247,6 +271,8 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
     assert widget.pipeline_stage_cards[0].property("pipelineState") == "complete"
     assert widget.pipeline_stage_cards[1].property("pipelineState") == "active"
     assert widget.pipeline_stage_status_labels[1].text() == "Analyzing poses"
+    assert widget.pipeline_stage_progress_bars[0].value() == 100
+    assert widget.pipeline_stage_progress_bars[1].value() == 50
     assert widget.pipeline_progress_bar.value() == 30
     assert widget.pipeline_video_progress_label.text() == "2 / 2 videos processed"
 
@@ -256,6 +282,7 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
         card.property("pipelineState") == "complete"
         for card in widget.pipeline_stage_cards
     )
+    assert all(bar.value() == 100 for bar in widget.pipeline_stage_progress_bars)
     widget.set_pipeline_running(False)
     assert widget.automation_input_stack.currentWidget() is widget.video_panel
     widget.close()
@@ -338,6 +365,7 @@ def test_rejected_pipeline_check_opens_correct_settings_and_rechecks_on_resume(t
     widget._reject_pipeline_review()
     assert widget._pipeline_demo_blocked_stage == 0
     assert widget.pipeline_stage_cards[0].property("pipelineState") == "blocked"
+    assert widget.pipeline_stage_progress_bars[0].value() == 100
     assert widget.run_pipeline_button.text() == "Resume preview"
 
     widget.pipeline_change_settings_button.click()

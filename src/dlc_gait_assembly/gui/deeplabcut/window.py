@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
+from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.services.imports import (
     deeplabcut_environment_file,
     deeplabcut_install_command,
@@ -69,6 +70,14 @@ class DeepLabCutWidget(QWidget):
             )
             return False
         return True
+
+    def release_resources(self) -> None:
+        if self._probe_process is not None:
+            self._probe_process.terminate()
+            if not self._probe_process.waitForFinished(750):
+                self._probe_process.kill()
+                self._probe_process.waitForFinished(750)
+            self._probe_process = None
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -127,6 +136,12 @@ class DeepLabCutWidget(QWidget):
         toolbar_layout.addWidget(self.paper_button)
 
         root.addWidget(toolbar)
+        self.progress = DynamicProgressBar(accent_role="running")
+        self.progress.set_indeterminate_animated(False)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("Ready")
+        root.addWidget(self.progress)
 
         terminal_frame = QFrame()
         terminal_frame.setObjectName("TerminalFrame")
@@ -208,6 +223,7 @@ class DeepLabCutWidget(QWidget):
         self._process.finished.connect(self._on_process_finished)
 
         self._set_running(True)
+        self._set_progress_busy(f"Running {display_command}")
         self._process.start()
 
     def _terminal_command_info(self, command: str) -> tuple[str, str] | None:
@@ -258,6 +274,7 @@ class DeepLabCutWidget(QWidget):
             self._set_status("Running", "running")
         else:
             self._set_environment_status()
+            self._set_progress_idle()
         self.status_label.setProperty("running", running)
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
@@ -299,6 +316,7 @@ class DeepLabCutWidget(QWidget):
         self._probe_process.errorOccurred.connect(self._on_probe_error)
         self._probe_process.finished.connect(self._on_probe_finished)
         self._set_status("Checking", "other")
+        self._set_progress_busy("Checking DeepLabCut environment")
         self._sync_environment_buttons()
         self._probe_process.start()
 
@@ -313,6 +331,7 @@ class DeepLabCutWidget(QWidget):
     def _set_deeplabcut_available(self, available: bool) -> None:
         self._deeplabcut_available = available
         self._set_environment_status()
+        self._set_progress_idle()
         self._sync_environment_buttons()
 
     def _read_stdout(self) -> None:
@@ -333,9 +352,11 @@ class DeepLabCutWidget(QWidget):
             self._running_command = None
             self._set_running(False)
             self._set_status("Launch failed.", "error")
+            self._set_progress_error("Launch failed")
             self._terminal.append_prompt(self._cwd)
         else:
             self._set_status("Process error.", "error")
+            self._set_progress_error("Process error")
 
     def _on_process_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         if exit_status == QProcess.NormalExit:
@@ -346,6 +367,10 @@ class DeepLabCutWidget(QWidget):
         self._process = None
         self._running_command = None
         self._set_running(False)
+        if exit_status == QProcess.NormalExit and exit_code == 0:
+            self._set_progress_done("Command complete")
+        else:
+            self._set_progress_error("Command stopped")
         self._terminal.append_prompt(self._cwd)
         if completed_command in {DEEPLABCUT_INSTALL_COMMAND, DEEPLABCUT_CHECK_COMMAND}:
             QTimer.singleShot(0, self._check_deeplabcut_available)
@@ -355,6 +380,31 @@ class DeepLabCutWidget(QWidget):
             return
         self._terminal.append_output("^C\n")
         self._process.terminate()
+
+    def _set_progress_busy(self, text: str) -> None:
+        self.progress.setRange(0, 0)
+        self.progress.setFormat(text)
+        self.progress.set_active(True)
+
+    def _set_progress_idle(self) -> None:
+        if self._is_process_running() or self._probe_process is not None:
+            return
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("Ready" if self._deeplabcut_available else "Idle")
+        self.progress.set_active(False)
+
+    def _set_progress_done(self, text: str) -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100)
+        self.progress.setFormat(text)
+        self.progress.set_active(False)
+
+    def _set_progress_error(self, text: str) -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat(text)
+        self.progress.set_active(False)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(

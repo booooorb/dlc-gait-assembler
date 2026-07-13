@@ -403,8 +403,44 @@ class RegionPreviewView(QGraphicsView):
                 )
         return tuple(regions)
 
+    def set_crop_regions(self, regions: tuple[CropRegion, ...]) -> None:
+        self._crop_norms.clear()
+        self._crop_names.clear()
+        self._crop_flip_horizontal.clear()
+        self._crop_flip_vertical.clear()
+        self._crop_flip_horizontal_video_paths.clear()
+        self._next_crop_id = 1
+        for region in regions:
+            if not region.rect.is_usable():
+                continue
+            region_id = self._next_crop_id
+            self._next_crop_id += 1
+            self._crop_norms[region_id] = region.rect.clamped()
+            self._crop_names[region_id] = region.name.strip() or self._default_crop_name(region_id)
+            self._crop_flip_horizontal[region_id] = bool(region.flip_horizontal)
+            self._crop_flip_vertical[region_id] = bool(region.flip_vertical)
+            self._crop_flip_horizontal_video_paths[region_id] = (
+                None
+                if region.flip_horizontal_video_paths is None
+                else frozenset(_normalize_path(path) for path in region.flip_horizontal_video_paths)
+            )
+        self._render()
+        self._emit_regions()
+
     def invert_regions(self) -> list[NormalizedRect]:
         return list(self._invert_norms.values())
+
+    def set_invert_regions(self, regions: tuple[NormalizedRect, ...]) -> None:
+        self._invert_norms.clear()
+        self._next_invert_id = 1
+        for region in regions:
+            if not region.is_usable():
+                continue
+            region_id = self._next_invert_id
+            self._next_invert_id += 1
+            self._invert_norms[region_id] = region.clamped()
+        self._render()
+        self._emit_regions()
 
     def invert_region(self) -> NormalizedRect | None:
         regions = self.invert_regions()

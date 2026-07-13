@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QSlider,
     QTabWidget,
@@ -28,6 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
+from dlc_gait_assembly.services.analysis_manifests import write_knee_analysis_manifest
 from dlc_gait_assembly.services.knee_correction import (
     CoordinateFilePair,
     KneeCorrectionResult,
@@ -236,7 +237,7 @@ class KneeCorrectionWidget(QWidget):
         workspace_row.addLayout(right_column, 2)
         root.addLayout(workspace_row, 1)
 
-        self.progress = QProgressBar()
+        self.progress = DynamicProgressBar(accent_role="tool_3")
         self.progress.setRange(0, 100)
         root.addWidget(self.progress)
         self.log = QPlainTextEdit()
@@ -248,6 +249,11 @@ class KneeCorrectionWidget(QWidget):
         self.status_label = QLabel("Add matching CSV, H5, and video files.")
         self.status_label.setObjectName("PreviewTitle")
         action_row.addWidget(self.status_label, 1)
+        self.export_manifest_button = QPushButton("Export knee manifest")
+        self.export_manifest_button.setToolTip(
+            "Export the current knee lengths, labels, confidence cutoff, direction, and calibration scale."
+        )
+        action_row.addWidget(self.export_manifest_button)
         self.run_button = QPushButton("Correct knee labels")
         self.run_button.setObjectName("PrimaryButton")
         action_row.addWidget(self.run_button)
@@ -273,6 +279,7 @@ class KneeCorrectionWidget(QWidget):
         self.hip_knee_length.valueChanged.connect(self._preview_inputs_changed)
         self.knee_ankle_length.valueChanged.connect(self._preview_inputs_changed)
         self.likelihood_threshold.valueChanged.connect(self._preview_inputs_changed)
+        self.export_manifest_button.clicked.connect(self._export_manifest)
         self.run_button.clicked.connect(self._run)
         self.previous_frame_shortcut = QShortcut(QKeySequence(Qt.Key_Left), self.knee_preview)
         self.previous_frame_shortcut.setContext(Qt.WidgetShortcut)
@@ -788,6 +795,33 @@ class KneeCorrectionWidget(QWidget):
             knee_direction=str(self.knee_direction_combo.currentData() or "auto"),
         )
 
+    def _export_manifest(self) -> None:
+        if self._pixels_per_cm is None:
+            QMessageBox.warning(
+                self,
+                "Calibration required",
+                "Import a calibration map before exporting a knee analysis manifest.",
+            )
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export knee analysis manifest",
+            str(self._default_output_folder() / "knee_analysis_manifest.json"),
+            "Knee analysis manifest (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not destination:
+            return
+        path = Path(destination).expanduser()
+        if not path.suffix:
+            path = path.with_suffix(".json")
+        try:
+            saved = write_knee_analysis_manifest(path, self._settings())
+        except OSError as exc:
+            QMessageBox.critical(self, "Could not export knee analysis manifest", str(exc))
+            return
+        self.log.appendPlainText(f"[Manifest] Exported {saved}")
+        QMessageBox.information(self, "Knee analysis manifest exported", f"Saved:\n{saved}")
+
     def _run(self) -> None:
         if not self._pairs or not all(pair.is_paired for pair in self._pairs):
             QMessageBox.warning(
@@ -819,6 +853,7 @@ class KneeCorrectionWidget(QWidget):
         ) != QMessageBox.Yes:
             return
         self.progress.setValue(0)
+        self.progress.set_active(True)
         self.log.clear()
         self._worker = KneeCorrectionThread(
             tuple(self._pairs), output_folder, self._settings()
@@ -836,6 +871,7 @@ class KneeCorrectionWidget(QWidget):
 
     def _completed(self, success: bool, message: str) -> None:
         self.status_label.setText(message)
+        self.progress.set_active(False)
         if success:
             self.progress.setValue(100)
             QMessageBox.information(self, "Knee correction complete", message)
@@ -844,6 +880,7 @@ class KneeCorrectionWidget(QWidget):
 
     def _worker_finished(self) -> None:
         self._worker = None
+        self.progress.set_active(False)
         self._update_run_state()
 
     def can_close(self, parent=None) -> bool:

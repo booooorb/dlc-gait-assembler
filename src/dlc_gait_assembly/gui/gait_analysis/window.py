@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -42,6 +41,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, install_wheel_value_guard, set_tooltip
+from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.services.analysis_manifests import write_analysis_manifest
 from dlc_gait_assembly.services.pipeline.alma import (
     AlmaSettings,
@@ -535,7 +535,7 @@ class AlmaKinematicsWidget(QWidget):
         self.status_label = QLabel("Select matched left/right/bottom CSV files to begin.")
         self.status_label.setObjectName("PreviewTitle")
         right_layout.addWidget(self.status_label)
-        self.progress = QProgressBar()
+        self.progress = DynamicProgressBar(accent_role="tool_1")
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         right_layout.addWidget(self.progress)
@@ -1158,6 +1158,7 @@ class AlmaKinematicsWidget(QWidget):
         self._stickplot_preview_ready = False
         self._preview_invalidated_while_running = False
         self.progress.setValue(0)
+        self.progress.set_active(True)
         self.log.clear()
         preview_inputs = self._preview_inputs()
         preview_names = ", ".join(path.name for _label, path in preview_inputs)
@@ -1230,11 +1231,13 @@ class AlmaKinematicsWidget(QWidget):
         self.preview_placeholder.setText("Stick-plot preview could not be generated.")
         self.preview_stack.setCurrentWidget(self.preview_placeholder)
         self.status_label.setText("Stick-plot preview failed.")
+        self.progress.set_active(False)
         self._append_log(message)
         QMessageBox.critical(self, "Stick-plot preview failed", message)
 
     def _preview_worker_finished(self) -> None:
         self._preview_worker = None
+        self.progress.set_active(False)
         self._update_run_state()
 
     def _run_analysis(self) -> None:
@@ -1259,6 +1262,7 @@ class AlmaKinematicsWidget(QWidget):
             QMessageBox.warning(self, "No body part mapping", "Select at least one body part mapping or turn off custom mapping.")
             return
         self.progress.setValue(0)
+        self.progress.set_active(True)
         self.log.clear()
         self.status_label.setText("Running ALMA gait analysis...")
         self.run_button.setEnabled(False)
@@ -1416,6 +1420,7 @@ class AlmaKinematicsWidget(QWidget):
 
     def _analysis_completed(self, success: bool, message: str) -> None:
         self.status_label.setText(message)
+        self.progress.set_active(False)
         self.progress.setValue(100 if success else self.progress.value())
         if success:
             QMessageBox.information(self, "ALMA gait analysis complete", message)
@@ -1424,6 +1429,7 @@ class AlmaKinematicsWidget(QWidget):
 
     def _worker_finished(self) -> None:
         self._worker = None
+        self.progress.set_active(False)
         self._update_run_state()
 
     def _default_output_root(self) -> Path:
@@ -2026,23 +2032,32 @@ def _qt_safe_svg_bytes(svg_data: bytes) -> bytes:
         for element in root.iter()
         if (element_id := element.attrib.get("id"))
     }
+    unusable_ids = {
+        element.attrib["id"]
+        for element in root.iter()
+        if _xml_local_name(element.tag) == "path"
+        and element.attrib.get("id")
+        and not element.attrib.get("d", "").strip()
+    }
     removed = False
     for element in list(root.iter()):
         parent = parent_by_child.get(element)
         if parent is None:
             continue
         tag = _xml_local_name(element.tag)
-        if tag == "path" and _svg_path_has_nonfinite_values(element.attrib.get("d", "")):
-            parent.remove(element)
-            removed = True
-            continue
+        if tag == "path":
+            path_data = element.attrib.get("d", "")
+            if not path_data.strip() or _svg_path_has_nonfinite_values(path_data):
+                parent.remove(element)
+                removed = True
+                continue
         if tag == "use":
             href = (
                 element.attrib.get("{http://www.w3.org/1999/xlink}href")
                 or element.attrib.get("href")
                 or ""
             )
-            if href.startswith("#") and href[1:] not in defined_ids:
+            if href.startswith("#") and (href[1:] not in defined_ids or href[1:] in unusable_ids):
                 parent.remove(element)
                 removed = True
     if not removed:

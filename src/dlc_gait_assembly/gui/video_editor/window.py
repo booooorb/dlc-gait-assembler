@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QSplitter,
     QToolButton,
@@ -31,10 +30,15 @@ from dlc_gait_assembly.services.domain.trimming import TrimRange
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
+from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 from dlc_gait_assembly.gui.video_editor.settings_panel import OperationSettingsPanel
 from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
 from dlc_gait_assembly.gui.video_editor.workers import VideoProcessingThread
+from dlc_gait_assembly.services.analysis_manifests import (
+    video_settings_from_manifest,
+    write_video_settings_manifest,
+)
 from dlc_gait_assembly.services.video_processing import ProcessingOptions, ffmpeg_available
 from dlc_gait_assembly.services.output_documents import write_video_processing_session_documents
 from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
@@ -156,12 +160,29 @@ class VideoEditorWidget(QWidget):
         self.settings_panel = OperationSettingsPanel(self.preview)
         left_layout.addWidget(self.settings_panel, 4)
 
+        manifest_row = QHBoxLayout()
+        self.import_video_manifest_button = QPushButton("Upload settings manifest")
+        self.import_video_manifest_button.setObjectName("ImportVideoManifestButton")
+        set_tooltip(
+            self.import_video_manifest_button,
+            "Apply crop, enhancement, inversion, and matching trim settings from a video settings manifest.",
+        )
+        self.export_video_manifest_button = QPushButton("Export settings manifest")
+        self.export_video_manifest_button.setObjectName("ExportVideoManifestButton")
+        set_tooltip(
+            self.export_video_manifest_button,
+            "Export the current video settings without processing source videos.",
+        )
+        manifest_row.addWidget(self.import_video_manifest_button)
+        manifest_row.addWidget(self.export_video_manifest_button)
+        left_layout.addLayout(manifest_row)
+
         self.process_button = QPushButton("Process files")
         self.process_button.setObjectName("PrimaryButton")
         set_tooltip(self.process_button, "Process the uploaded videos with the selected operations.", "Ctrl+R")
         left_layout.addWidget(self.process_button)
 
-        self.progress = QProgressBar()
+        self.progress = DynamicProgressBar(accent_role="tool_2")
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
         self.progress.setFormat("")
@@ -228,6 +249,8 @@ class VideoEditorWidget(QWidget):
         self.remove_videos_button.clicked.connect(self._remove_selected_videos)
         self.clear_videos_button.clicked.connect(self._clear_videos)
         self.video_list.currentItemChanged.connect(self._load_selected_video)
+        self.import_video_manifest_button.clicked.connect(self._import_video_manifest)
+        self.export_video_manifest_button.clicked.connect(self._export_video_manifest)
         self.crop_tool_button.clicked.connect(lambda: self._set_active_tool("crop"))
         self.enhancements_tool_button.clicked.connect(lambda: self._set_active_tool("enhancements"))
         self.trim_tool_button.clicked.connect(lambda: self._set_active_tool("trim"))
@@ -725,11 +748,7 @@ class VideoEditorWidget(QWidget):
             QMessageBox.information(self, "No videos", "Add one or more videos before processing.")
             return
 
-        options = ProcessingOptions(
-            crop_enabled=bool(self.preview.crop_regions()),
-            crop_regions=self.preview.crop_regions(),
-            enhancements=self.preview.enhancement_settings(),
-        )
+        options = self._current_processing_options()
         trim_ranges_by_path = self._trim_ranges_for_processing(videos)
 
         if not ffmpeg_available():
@@ -752,6 +771,7 @@ class VideoEditorWidget(QWidget):
         self.progress.setRange(0, len(videos))
         self.progress.setValue(0)
         self.progress.setFormat("%v / %m")
+        self.progress.set_active(True)
         self._processing_errors = []
         self._processing_failures = []
         self._processing_outputs = []
@@ -782,6 +802,7 @@ class VideoEditorWidget(QWidget):
 
     def _on_processing_completed(self, session_dir: str) -> None:
         self.progress.setFormat("Done")
+        self.progress.set_active(False)
         self._set_processing_enabled(True)
         if self._processing_thread is not None:
             self._processing_thread.deleteLater()
@@ -820,6 +841,17 @@ class VideoEditorWidget(QWidget):
     def _video_paths(self) -> list[Path]:
         return [Path(self.video_list.item(index).data(Qt.UserRole)) for index in range(self.video_list.count())]
 
+    def _current_processing_options(self) -> ProcessingOptions:
+        crop_regions = self.preview.crop_regions()
+        invert_regions = tuple(self.preview.invert_regions())
+        return ProcessingOptions(
+            crop_enabled=bool(crop_regions),
+            crop_regions=crop_regions,
+            invert_enabled=bool(invert_regions),
+            invert_rects=invert_regions,
+            enhancements=self.preview.enhancement_settings(),
+        )
+
     def _trim_ranges_for_processing(self, videos: list[Path]) -> dict[str, tuple[TrimRange, ...]]:
         ranges_by_path = {}
         for path in videos:
@@ -827,6 +859,79 @@ class VideoEditorWidget(QWidget):
             if ranges:
                 ranges_by_path[str(path)] = tuple(sorted(ranges, key=lambda trim: (trim.start_ms, trim.end_ms)))
         return ranges_by_path
+
+    def _trim_ranges_for_manifest(self) -> dict[str, tuple[TrimRange, ...]]:
+        ranges_by_video: dict[str, tuple[TrimRange, ...]] = {}
+        for path_key, ranges in self._trim_ranges_by_video.items():
+            trims = tuple(sorted(ranges, key=lambda trim: (trim.start_ms, trim.end_ms)))
+            if not trims:
+                continue
+            path = Path(path_key)
+            ranges_by_video[str(path)] = trims
+            ranges_by_video.setdefault(path.name, trims)
+        return ranges_by_video
+
+    def _export_video_manifest(self) -> None:
+        destination, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export video settings manifest",
+            str(self._default_output_root() / "video_settings_manifest.json"),
+            "Video settings manifest (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not destination:
+            return
+        path = Path(destination).expanduser()
+        if not path.suffix:
+            path = path.with_suffix(".json")
+        try:
+            saved = write_video_settings_manifest(
+                path,
+                self._current_processing_options(),
+                self._trim_ranges_for_manifest(),
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Could not export video settings manifest", str(exc))
+            return
+        QMessageBox.information(self, "Video settings manifest exported", f"Saved:\n{saved}")
+
+    def _import_video_manifest(self) -> None:
+        source, _ = QFileDialog.getOpenFileName(
+            self,
+            "Upload video settings manifest",
+            str(self._default_output_root()),
+            "Video settings manifest (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not source:
+            return
+        try:
+            options, trim_ranges_by_video = video_settings_from_manifest(source)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Could not upload video settings manifest", str(exc))
+            return
+        self.preview.set_crop_regions(options.crop_regions)
+        self.preview.set_invert_regions(options.invert_rects)
+        self.preview.set_enhancements(options.enhancements)
+        self._apply_imported_trim_ranges(trim_ranges_by_video)
+        self.settings_panel.refresh()
+        self._refresh_trim_context()
+        self._update_process_state()
+        QMessageBox.information(self, "Video settings manifest uploaded", "Video settings were applied.")
+
+    def _apply_imported_trim_ranges(self, trim_ranges_by_video: dict[str, tuple[TrimRange, ...]]) -> None:
+        self._trim_ranges_by_video.clear()
+        self._active_trim_range_by_video.clear()
+        videos = self._video_paths()
+        for video in videos:
+            keys = (str(video.expanduser().resolve()), str(video), video.name)
+            for key in keys:
+                ranges = trim_ranges_by_video.get(key)
+                if ranges:
+                    self._trim_ranges_by_video[str(video)] = list(ranges)
+                    break
+        if len(videos) == 1 and not self._trim_ranges_by_video and len(trim_ranges_by_video) == 1:
+            ranges = next(iter(trim_ranges_by_video.values()))
+            if ranges:
+                self._trim_ranges_by_video[str(videos[0])] = list(ranges)
 
     def _confirm_action(self, title: str, text: str, details: str = "") -> bool:
         message = QMessageBox(self)
@@ -848,6 +953,8 @@ class VideoEditorWidget(QWidget):
         self.remove_videos_button.setEnabled(enabled)
         self.clear_videos_button.setEnabled(enabled)
         self.process_button.setEnabled(enabled and self.video_list.count() > 0)
+        self.import_video_manifest_button.setEnabled(enabled)
+        self.export_video_manifest_button.setEnabled(enabled)
         self.crop_tool_button.setEnabled(enabled)
         self.enhancements_tool_button.setEnabled(enabled)
         self.trim_tool_button.setEnabled(enabled)
