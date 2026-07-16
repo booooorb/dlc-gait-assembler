@@ -372,26 +372,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.run_readiness_label = QLabel("Ready")
         self.run_readiness_label.setObjectName("ProfileStatusLabel")
         run_row.addWidget(self.run_readiness_label, 1)
-        self.skip_knee_correction_button = QPushButton("Skip knee correction")
-        self.skip_knee_correction_button.setObjectName("PipelineOptionButton")
-        self.skip_knee_correction_button.setCheckable(True)
-        self.skip_knee_correction_button.setAccessibleName(
-            "Exclude knee correction from this run"
-        )
-        self.skip_knee_correction_button.setToolTip(
-            "Use the DeepLabCut coordinates directly, even when the profile has a knee manifest."
-        )
-        run_row.addWidget(self.skip_knee_correction_button)
-        self.skip_gait_analysis_button = QPushButton("Skip gait analysis")
-        self.skip_gait_analysis_button.setObjectName("PipelineOptionButton")
-        self.skip_gait_analysis_button.setCheckable(True)
-        self.skip_gait_analysis_button.setAccessibleName(
-            "Exclude gait analysis from this run"
-        )
-        self.skip_gait_analysis_button.setToolTip(
-            "Finish after DeepLabCut or knee correction without stickplots or gait parameters."
-        )
-        run_row.addWidget(self.skip_gait_analysis_button)
         self.open_pipeline_output_button = QPushButton("Open outputs")
         self.open_pipeline_output_button.setObjectName("OpenPipelineOutputButton")
         self.open_pipeline_output_button.setToolTip(str(self._automated_output_root))
@@ -997,7 +977,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.include_knee_correction_button.setChecked(False)
         del blockers
         self._apply_profile_stage_option_state()
-        self._sync_run_options_to_profile(None)
         self._refresh_paths()
         self._render_model_rows()
         self.delete_profile_button.setEnabled(False)
@@ -1022,7 +1001,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.include_knee_correction_button.setChecked(profile.knee_correction_enabled)
         del blockers
         self._apply_profile_stage_option_state()
-        self._sync_run_options_to_profile(profile)
         self._refresh_paths()
         self._render_model_rows()
         self._saved_snapshot = self._snapshot()
@@ -1101,40 +1079,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.knee_manifest_upload_button,
         ):
             widget.setEnabled(knee_enabled)
-
-    def _sync_run_options_to_profile(
-        self,
-        profile: AutomatedPipelineProfile | None,
-    ) -> None:
-        blockers = (
-            QSignalBlocker(self.skip_knee_correction_button),
-            QSignalBlocker(self.skip_gait_analysis_button),
-        )
-        if profile is None:
-            self.skip_knee_correction_button.setChecked(False)
-            self.skip_gait_analysis_button.setChecked(False)
-        else:
-            self.skip_knee_correction_button.setChecked(
-                not profile.knee_correction_enabled
-            )
-            self.skip_gait_analysis_button.setChecked(not profile.gait_analysis_enabled)
-        del blockers
-        self._refresh_run_option_enabled_state(profile)
-
-    def _refresh_run_option_enabled_state(
-        self,
-        profile: AutomatedPipelineProfile | None = None,
-    ) -> None:
-        if profile is None:
-            profile = self._profiles.get(self._current_profile_id or "")
-        profile_knee_enabled = profile is None or profile.knee_correction_enabled
-        profile_gait_enabled = profile is None or profile.gait_analysis_enabled
-        self.skip_knee_correction_button.setEnabled(
-            not self._pipeline_running and profile_knee_enabled
-        )
-        self.skip_gait_analysis_button.setEnabled(
-            not self._pipeline_running and profile_gait_enabled
-        )
 
     def _choose_analysis_manifest(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -1328,20 +1272,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._append_console(
             f'[Pipeline] Running profile "{profile.name}" on {len(self._video_paths)} video(s).'
         )
-        excluded = []
-        if self.skip_knee_correction_button.isChecked():
-            excluded.append("knee correction")
-        if self.skip_gait_analysis_button.isChecked():
-            excluded.append("gait analysis")
-        if excluded:
-            self._append_console(f"[Pipeline] Excluding {', '.join(excluded)} from this run.")
-
         worker = AutomatedPipelineWorker(
             profile,
             list(self._video_paths),
             self._project_root,
-            enable_knee_correction=not self.skip_knee_correction_button.isChecked(),
-            enable_gait_analysis=not self.skip_gait_analysis_button.isChecked(),
             parent=self,
         )
         self._pipeline_worker = worker
@@ -1987,7 +1921,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
         """Swap the video queue for pipeline progress without starting any work."""
         was_running = self._pipeline_running
         self._pipeline_running = running
-        self._refresh_run_option_enabled_state()
         if running:
             self._set_pipeline_overview_compact(True)
             self._stop_hover_preview()
@@ -2820,26 +2753,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 }
                 QLabel#PipelineLogState[logState="complete"] {
                     color: {theme.STATUS_READY};
-                }
-                QPushButton#PipelineOptionButton {
-                    background: {theme.SURFACE};
-                    border: 1px solid {theme.BORDER};
-                    color: {theme.TEXT};
-                    font-size: 12px;
-                    padding: 8px 11px;
-                }
-                QPushButton#PipelineOptionButton:hover {
-                    background: {theme.PANEL};
-                    border-color: {theme.CONNECTOR};
-                }
-                QPushButton#PipelineOptionButton:checked {
-                    background: {theme.PANEL};
-                    border-color: {theme.STATUS_ERROR};
-                    color: {theme.STATUS_ERROR};
-                    font-weight: 650;
-                }
-                QPushButton#PipelineOptionButton:disabled {
-                    color: {theme.CONNECTOR};
                 }
                 QPushButton#RunPipelineButton {
                     background: {theme.PRIMARY};

@@ -10,7 +10,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QInputDialog
+from PySide6.QtWidgets import QApplication, QInputDialog, QPushButton
 
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
 from dlc_gait_assembly.gui.shared.progress import CircularProgressIndicator
@@ -445,25 +445,13 @@ def test_run_button_starts_real_pipeline_when_profile_and_videos_are_ready(
     app.processEvents()
 
 
-def test_run_stage_exclusions_are_independent_and_lock_while_running(tmp_path):
+def test_run_controls_do_not_include_stage_skip_buttons(tmp_path):
     app = QApplication.instance() or QApplication([])
     widget = AutomatedPipelineProfilesWidget(AutomatedProfileStore(tmp_path / "profiles"))
 
-    assert not widget.skip_knee_correction_button.isChecked()
-    assert not widget.skip_gait_analysis_button.isChecked()
-    widget.skip_knee_correction_button.click()
-    widget.skip_gait_analysis_button.click()
-
-    assert widget.skip_knee_correction_button.isChecked()
-    assert widget.skip_gait_analysis_button.isChecked()
-    widget.set_pipeline_running(True)
-    assert not widget.skip_knee_correction_button.isEnabled()
-    assert not widget.skip_gait_analysis_button.isEnabled()
-    widget.set_pipeline_running(False)
-    assert widget.skip_knee_correction_button.isEnabled()
-    assert widget.skip_gait_analysis_button.isEnabled()
-    assert widget.skip_knee_correction_button.isChecked()
-    assert widget.skip_gait_analysis_button.isChecked()
+    assert not widget.findChildren(QPushButton, "PipelineOptionButton")
+    assert widget.run_pipeline_button.isVisibleTo(widget)
+    assert widget.open_pipeline_output_button.isVisibleTo(widget)
     widget.close()
     app.processEvents()
 
@@ -490,8 +478,6 @@ def test_profile_can_be_created_without_gait_or_knee_uploads(tmp_path):
     assert widget.profile_readiness_values["calibration"].text() == "Excluded"
     assert widget.profile_readiness_values["analysis"].text() == "Excluded"
     assert widget.profile_readiness_values["knee"].text() == "Excluded"
-    assert widget.skip_gait_analysis_button.isChecked()
-    assert not widget.skip_gait_analysis_button.isEnabled()
     widget.close()
     app.processEvents()
 
