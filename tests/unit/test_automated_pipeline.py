@@ -23,7 +23,7 @@ from dlc_gait_assembly.services.pipeline.deeplabcut import (
 from dlc_gait_assembly.services.video_processing import ProcessingOptions, ProcessingResult
 
 
-def test_automated_pipeline_hands_outputs_through_all_five_stages(tmp_path, monkeypatch):
+def test_automated_pipeline_hands_outputs_through_all_six_stages(tmp_path, monkeypatch):
     regions = ("Left view", "Right view", "Bottom view")
     processing_manifest = tmp_path / "video_settings.json"
     write_video_settings_manifest(
@@ -77,34 +77,55 @@ def test_automated_pipeline_hands_outputs_through_all_five_stages(tmp_path, monk
         for index, job in enumerate(jobs, start=1):
             region_name = job.region.replace(" ", "_")
             analysis_folder = Path(output_folder) / "analyzed_videos" / region_name
-            labeled_folder = Path(output_folder) / "labeled_videos" / region_name
             analysis_folder.mkdir(parents=True, exist_ok=True)
-            labeled_folder.mkdir(parents=True, exist_ok=True)
             csvs = []
             h5s = []
-            overlays = []
             for video in job.video_paths:
                 csv_path = analysis_folder / f"{video.stem}DLC_fixture.csv"
                 h5_path = analysis_folder / f"{video.stem}DLC_fixture.h5"
-                overlay = labeled_folder / f"{video.stem}DLC_fixture_labeled.mp4"
                 csv_path.write_text("coordinates", encoding="utf-8")
                 h5_path.write_bytes(b"coordinates")
-                overlay.write_bytes(b"video")
                 csvs.append(csv_path)
                 h5s.append(h5_path)
-                overlays.append(overlay)
             results.append(
                 DlcAnalysisResult(
                     job.region,
                     job.video_paths,
                     tuple(csvs),
                     tuple(h5s),
-                    tuple(overlays),
+                    (),
                 )
             )
             if progress_callback is not None:
                 progress_callback(index, len(jobs), job.region)
         return results
+
+    def fake_create_labeled(jobs, analysis_results, output_folder, progress_callback=None):
+        completed = []
+        for index, (job, result) in enumerate(zip(jobs, analysis_results), start=1):
+            labeled_folder = (
+                Path(output_folder)
+                / "labeled_videos"
+                / job.region.replace(" ", "_")
+            )
+            labeled_folder.mkdir(parents=True, exist_ok=True)
+            overlays = []
+            for video in job.video_paths:
+                overlay = labeled_folder / f"{video.stem}DLC_fixture_labeled.mp4"
+                overlay.write_bytes(b"video")
+                overlays.append(overlay)
+            completed.append(
+                DlcAnalysisResult(
+                    result.region,
+                    result.video_paths,
+                    result.csv_paths,
+                    result.h5_paths,
+                    tuple(overlays),
+                )
+            )
+            if progress_callback is not None:
+                progress_callback(index, len(jobs), job.region)
+        return completed
 
     alma_calls = []
 
@@ -126,10 +147,15 @@ def test_automated_pipeline_hands_outputs_through_all_five_stages(tmp_path, monk
 
     monkeypatch.setattr(automated, "process_video_outputs", fake_process)
     monkeypatch.setattr(automated, "run_deeplabcut_analysis", fake_dlc)
+    monkeypatch.setattr(
+        automated,
+        "run_deeplabcut_labeled_video_creation",
+        fake_create_labeled,
+    )
     monkeypatch.setattr(automated, "run_alma_gait_analysis", fake_alma)
 
     run = automated.AutomatedPipelineRun(profile, videos, tmp_path, tmp_path / "runs")
-    for stage in range(5):
+    for stage in range(6):
         run.run_stage(stage)
 
     result = run.result()
@@ -143,8 +169,8 @@ def test_automated_pipeline_hands_outputs_through_all_five_stages(tmp_path, monk
     assert alma_calls[0][1].generate_rustlab1_parameters is False
     assert alma_calls[1][1].generate_stickplot is False
     assert len(run.review_artifacts(0)["items"]) == 6
-    assert len(run.review_artifacts(1)["items"]) == 6
-    assert len(run.review_artifacts(3)["items"]) == 2
+    assert len(run.review_artifacts(3)["items"]) == 6
+    assert len(run.review_artifacts(4)["items"]) == 2
     assert result.output_manifest.is_file()
     manifest = json.loads(result.output_manifest.read_text(encoding="utf-8"))
     assert Path(manifest["folders"]["analyzed_videos"]) == run.analyzed_videos_folder
@@ -194,13 +220,13 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(
     request_path.write_text(
         json.dumps(
             {
+                "operation": "analyze",
                 "jobs": [
                     {
                         "region": "Bottom",
                         "config_path": str(tmp_path / "config.yaml"),
                         "video_paths": [str(video)],
                         "analysis_folder": str(analysis_folder),
-                        "labeled_videos_folder": str(labeled_folder),
                     }
                 ],
                 "result_path": str(result_path),
@@ -233,12 +259,37 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(
 
     _run_request(request_path)
 
-    result = json.loads(result_path.read_text(encoding="utf-8"))["results"][0]
-    assert len(result["csv_paths"]) == 1
-    assert len(result["h5_paths"]) == 1
-    assert len(result["labeled_video_paths"]) == 1
-    assert Path(result["csv_paths"][0]).parent == analysis_folder
-    assert Path(result["labeled_video_paths"][0]).parent == labeled_folder
+    analyzed = json.loads(result_path.read_text(encoding="utf-8"))["results"][0]
+    assert len(analyzed["csv_paths"]) == 1
+    assert len(analyzed["h5_paths"]) == 1
+    assert analyzed["labeled_video_paths"] == []
+    assert Path(analyzed["csv_paths"][0]).parent == analysis_folder
+
+    request_path.write_text(
+        json.dumps(
+            {
+                "operation": "create_labeled_videos",
+                "jobs": [
+                    {
+                        "region": "Bottom",
+                        "config_path": str(tmp_path / "config.yaml"),
+                        "video_paths": [str(video)],
+                        "analysis_folder": str(analysis_folder),
+                        "labeled_videos_folder": str(labeled_folder),
+                        "csv_paths": analyzed["csv_paths"],
+                        "h5_paths": analyzed["h5_paths"],
+                    }
+                ],
+                "result_path": str(result_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    _run_request(request_path)
+
+    labeled = json.loads(result_path.read_text(encoding="utf-8"))["results"][0]
+    assert len(labeled["labeled_video_paths"]) == 1
+    assert Path(labeled["labeled_video_paths"][0]).parent == labeled_folder
     assert not list(analysis_folder.glob("*_labeled.mp4"))
 
 
@@ -346,8 +397,8 @@ def test_deeplabcut_project_validation_rejects_wrong_shuffle_metadata(tmp_path):
 
 
 def test_deeplabcut_progress_parser_reports_analysis_and_label_rendering():
-    updates = []
-    parser = _DlcProgressParser(2, lambda current, total, message: updates.append(
+    analysis_updates = []
+    parser = _DlcProgressParser(2, lambda current, total, message: analysis_updates.append(
         (current, total, message)
     ))
 
@@ -355,17 +406,32 @@ def test_deeplabcut_progress_parser_reports_analysis_and_label_rendering():
     parser.feed(" 50%|#####     | 50/100 [00:01<00:01, 40.0it/s]\r")
     parser.feed("Starting to analyze /videos/second.mp4\n")
     parser.feed("100%|##########| 100/100 [00:02<00:00, 40.0it/s]\r")
-    parser.feed("Starting to process video: /videos/first.mp4\n")
-    parser.feed(" 50%|#####     | 50/100 [00:01<00:01, 40.0it/s]\r")
-    parser.feed("Starting to process video: /videos/second.mp4\n")
     parser.finish()
 
-    values = [current for current, _total, _message in updates]
-    assert values == sorted(values)
-    assert updates[1][0] > updates[0][0]
-    assert updates[-1][0] == updates[-1][1] == 1000
-    assert any("Analyzing video 1 of 2: first.mp4" in message for _, _, message in updates)
-    assert any("Rendering labels video 1 of 2" in message for _, _, message in updates)
+    label_updates = []
+    label_parser = _DlcProgressParser(
+        2,
+        lambda current, total, message: label_updates.append((current, total, message)),
+        phase="labels",
+    )
+    label_parser.feed("Starting to process video: /videos/first.mp4\n")
+    label_parser.feed(" 50%|#####     | 50/100 [00:01<00:01, 40.0it/s]\r")
+    label_parser.feed("Starting to process video: /videos/second.mp4\n")
+    label_parser.finish()
+
+    assert [current for current, _total, _message in analysis_updates] == sorted(
+        current for current, _total, _message in analysis_updates
+    )
+    assert analysis_updates[-1][0] == analysis_updates[-1][1] == 1000
+    assert label_updates[-1][0] == label_updates[-1][1] == 1000
+    assert any(
+        "Analyzing video 1 of 2: first.mp4" in message
+        for _, _, message in analysis_updates
+    )
+    assert any(
+        "Creating labeled video 1 of 2" in message
+        for _, _, message in label_updates
+    )
 
 
 def test_deeplabcut_progress_parser_combines_detector_and_pose_passes():
@@ -384,7 +450,7 @@ def test_deeplabcut_progress_parser_combines_detector_and_pose_passes():
 
     values = [current for current, _total, _message in updates]
     assert values == sorted(values)
-    assert detector_value < updates[-1][0] == 850
+    assert detector_value < updates[-1][0] == 1000
 
 
 def test_three_view_knee_stage_leaves_bottom_coordinates_unchanged(tmp_path, monkeypatch):
@@ -394,6 +460,8 @@ def test_three_view_knee_stage_leaves_bottom_coordinates_unchanged(tmp_path, mon
         video = tmp_path / f"mouse_{slug}_processed.mp4"
         csv_path = tmp_path / f"{video.stem}DLC_fixture.csv"
         h5_path = tmp_path / f"{video.stem}DLC_fixture.h5"
+        csv_path.write_text(f"raw {region}", encoding="utf-8")
+        h5_path.write_bytes(f"raw {region}".encode())
         dlc_results.append(
             DlcAnalysisResult(region, (video,), (csv_path,), (h5_path,), ())
         )
@@ -410,16 +478,26 @@ def test_three_view_knee_stage_leaves_bottom_coordinates_unchanged(tmp_path, mon
     def fake_correct(pair, output_folder, settings):
         corrected_regions.append(Path(output_folder).name)
         output_csv = Path(output_folder) / f"{pair.stem}_knee_corrected.csv"
-        return SimpleNamespace(output_csv=output_csv)
+        output_h5 = Path(output_folder) / f"{pair.stem}_knee_corrected.h5"
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        output_csv.write_text(f"corrected {pair.stem}", encoding="utf-8")
+        output_h5.write_bytes(f"corrected {pair.stem}".encode())
+        return SimpleNamespace(output_csv=output_csv, output_h5=output_h5)
 
     monkeypatch.setattr(automated, "correct_knee_pair", fake_correct)
 
     run._correct_knees(None)
 
     assert len(corrected_regions) == 2
+    for result in dlc_results[:2]:
+        assert result.csv_paths[0].read_text(encoding="utf-8").startswith("corrected")
+        assert result.h5_paths[0].read_bytes().startswith(b"corrected")
     assert run.analysis_csvs_by_region["Bottom view"] == list(
         dlc_results[2].csv_paths
     )
+    assert dlc_results[2].csv_paths[0].read_text(encoding="utf-8") == "raw Bottom view"
+    assert dlc_results[2].h5_paths[0].read_bytes() == b"raw Bottom view"
+    assert (run.output_folder / "03_knee_correction" / "correction_manifest.json").is_file()
 
 
 def test_knee_and_gait_stages_can_be_independently_disabled(tmp_path, monkeypatch):
@@ -485,6 +563,7 @@ def test_profile_without_analysis_assets_skips_stickplot_and_gait_stages(tmp_pat
         tmp_path / "runs",
     )
 
-    assert run.stage_enabled(3) is False
+    assert run.stage_enabled(3) is True
     assert run.stage_enabled(4) is False
-    assert run.stage_skip_reason(3) == "Gait analysis excluded from this profile"
+    assert run.stage_enabled(5) is False
+    assert run.stage_skip_reason(4) == "Gait analysis excluded from this profile"

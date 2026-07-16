@@ -18,7 +18,6 @@ import yaml
 DLC_MODEL_FOLDER_NAMES = ("dlc-models-pytorch", "dlc-models")
 DLC_TRAINING_DATASET_FOLDER_NAME = "training-datasets"
 _DLC_PROGRESS_SCALE = 1000
-_DLC_ANALYSIS_WEIGHT = 0.85
 _TQDM_PERCENT_PATTERN = re.compile(r"(?<!\d)(\d{1,3})%\|")
 
 
@@ -45,10 +44,14 @@ class _DlcProgressParser:
         self,
         total_videos: int,
         progress_callback: Callable[[int, int, str], None] | None,
+        phase: str = "analysis",
     ):
+        if phase not in {"analysis", "labels"}:
+            raise ValueError(f"Unsupported DeepLabCut progress phase: {phase}")
         self.total_videos = max(1, total_videos)
         self.progress_callback = progress_callback
-        self.phase = ""
+        self.expected_phase = phase
+        self.phase = phase
         self.phase_index = 0
         self.video_name = ""
         self.last_value = -1
@@ -60,11 +63,11 @@ class _DlcProgressParser:
         line = output_line.strip()
         analysis_marker = "Starting to analyze "
         labels_marker = "Starting to process video:"
-        if analysis_marker in line:
+        if self.expected_phase == "analysis" and analysis_marker in line:
             video_path = line.split(analysis_marker, 1)[1].strip()
             self._begin_video("analysis", video_path)
             return
-        if labels_marker in line:
+        if self.expected_phase == "labels" and labels_marker in line:
             video_path = line.split(labels_marker, 1)[1].strip()
             self._begin_video("labels", video_path)
             return
@@ -92,7 +95,7 @@ class _DlcProgressParser:
             self._emit(video_percent)
 
     def finish(self) -> None:
-        self.phase = "labels"
+        self.phase = self.expected_phase
         self.phase_index = self.total_videos
         self._emit(100, force=True)
 
@@ -113,14 +116,8 @@ class _DlcProgressParser:
         completed_fraction = (
             (self.phase_index - 1 + video_percent / 100.0) / self.total_videos
         )
-        if self.phase == "labels":
-            overall_fraction = _DLC_ANALYSIS_WEIGHT + (
-                (1.0 - _DLC_ANALYSIS_WEIGHT) * completed_fraction
-            )
-            action = "Rendering labels"
-        else:
-            overall_fraction = _DLC_ANALYSIS_WEIGHT * completed_fraction
-            action = "Analyzing"
+        overall_fraction = completed_fraction
+        action = "Creating labeled" if self.phase == "labels" else "Analyzing"
         value = round(max(0.0, min(1.0, overall_fraction)) * _DLC_PROGRESS_SCALE)
         if value < self.last_value:
             return
@@ -272,11 +269,9 @@ def run_deeplabcut_analysis(
     output_folder: str | Path,
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> list[DlcAnalysisResult]:
-    """Run DLC in the dedicated conda environment and return its produced files."""
+    """Run DLC pose analysis without creating labeled review videos."""
     if not jobs:
         return []
-
-    from dlc_gait_assembly.services.imports import deeplabcut_analysis_command
 
     destination = Path(output_folder).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -287,16 +282,13 @@ def run_deeplabcut_analysis(
         config_path = validate_deeplabcut_project(job.model_path)
         region_name = _safe_name(job.region)
         analysis_folder = destination / "analyzed_videos" / region_name
-        labeled_videos_folder = destination / "labeled_videos" / region_name
         analysis_folder.mkdir(parents=True, exist_ok=True)
-        labeled_videos_folder.mkdir(parents=True, exist_ok=True)
         request_jobs.append(
             {
                 "region": job.region,
                 "config_path": str(config_path),
                 "video_paths": [str(Path(path).expanduser().resolve()) for path in job.video_paths],
                 "analysis_folder": str(analysis_folder),
-                "labeled_videos_folder": str(labeled_videos_folder),
             }
         )
         if progress_callback is not None:
@@ -306,18 +298,101 @@ def run_deeplabcut_analysis(
                 f"Validating DeepLabCut model for {job.region}",
             )
 
+    payload = _run_bridge_request(
+        {"operation": "analyze", "jobs": request_jobs},
+        total_videos,
+        "analysis",
+        "Initializing DeepLabCut model",
+        "DeepLabCut analysis",
+        progress_callback,
+    )
+    results = [_result_from_json(item) for item in payload.get("results", [])]
+    if len(results) != len(jobs):
+        raise RuntimeError("DeepLabCut returned an incomplete set of region results.")
+    if progress_callback is not None:
+        progress_callback(total, total, "DeepLabCut analysis complete")
+    return results
+
+
+def run_deeplabcut_labeled_video_creation(
+    jobs: list[DlcAnalysisJob],
+    analysis_results: list[DlcAnalysisResult],
+    output_folder: str | Path,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> list[DlcAnalysisResult]:
+    """Create review videos from the current, potentially corrected, coordinates."""
+    if not jobs:
+        return []
+    results_by_region = {result.region: result for result in analysis_results}
+    if set(results_by_region) != {job.region for job in jobs}:
+        raise ValueError("DeepLabCut analysis results do not match the configured regions.")
+
+    destination = Path(output_folder).expanduser().resolve()
+    request_jobs = []
+    total_videos = sum(len(job.video_paths) for job in jobs)
+    for job in jobs:
+        result = results_by_region[job.region]
+        coordinate_paths = (*result.csv_paths, *result.h5_paths)
+        coordinate_folders = {path.parent.resolve() for path in coordinate_paths}
+        if len(coordinate_folders) != 1:
+            raise ValueError(
+                f'Analyzed files for region "{job.region}" are not in one output folder.'
+            )
+        config_path = validate_deeplabcut_project(job.model_path)
+        labeled_videos_folder = destination / "labeled_videos" / _safe_name(job.region)
+        labeled_videos_folder.mkdir(parents=True, exist_ok=True)
+        request_jobs.append(
+            {
+                "region": job.region,
+                "config_path": str(config_path),
+                "video_paths": [str(path) for path in job.video_paths],
+                "analysis_folder": str(next(iter(coordinate_folders))),
+                "labeled_videos_folder": str(labeled_videos_folder),
+                "csv_paths": [str(path) for path in result.csv_paths],
+                "h5_paths": [str(path) for path in result.h5_paths],
+            }
+        )
+
+    payload = _run_bridge_request(
+        {"operation": "create_labeled_videos", "jobs": request_jobs},
+        total_videos,
+        "labels",
+        "Preparing corrected coordinates for labeled videos",
+        "DeepLabCut labeled-video creation",
+        progress_callback,
+    )
+    results = [_result_from_json(item) for item in payload.get("results", [])]
+    if len(results) != len(jobs):
+        raise RuntimeError("DeepLabCut returned an incomplete set of labeled videos.")
+    if progress_callback is not None:
+        progress_callback(1, 1, "Labeled videos complete")
+    return results
+
+
+def _run_bridge_request(
+    request: dict,
+    total_videos: int,
+    progress_phase: str,
+    initial_message: str,
+    failure_label: str,
+    progress_callback: Callable[[int, int, str], None] | None,
+) -> dict:
+    from dlc_gait_assembly.services.imports import deeplabcut_analysis_command
+
     with tempfile.TemporaryDirectory(prefix="dlc-automated-") as temp_dir:
         temp_path = Path(temp_dir)
         request_path = temp_path / "request.json"
         result_path = temp_path / "result.json"
-        request_path.write_text(
-            json.dumps({"jobs": request_jobs, "result_path": str(result_path)}),
-            encoding="utf-8",
-        )
+        request["result_path"] = str(result_path)
+        request_path.write_text(json.dumps(request), encoding="utf-8")
         if progress_callback is not None:
-            progress_callback(0, _DLC_PROGRESS_SCALE, "Initializing DeepLabCut model")
+            progress_callback(0, _DLC_PROGRESS_SCALE, initial_message)
         command = deeplabcut_analysis_command(Path(__file__), request_path)
-        progress_parser = _DlcProgressParser(total_videos, progress_callback)
+        progress_parser = _DlcProgressParser(
+            total_videos,
+            progress_callback,
+            phase=progress_phase,
+        )
         process = subprocess.Popen(
             command,
             shell=True,
@@ -335,21 +410,13 @@ def run_deeplabcut_analysis(
         return_code = process.wait()
         output = "".join(output_lines)
         if return_code != 0:
-            raise RuntimeError(
-                "DeepLabCut analysis failed.\n"
-                f"process output:\n{output}"
-            )
+            raise RuntimeError(f"{failure_label} failed.\nprocess output:\n{output}")
         progress_parser.finish()
         if not result_path.exists():
-            raise RuntimeError("DeepLabCut finished without returning an output manifest.")
-        payload = json.loads(result_path.read_text(encoding="utf-8"))
-
-    results = [_result_from_json(item) for item in payload.get("results", [])]
-    if len(results) != len(jobs):
-        raise RuntimeError("DeepLabCut returned an incomplete set of region results.")
-    if progress_callback is not None:
-        progress_callback(total, total, "DeepLabCut analysis complete")
-    return results
+            raise RuntimeError(
+                f"{failure_label} finished without returning an output manifest."
+            )
+        return json.loads(result_path.read_text(encoding="utf-8"))
 
 
 def _run_request(request_path: Path) -> None:
@@ -364,14 +431,25 @@ def _run_request(request_path: Path) -> None:
     import deeplabcut
 
     request = json.loads(request_path.read_text(encoding="utf-8"))
-    prepared_jobs = []
-    for job in request["jobs"]:
+    operation = request.get("operation")
+    if operation == "analyze":
+        results = _run_analysis_jobs(request["jobs"], deeplabcut)
+    elif operation == "create_labeled_videos":
+        results = _run_labeled_video_jobs(request["jobs"], deeplabcut)
+    else:
+        raise ValueError(f"Unsupported DeepLabCut bridge operation: {operation}")
+    Path(request["result_path"]).write_text(
+        json.dumps({"results": results}), encoding="utf-8"
+    )
+
+
+def _run_analysis_jobs(jobs: list[dict], deeplabcut) -> list[dict]:
+    results = []
+    for job in jobs:
         config_path = Path(job["config_path"])
         video_paths = [Path(path) for path in job["video_paths"]]
         analysis_folder = Path(job["analysis_folder"])
-        labeled_videos_folder = Path(job["labeled_videos_folder"])
         analysis_folder.mkdir(parents=True, exist_ok=True)
-        labeled_videos_folder.mkdir(parents=True, exist_ok=True)
         before = {path.resolve() for path in analysis_folder.iterdir() if path.is_file()}
         deeplabcut.analyze_videos(
             str(config_path),
@@ -379,26 +457,41 @@ def _run_request(request_path: Path) -> None:
             destfolder=str(analysis_folder),
             save_as_csv=True,
         )
-        prepared_jobs.append(
-            (
-                job,
-                config_path,
-                video_paths,
-                analysis_folder,
-                labeled_videos_folder,
-                before,
-            )
+        produced = sorted(
+            path.resolve()
+            for path in analysis_folder.iterdir()
+            if path.is_file() and path.resolve() not in before
         )
+        csv_paths = [path for path in produced if path.suffix.casefold() == ".csv"]
+        h5_paths = [
+            path for path in produced if path.suffix.casefold() in {".h5", ".hdf5"}
+        ]
+        if len(csv_paths) < len(video_paths) or len(h5_paths) < len(video_paths):
+            raise RuntimeError(
+                f'DeepLabCut did not create CSV and H5 coordinates for region "{job["region"]}".'
+            )
+        results.append(
+            {
+                "region": job["region"],
+                "video_paths": [str(path) for path in video_paths],
+                "csv_paths": [str(path) for path in csv_paths],
+                "h5_paths": [str(path) for path in h5_paths],
+                "labeled_video_paths": [],
+            }
+        )
+    return results
 
+
+def _run_labeled_video_jobs(jobs: list[dict], deeplabcut) -> list[dict]:
     results = []
-    for (
-        job,
-        config_path,
-        video_paths,
-        analysis_folder,
-        labeled_videos_folder,
-        before,
-    ) in prepared_jobs:
+    for job in jobs:
+        config_path = Path(job["config_path"])
+        video_paths = [Path(path) for path in job["video_paths"]]
+        analysis_folder = Path(job["analysis_folder"])
+        labeled_videos_folder = Path(job["labeled_videos_folder"])
+        analysis_folder.mkdir(parents=True, exist_ok=True)
+        labeled_videos_folder.mkdir(parents=True, exist_ok=True)
+        before = {path.resolve() for path in analysis_folder.iterdir() if path.is_file()}
         deeplabcut.create_labeled_video(
             str(config_path),
             [str(path) for path in video_paths],
@@ -409,8 +502,8 @@ def _run_request(request_path: Path) -> None:
             for path in analysis_folder.iterdir()
             if path.is_file() and path.resolve() not in before
         )
-        csv_paths = [path for path in produced if path.suffix.casefold() == ".csv"]
-        h5_paths = [path for path in produced if path.suffix.casefold() in {".h5", ".hdf5"}]
+        csv_paths = [Path(path).resolve() for path in job["csv_paths"]]
+        h5_paths = [Path(path).resolve() for path in job["h5_paths"]]
         labeled_paths = [
             path
             for path in produced
@@ -423,10 +516,6 @@ def _run_request(request_path: Path) -> None:
             shutil.move(str(labeled_path), str(destination))
             organized_labeled_paths.append(destination.resolve())
         labeled_paths = organized_labeled_paths
-        if len(csv_paths) < len(video_paths) or len(h5_paths) < len(video_paths):
-            raise RuntimeError(
-                f'DeepLabCut did not create CSV and H5 coordinates for region "{job["region"]}".'
-            )
         if len(labeled_paths) < len(video_paths):
             raise RuntimeError(
                 f'DeepLabCut did not create labeled review videos for region "{job["region"]}".'
@@ -440,9 +529,7 @@ def _run_request(request_path: Path) -> None:
                 "labeled_video_paths": [str(path) for path in labeled_paths],
             }
         )
-    Path(request["result_path"]).write_text(
-        json.dumps({"results": results}), encoding="utf-8"
-    )
+    return results
 
 
 def _result_from_json(item: dict) -> DlcAnalysisResult:

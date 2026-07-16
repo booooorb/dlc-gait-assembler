@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from dlc_gait_assembly.services.pipeline.deeplabcut import (
     DlcAnalysisJob,
     DlcAnalysisResult,
     run_deeplabcut_analysis,
+    run_deeplabcut_labeled_video_creation,
 )
 from dlc_gait_assembly.services.video_processing import process_video_outputs
 
@@ -48,7 +50,7 @@ class AutomatedPipelineResult:
 
 
 class AutomatedPipelineRun:
-    """Stateful five-stage run whose outputs feed directly into the next stage."""
+    """Stateful six-stage run whose outputs feed directly into the next stage."""
 
     def __init__(
         self,
@@ -103,6 +105,7 @@ class AutomatedPipelineRun:
             folder.mkdir(parents=True, exist_ok=True)
 
         self.processed_by_region: dict[str, list[Path]] = {}
+        self.dlc_jobs: list[DlcAnalysisJob] = []
         self.dlc_results: list[DlcAnalysisResult] = []
         self.analysis_csvs_by_region: dict[str, list[Path]] = {}
         self.stickplot_results: list[AlmaRunResult] = []
@@ -117,6 +120,7 @@ class AutomatedPipelineRun:
             self._process_videos,
             self._run_deeplabcut,
             self._correct_knees,
+            self._create_labeled_videos,
             self._generate_stickplots,
             self._run_gait_analysis,
         )
@@ -135,7 +139,7 @@ class AutomatedPipelineRun:
                 and self.profile.knee_correction_enabled
                 and self.profile.knee_manifest is not None
             )
-        if stage_index in (3, 4):
+        if stage_index in (4, 5):
             return (
                 self.enable_gait_analysis
                 and self.profile.gait_analysis_enabled
@@ -151,7 +155,7 @@ class AutomatedPipelineRun:
             if not self.profile.knee_correction_enabled:
                 return "Knee correction excluded from this profile"
             return "No knee correction manifest in the profile"
-        if stage_index in (3, 4):
+        if stage_index in (4, 5):
             if not self.enable_gait_analysis:
                 return "Gait analysis disabled for this run"
             return "Gait analysis excluded from this profile"
@@ -167,7 +171,7 @@ class AutomatedPipelineRun:
                     for path in paths
                 ],
             }
-        if stage_index == 1:
+        if stage_index == 3:
             return {
                 "kind": "videos",
                 "items": [
@@ -176,7 +180,7 @@ class AutomatedPipelineRun:
                     for path in result.labeled_video_paths
                 ],
             }
-        if stage_index == 3:
+        if stage_index == 4:
             return {
                 "kind": "stickplots",
                 "items": [
@@ -268,7 +272,7 @@ class AutomatedPipelineRun:
         if missing_models:
             names = ", ".join(sorted(missing_models))
             raise ValueError(f"The profile has no DeepLabCut model assigned for: {names}.")
-        jobs = [
+        self.dlc_jobs = [
             DlcAnalysisJob(
                 region=region,
                 model_path=self.profile.deeplabcut_models[region],
@@ -277,7 +281,7 @@ class AutomatedPipelineRun:
             for region, paths in self.processed_by_region.items()
         ]
         self.dlc_results = run_deeplabcut_analysis(
-            jobs,
+            self.dlc_jobs,
             self.deeplabcut_folder,
             progress_callback,
         )
@@ -321,16 +325,47 @@ class AutomatedPipelineRun:
             "knee_correction_folder",
             self.output_folder / "03_knee_correction",
         )
+        work_folder = knee_output_folder / "work"
+        replacement_records = []
         for index, (region, pair) in enumerate(pair_jobs, start=1):
             result = correct_knee_pair(
                 pair,
-                knee_output_folder / _safe_name(region),
+                work_folder / _safe_name(region),
                 settings,
             )
-            corrected.setdefault(region, []).append(result.output_csv)
+            if pair.csv_path is None or pair.h5_path is None:
+                raise RuntimeError(f"Knee correction lost the coordinate pair for {pair.stem}.")
+            result.output_csv.replace(pair.csv_path)
+            result.output_h5.replace(pair.h5_path)
+            corrected.setdefault(region, []).append(pair.csv_path)
+            replacement_records.append(
+                {
+                    "region": region,
+                    "video": str(pair.video_path) if pair.video_path is not None else "",
+                    "csv": str(pair.csv_path),
+                    "h5": str(pair.h5_path),
+                }
+            )
             if progress_callback is not None:
                 progress_callback(index, total, f"Corrected {pair.stem}")
+        if work_folder.exists():
+            shutil.rmtree(work_folder)
+        (knee_output_folder / "correction_manifest.json").write_text(
+            json.dumps({"replaced_coordinates": replacement_records}, indent=2) + "\n",
+            encoding="utf-8",
+        )
         self.analysis_csvs_by_region = corrected
+
+    def _create_labeled_videos(
+        self,
+        progress_callback: ProgressCallback | None,
+    ) -> None:
+        self.dlc_results = run_deeplabcut_labeled_video_creation(
+            self.dlc_jobs,
+            self.dlc_results,
+            self.deeplabcut_folder,
+            progress_callback,
+        )
 
     def _generate_stickplots(self, progress_callback: ProgressCallback | None) -> None:
         settings = alma_settings_from_manifest(

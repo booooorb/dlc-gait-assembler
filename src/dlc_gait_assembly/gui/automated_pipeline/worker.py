@@ -9,7 +9,7 @@ from dlc_gait_assembly.services.automated_profiles import AutomatedPipelineProfi
 from dlc_gait_assembly.services.pipeline.automated import AutomatedPipelineRun
 
 
-REVIEW_STAGES = {0, 1, 3}
+REVIEW_STAGES = {0, 3, 4}
 
 
 class AutomatedPipelineWorker(QThread):
@@ -76,6 +76,7 @@ class AutomatedPipelineWorker(QThread):
                     "Video processing",
                     "DeepLabCut analysis",
                     "Knee correction",
+                    "Labeled video creation",
                     "Stickplot generation",
                     "Gait analysis",
                 )

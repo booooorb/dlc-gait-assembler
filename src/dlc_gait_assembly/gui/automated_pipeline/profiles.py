@@ -67,6 +67,7 @@ PIPELINE_STAGES = (
     "Video processing",
     "DLC analyzing videos",
     "Triangulate knee coordinate",
+    "Create labeled videos",
     "Stickplot generation",
     "Gait analysis",
 )
@@ -74,6 +75,7 @@ PIPELINE_STAGE_LABELS = (
     "Process videos",
     "DLC analysis",
     "Triangulate knee",
+    "Create videos",
     "Make stickplot",
     "Gait analysis",
 )
@@ -81,6 +83,7 @@ PIPELINE_PREVIEW_MESSAGES = (
     "Preparing and processing source videos",
     "Running DeepLabCut pose estimation",
     "Triangulating the knee coordinate",
+    "Creating labeled review videos",
     "Generating gait stickplots",
     "Running gait analysis",
 )
@@ -88,6 +91,7 @@ PIPELINE_STAGE_ACTIVITY = (
     "Processing",
     "Analyzing poses",
     "Triangulating knee",
+    "Creating videos",
     "Generating",
     "Analyzing gait",
 )
@@ -107,21 +111,21 @@ PIPELINE_REVIEW_GATES = {
         "tab": 0,
         "replay_stage": 0,
     },
-    1: {
+    3: {
         "title": "Review DLC overlays",
-        "description": "Verify tracking and model assignment. Double-click to enlarge.",
+        "description": "Verify the knee-corrected tracking overlays. Double-click to enlarge.",
         "preview": "DeepLabCut overlay-video previews appear here.",
         "setting": "region model configuration",
         "tab": 1,
-        "replay_stage": 1,
+        "replay_stage": 3,
     },
-    3: {
+    4: {
         "title": "Review stickplot",
         "description": "Verify the stickplot. Double-click to enlarge.",
         "preview": "The generated stickplot preview appears here.",
         "setting": "gait analysis manifest",
         "tab": 2,
-        "replay_stage": 3,
+        "replay_stage": 4,
     },
 }
 
@@ -1386,7 +1390,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         progress = None if total <= 0 else (max(0, current) / max(1, total)) * 100.0
         activity = message or PIPELINE_STAGE_ACTIVITY[stage_index]
         compact_activity = activity
-        if stage_index == 1 and ":" in compact_activity:
+        if stage_index in (1, 3) and ":" in compact_activity:
             compact_activity = compact_activity.split(":", 1)[0]
         self.set_pipeline_stage(
             stage_index,
@@ -1622,7 +1626,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         if artifacts is not None:
             self._populate_real_pipeline_review_preview(stage_index, artifacts)
             return
-        if stage_index == 3:
+        if stage_index == 4:
             self.pipeline_stickplot_preview.setPixmap(_demo_stickplot_pixmap(640, 240))
             self.pipeline_stickplot_preview.setToolTip(
                 "Inspect the generated gait stickplot for obvious tracking or stride "
@@ -1707,7 +1711,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
     ) -> None:
         raw_items = artifacts.get("items", [])
         items = raw_items if isinstance(raw_items, list) else []
-        if stage_index == 3:
+        if stage_index == 4:
             image_paths = [Path(path) for path in items if Path(path).is_file()]
             self._pipeline_stickplot_path = image_paths[0] if image_paths else None
             pixmap = (

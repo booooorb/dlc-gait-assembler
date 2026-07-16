@@ -347,7 +347,7 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
     assert widget.pipeline_stage_status_labels[1].text() == "Analyzing poses 50%"
     assert widget.pipeline_stage_progress_bars[0].value() == 100
     assert widget.pipeline_stage_progress_bars[1].value() == 50
-    assert widget.pipeline_progress_bar.value() == 30
+    assert widget.pipeline_progress_bar.value() == 25
     assert widget.pipeline_video_progress_label.text() == "2 / 2 videos processed"
 
     detail = "Analyzing video 1 of 2: a_very_long_deeplabcut_video_name.mp4"
@@ -391,12 +391,12 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
                 item_text = widget.pipeline_review_video_list.item(0).text()
                 assert "Regions:" in item_text
                 assert "Enhancements:" in item_text
-            elif review_stage == 1:
+            elif review_stage == 3:
                 assert widget.pipeline_component_tabs.count() == 2
                 assert widget.pipeline_component_tabs.tabText(0) == "Front"
                 assert widget.pipeline_component_tabs.tabText(1) == "Rear"
                 assert "_DLC.mp4" in widget.pipeline_component_video_lists["Front"].item(0).text()
-            elif review_stage == 3:
+            elif review_stage == 4:
                 assert widget.pipeline_review_preview_stack.currentWidget() is (
                     widget.pipeline_stickplot_preview
                 )
@@ -408,7 +408,7 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
         widget._advance_pipeline_demo()
 
     assert widget._pipeline_demo_complete
-    assert review_stages == [0, 1, 3]
+    assert review_stages == [0, 3, 4]
     assert widget.pipeline_progress_bar.value() == 100
     assert widget.run_pipeline_button.text() == "Back to videos"
     console = widget.automation_console.toPlainText()
