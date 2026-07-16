@@ -72,6 +72,27 @@ def read_analysis_manifest(path: str | Path) -> dict:
     return data
 
 
+def alma_settings_from_manifest(
+    path: str | Path,
+    calibration_map_path: str | Path | None = None,
+) -> AlmaSettings:
+    """Rebuild ALMA settings and bind them to the selected calibration map."""
+    data = read_analysis_manifest(path)
+    raw_settings = data["analysis_settings"]
+    field_names = {field.name for field in fields(AlmaSettings)}
+    values = {
+        key: value
+        for key, value in raw_settings.items()
+        if key in field_names and key != "calibration_map_path"
+    }
+    values["calibration_map_path"] = (
+        Path(calibration_map_path).expanduser().resolve()
+        if calibration_map_path is not None
+        else None
+    )
+    return AlmaSettings(**values)
+
+
 def video_settings_manifest_data(
     options: ProcessingOptions,
     trim_ranges_by_video: dict[str, tuple[TrimRange, ...]] | None = None,

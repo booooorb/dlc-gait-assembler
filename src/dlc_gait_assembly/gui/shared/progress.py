@@ -238,6 +238,7 @@ class CircularProgressIndicator(QProgressBar):
         self._accent_role = accent_role
         self._active = False
         self._center_text = ""
+        self._center_font_max = 11.0
         self._display_value = float(self.value())
         self._animation_start_value = self._display_value
         self._animation_target_value = self._display_value
@@ -263,6 +264,10 @@ class CircularProgressIndicator(QProgressBar):
         self._center_text = text
         self.update()
 
+    def set_center_font_max(self, point_size: float) -> None:
+        self._center_font_max = max(8.0, float(point_size))
+        self.update()
+
     def setRange(self, minimum: int, maximum: int) -> None:  # noqa: N802 - Qt API
         super().setRange(minimum, maximum)
         self._display_value = max(float(minimum), min(float(maximum), self._display_value))
@@ -284,7 +289,8 @@ class CircularProgressIndicator(QProgressBar):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         side = min(self.width(), self.height())
-        ring_width = max(6.0, min(8.0, side * 0.17))
+        ring_scale = 0.17 if side < 80 else 0.11
+        ring_width = max(6.0, min(12.0, side * ring_scale))
         rect = QRectF(
             (self.width() - side) / 2.0 + ring_width / 2.0 + 0.5,
             (self.height() - side) / 2.0 + ring_width / 2.0 + 0.5,
@@ -312,7 +318,7 @@ class CircularProgressIndicator(QProgressBar):
             painter.setPen(QColor(self._text_color_hex()))
             font = painter.font()
             font.setBold(True)
-            font.setPointSizeF(max(8.0, min(11.0, side * 0.28)))
+            font.setPointSizeF(max(8.0, min(self._center_font_max, side * 0.28)))
             painter.setFont(font)
             painter.drawText(QRectF(self.rect()), Qt.AlignmentFlag.AlignCenter, text)
 

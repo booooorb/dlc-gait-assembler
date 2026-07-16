@@ -41,7 +41,11 @@ from dlc_gait_assembly.services.analysis_manifests import (
 )
 from dlc_gait_assembly.services.video_processing import ProcessingOptions, ffmpeg_available
 from dlc_gait_assembly.services.output_documents import write_video_processing_session_documents
-from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
+from dlc_gait_assembly.services.project_paths import (
+    find_project_root,
+    make_session_output_dir,
+    manual_pipeline_output_folders,
+)
 from dlc_gait_assembly.services.video_processing import is_supported_video
 
 try:
@@ -960,9 +964,7 @@ class VideoEditorWidget(QWidget):
         self.trim_tool_button.setEnabled(enabled)
 
     def _default_output_root(self) -> Path:
-        output_root = self._project_root / "outputs" / "videos"
-        output_root.mkdir(parents=True, exist_ok=True)
-        return output_root
+        return manual_pipeline_output_folders(self._project_root).processed_videos
 
     def _release_capture(self) -> None:
         if hasattr(self, "_frame_load_timer"):

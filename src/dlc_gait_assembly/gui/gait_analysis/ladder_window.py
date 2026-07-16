@@ -51,7 +51,10 @@ from dlc_gait_assembly.services.pipeline.alma import (
     default_alma_root,
     load_alma_config_defaults,
 )
-from dlc_gait_assembly.services.project_paths import find_project_root
+from dlc_gait_assembly.services.project_paths import (
+    find_project_root,
+    manual_pipeline_output_folders,
+)
 
 
 class LadderAnalysisWidget(QWidget):
@@ -700,7 +703,7 @@ class LadderAnalysisWidget(QWidget):
         )
 
     def _default_output_folder(self) -> Path:
-        path = self._project_root / "outputs" / "gait_analysis" / "ladder"
+        path = manual_pipeline_output_folders(self._project_root).gait_analysis / "ladder"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

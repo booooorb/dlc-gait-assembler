@@ -63,6 +63,20 @@ def deeplabcut_launch_command(platform: str | None = None) -> str:
     )
 
 
+def deeplabcut_analysis_command(
+    script_path: Path,
+    request_path: Path,
+    platform: str | None = None,
+) -> str:
+    script_argument = _quote_path(Path(script_path).expanduser().resolve(), platform=platform)
+    request_argument = _quote_path(Path(request_path).expanduser().resolve(), platform=platform)
+    return _conda_command(
+        f"run -n {DEEPLABCUT_ENV_NAME} --no-capture-output "
+        f"python -u {script_argument} --run-request {request_argument}",
+        platform=platform,
+    )
+
+
 def deeplabcut_install_command(environment_file: Path, platform: str | None = None) -> str:
     environment_file = Path(environment_file).expanduser().resolve()
     file_argument = _quote_path(environment_file, platform=platform)
@@ -108,9 +122,10 @@ def _windows_conda_attempts(conda_args: str) -> list[str]:
 
 def _posix_conda_initialization_command() -> str:
     source_attempts = " || ".join(
-        f'[ -f "{candidate}" ] && . "{candidate}"' for candidate in _POSIX_CONDA_PROFILE_CANDIDATES
+        f'( [ -f "{candidate}" ] && . "{candidate}" )'
+        for candidate in _POSIX_CONDA_PROFILE_CANDIDATES
     )
-    return f"command -v conda >/dev/null 2>&1 || {source_attempts}"
+    return f"command -v conda >/dev/null 2>&1 || ( {source_attempts} )"
 
 
 def _python_import_probe(platform: str | None) -> str:

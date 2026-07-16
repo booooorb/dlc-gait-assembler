@@ -33,10 +33,38 @@ def _profile_sources(tmp_path: Path, suffix: str = "") -> dict:
     for region in ("Front", "Rear"):
         model = tmp_path / f"model_{region.lower()}{suffix}"
         model.mkdir()
-        (model / "weights.h5").write_text(
+        (model / "config.yaml").write_text(
+            "Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95]\n",
+            encoding="utf-8",
+        )
+        train_folder = (
+            model
+            / "dlc-models-pytorch"
+            / "iteration-0"
+            / "fixture-trainset95shuffle1"
+            / "train"
+        )
+        train_folder.mkdir(parents=True)
+        (train_folder / "pytorch_config.yaml").write_text("model: fixture\n", encoding="utf-8")
+        (train_folder / "snapshot-1.pt").write_text(
             f"weights-{region.lower()}-{suffix or 'first'}",
             encoding="utf-8",
         )
+        metadata_folder = (
+            model
+            / "training-datasets"
+            / "iteration-0"
+            / "UnaugmentedDataSet_fixtureJan1"
+        )
+        metadata_folder.mkdir(parents=True)
+        (metadata_folder / "metadata.yaml").write_text(
+            "shuffles:\n  fixture-trainset95shuffle1:\n"
+            "    train_fraction: 0.95\n    index: 1\n    engine: pytorch\n",
+            encoding="utf-8",
+        )
+        videos_folder = model / "videos"
+        videos_folder.mkdir()
+        (videos_folder / "training.mp4").write_text("not packaged", encoding="utf-8")
         models[region] = model
     manifest = tmp_path / f"processing_manifest{suffix}.json"
     manifest.write_text(
@@ -93,9 +121,12 @@ def test_profile_store_copies_replaces_and_deletes_owned_assets(tmp_path):
 
     assert profile.name == "Mouse treadmill"
     assert profile.calibration_map.read_text(encoding="utf-8") == '{"calibration": "first"}'
-    assert (profile.deeplabcut_models["Front"] / "weights.h5").read_text(
+    stored_weights = next(profile.deeplabcut_models["Front"].rglob("snapshot-1.pt"))
+    assert stored_weights.read_text(
         encoding="utf-8"
     ) == "weights-front-first"
+    assert next(profile.deeplabcut_models["Front"].rglob("metadata.yaml")).is_file()
+    assert not (profile.deeplabcut_models["Front"] / "videos").exists()
     assert set(profile.deeplabcut_models) == {"Front", "Rear"}
     assert profile.processing_manifest.name == "processing_manifest.json"
     assert profile.analysis_manifest is not None
@@ -118,12 +149,50 @@ def test_profile_store_copies_replaces_and_deletes_owned_assets(tmp_path):
     assert store.list_profiles() == []
 
 
+def test_profile_store_packages_complete_project_when_config_file_is_selected(tmp_path):
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    sources = _profile_sources(tmp_path)
+    sources["deeplabcut_models"] = {
+        region: model / "config.yaml"
+        for region, model in sources["deeplabcut_models"].items()
+    }
+
+    profile = _save(store, "Config selections", sources)
+
+    for stored_project in profile.deeplabcut_models.values():
+        assert (stored_project / "config.yaml").is_file()
+        assert next(stored_project.rglob("pytorch_config.yaml")).is_file()
+        assert next(stored_project.rglob("snapshot-1.pt")).is_file()
+        assert next(stored_project.rglob("metadata.yaml")).is_file()
+
+
 def test_profile_store_rejects_duplicate_names(tmp_path):
     store = AutomatedProfileStore(tmp_path / "profiles")
     _save(store, "Treadmill", _profile_sources(tmp_path))
 
     with pytest.raises(ValueError, match="already exists"):
         _save(store, "treadmill", _profile_sources(tmp_path, "_other"))
+
+
+def test_profile_store_persists_video_and_dlc_only_profile(tmp_path):
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    sources = _profile_sources(tmp_path)
+
+    profile = store.save(
+        "DLC only",
+        sources["processing_manifest"],
+        None,
+        sources["deeplabcut_models"],
+        gait_analysis_enabled=False,
+        knee_correction_enabled=False,
+    )
+    reloaded = store.load(profile.id)
+
+    assert reloaded.calibration_map is None
+    assert reloaded.analysis_manifest is None
+    assert reloaded.knee_manifest is None
+    assert reloaded.gait_analysis_enabled is False
+    assert reloaded.knee_correction_enabled is False
 
 
 def test_manifest_regions_define_ordered_model_requirements(tmp_path):
@@ -259,6 +328,11 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
     )
     assert widget.pipeline_stage_progress_bars[0].value() == 0
     assert widget.pipeline_video_progress_label.text() == "0 / 2 videos processed"
+    output_folder = tmp_path / "automated_run"
+    output_folder.mkdir()
+    widget._pipeline_output_folder_ready(output_folder)
+    assert not widget.open_pipeline_output_button.isHidden()
+    assert widget.open_pipeline_output_button.toolTip() == str(output_folder.resolve())
 
     widget.set_pipeline_stage(
         1,
@@ -270,11 +344,16 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
 
     assert widget.pipeline_stage_cards[0].property("pipelineState") == "complete"
     assert widget.pipeline_stage_cards[1].property("pipelineState") == "active"
-    assert widget.pipeline_stage_status_labels[1].text() == "Analyzing poses"
+    assert widget.pipeline_stage_status_labels[1].text() == "Analyzing poses 50%"
     assert widget.pipeline_stage_progress_bars[0].value() == 100
     assert widget.pipeline_stage_progress_bars[1].value() == 50
     assert widget.pipeline_progress_bar.value() == 30
     assert widget.pipeline_video_progress_label.text() == "2 / 2 videos processed"
+
+    detail = "Analyzing video 1 of 2: a_very_long_deeplabcut_video_name.mp4"
+    widget._pipeline_stage_progressed(1, 425, 1000, detail)
+    assert widget.pipeline_stage_status_labels[1].text() == "Analyzing video 1 of 2 42.5%"
+    assert widget.pipeline_current_stage_label.text() == detail
 
     widget.complete_pipeline()
     assert widget.pipeline_progress_bar.value() == 100
@@ -312,7 +391,7 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
                 item_text = widget.pipeline_review_video_list.item(0).text()
                 assert "Regions:" in item_text
                 assert "Enhancements:" in item_text
-            elif review_stage == 2:
+            elif review_stage == 1:
                 assert widget.pipeline_component_tabs.count() == 2
                 assert widget.pipeline_component_tabs.tabText(0) == "Front"
                 assert widget.pipeline_component_tabs.tabText(1) == "Rear"
@@ -329,7 +408,7 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
         widget._advance_pipeline_demo()
 
     assert widget._pipeline_demo_complete
-    assert review_stages == [0, 2, 3]
+    assert review_stages == [0, 1, 3]
     assert widget.pipeline_progress_bar.value() == 100
     assert widget.run_pipeline_button.text() == "Back to videos"
     console = widget.automation_console.toPlainText()
@@ -340,6 +419,79 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
     widget.run_pipeline_button.click()
     assert widget.automation_input_stack.currentWidget() is widget.video_panel
     assert widget.run_pipeline_button.text() == "RUN pipeline"
+    widget.close()
+    app.processEvents()
+
+
+def test_run_button_starts_real_pipeline_when_profile_and_videos_are_ready(
+    tmp_path,
+    monkeypatch,
+):
+    app = QApplication.instance() or QApplication([])
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    profile = _save(store, "Ready profile", _profile_sources(tmp_path))
+    widget = AutomatedPipelineProfilesWidget(store)
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    widget._add_video_paths([video])
+    started = []
+    monkeypatch.setattr(widget, "_start_pipeline", lambda selected: started.append(selected))
+
+    widget.run_pipeline_button.click()
+
+    assert started == [profile]
+    assert not widget._pipeline_demo_timer.isActive()
+    widget.close()
+    app.processEvents()
+
+
+def test_run_stage_exclusions_are_independent_and_lock_while_running(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    widget = AutomatedPipelineProfilesWidget(AutomatedProfileStore(tmp_path / "profiles"))
+
+    assert not widget.skip_knee_correction_button.isChecked()
+    assert not widget.skip_gait_analysis_button.isChecked()
+    widget.skip_knee_correction_button.click()
+    widget.skip_gait_analysis_button.click()
+
+    assert widget.skip_knee_correction_button.isChecked()
+    assert widget.skip_gait_analysis_button.isChecked()
+    widget.set_pipeline_running(True)
+    assert not widget.skip_knee_correction_button.isEnabled()
+    assert not widget.skip_gait_analysis_button.isEnabled()
+    widget.set_pipeline_running(False)
+    assert widget.skip_knee_correction_button.isEnabled()
+    assert widget.skip_gait_analysis_button.isEnabled()
+    assert widget.skip_knee_correction_button.isChecked()
+    assert widget.skip_gait_analysis_button.isChecked()
+    widget.close()
+    app.processEvents()
+
+
+def test_profile_can_be_created_without_gait_or_knee_uploads(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    sources = _profile_sources(tmp_path)
+    widget = AutomatedPipelineProfilesWidget(store)
+    widget.profile_name.setText("Tracking only")
+    assert widget._set_manifest_source(sources["processing_manifest"])
+    for region, path in sources["deeplabcut_models"].items():
+        widget._set_model_source(region, path)
+    widget.include_gait_analysis_button.setChecked(False)
+
+    widget._save_profile()
+
+    profile = store.load(widget._current_profile_id)
+    assert profile.calibration_map is None
+    assert profile.analysis_manifest is None
+    assert profile.knee_manifest is None
+    assert profile.gait_analysis_enabled is False
+    assert profile.knee_correction_enabled is False
+    assert widget.profile_readiness_values["calibration"].text() == "Excluded"
+    assert widget.profile_readiness_values["analysis"].text() == "Excluded"
+    assert widget.profile_readiness_values["knee"].text() == "Excluded"
+    assert widget.skip_gait_analysis_button.isChecked()
+    assert not widget.skip_gait_analysis_button.isEnabled()
     widget.close()
     app.processEvents()
 
@@ -356,7 +508,7 @@ def test_rejected_pipeline_check_opens_correct_settings_and_rechecks_on_resume(t
             break
 
     assert widget._pipeline_demo_waiting_for_review == 0
-    assert widget.pipeline_review_title.text() == "Confirm processed video regions"
+    assert widget.pipeline_review_title.text() == "Review processed videos"
     assert not widget.pipeline_review_panel.isHidden()
     assert widget.pipeline_review_video_list.count() == 4
     assert "Regions:" in widget.pipeline_review_video_list.item(0).text()

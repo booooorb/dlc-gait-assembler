@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
+    QDesktopServices,
     QDragEnterEvent,
     QDropEvent,
     QImage,
@@ -13,6 +15,8 @@ from PySide6.QtGui import (
     QPalette,
     QPen,
     QPixmap,
+    QTextCharFormat,
+    QTextCursor,
 )
 from PySide6.QtWidgets import (
     QComboBox,
@@ -30,13 +34,16 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSlider,
+    QScrollArea,
     QStackedWidget,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.automated_pipeline.worker import AutomatedPipelineWorker
 from dlc_gait_assembly.gui.shared.progress import CircularProgressIndicator, DynamicProgressBar
 from dlc_gait_assembly.services.analysis_manifests import (
     read_analysis_manifest,
@@ -85,32 +92,32 @@ PIPELINE_STAGE_ACTIVITY = (
     "Analyzing gait",
 )
 RUN_PREVIEW_TOOLTIP = (
-    "Start a visual walkthrough of every pipeline stage and review checkpoint. "
-    "Preview mode does not process videos or change files."
+    "Run the selected profile on the queued videos. With no complete profile or videos, "
+    "this button opens the visual pipeline preview."
 )
 STOP_PREVIEW_TOOLTIP = (
     "Stop the pipeline walkthrough and return to the video queue. No files have been changed."
 )
 PIPELINE_REVIEW_GATES = {
     0: {
-        "title": "Confirm processed video regions",
-        "description": "Check that every cropped region is correct before pose analysis continues. Double-click a video for a large preview.",
+        "title": "Review processed videos",
+        "description": "Verify each crop. Double-click a video to enlarge it.",
         "preview": "Processed region-video previews appear here.",
         "setting": "video processing manifest",
         "tab": 0,
         "replay_stage": 0,
     },
-    2: {
-        "title": "Confirm DeepLabCut analyzed videos",
-        "description": "Check the tracking overlays and confirm that each region used the correct model. Double-click a video for a large preview.",
+    1: {
+        "title": "Review DLC overlays",
+        "description": "Verify tracking and model assignment. Double-click to enlarge.",
         "preview": "DeepLabCut overlay-video previews appear here.",
         "setting": "region model configuration",
         "tab": 1,
         "replay_stage": 1,
     },
     3: {
-        "title": "Confirm generated stickplot",
-        "description": "Check the generated stickplot before the final gait analysis runs. Double-click the stickplot for a large view.",
+        "title": "Review stickplot",
+        "description": "Verify the stickplot. Double-click to enlarge.",
         "preview": "The generated stickplot preview appears here.",
         "setting": "gait analysis manifest",
         "tab": 2,
@@ -119,16 +126,38 @@ PIPELINE_REVIEW_GATES = {
 }
 
 
+@dataclass(frozen=True)
+class ReviewVideoSource:
+    path: Path
+    title: str
+    details: str
+    view_name: str
+
+
 class AutomatedPipelineProfilesWidget(QWidget):
     """Switchable automation workspace and profile-configuration workspace."""
 
     workspace_changed = Signal(str)
+    manual_tool_requested = Signal(str)
 
     def __init__(self, store: AutomatedProfileStore | None = None):
         super().__init__()
         self.setObjectName("AutomatedPipelineProfilesWidget")
-        project_root = find_project_root(Path.cwd())
-        self._store = store or AutomatedProfileStore(project_root / "outputs" / "automated_profiles")
+        project_root = find_project_root(__file__)
+        self._project_root = project_root
+        self._automated_output_root = project_root / "outputs" / "automated_pipeline"
+        self._automated_output_root.mkdir(parents=True, exist_ok=True)
+        stable_profile_root = project_root / "outputs" / "automated_profiles"
+        launch_root = find_project_root(Path.cwd())
+        legacy_profile_root = launch_root / "outputs" / "automated_profiles"
+        profile_root = stable_profile_root
+        if (
+            legacy_profile_root != stable_profile_root
+            and legacy_profile_root.exists()
+            and not any(stable_profile_root.glob("*/profile.json"))
+        ):
+            profile_root = legacy_profile_root
+        self._store = store or AutomatedProfileStore(profile_root)
         self._profiles: dict[str, AutomatedPipelineProfile] = {}
         self._current_profile_id: str | None = None
         self._manifest_source: Path | None = None
@@ -155,6 +184,14 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._pipeline_demo_timer = QTimer(self)
         self._pipeline_demo_timer.setInterval(60)
         self._pipeline_demo_timer.timeout.connect(self._advance_pipeline_demo)
+        self._pipeline_worker: AutomatedPipelineWorker | None = None
+        self._pipeline_output_folder: Path | None = None
+        self._pipeline_real_complete = False
+        self._pipeline_real_waiting_for_review: int | None = None
+        self._pipeline_review_artifacts: dict[str, object] | None = None
+        self._pipeline_stickplot_path: Path | None = None
+        self._pipeline_stickplot_pixmap: QPixmap | None = None
+        self._pipeline_skipped_stages: set[int] = set()
         self._saved_snapshot: tuple[str, ...] | None = None
         self._build_ui()
         self._connect_signals()
@@ -183,8 +220,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.profile_selector.setAccessibleName("Saved automated pipeline profile")
         self.profile_selector.setToolTip(
             "Choose the saved setup this run will use. A profile contains the video "
-            "processing manifest, region-specific DeepLabCut models, calibration map, "
-            "gait-analysis manifest, and optional knee-analysis manifest."
+            "processing manifest, region-specific DeepLabCut models, and any analysis "
+            "stages enabled when the profile was created."
         )
         selector_row.addWidget(self.profile_selector, 1)
         self.duplicate_profile_button = QPushButton("Duplicate")
@@ -296,9 +333,17 @@ class AutomatedPipelineProfilesWidget(QWidget):
         console_layout = QVBoxLayout(console_panel)
         console_layout.setContentsMargins(10, 8, 10, 10)
         console_layout.setSpacing(6)
+        console_header = QHBoxLayout()
+        console_header.setSpacing(8)
         console_title = QLabel("Log")
         console_title.setObjectName("AutomationPanelTitle")
-        console_layout.addWidget(console_title)
+        console_header.addWidget(console_title)
+        console_header.addStretch(1)
+        self.pipeline_log_state = QLabel("Ready")
+        self.pipeline_log_state.setObjectName("PipelineLogState")
+        self.pipeline_log_state.setProperty("logState", "ready")
+        console_header.addWidget(self.pipeline_log_state)
+        console_layout.addLayout(console_header)
         self.automation_console = QPlainTextEdit()
         self.automation_console.setObjectName("AutomationConsole")
         self.automation_console.setReadOnly(True)
@@ -309,15 +354,44 @@ class AutomatedPipelineProfilesWidget(QWidget):
             "Read-only activity log for the current automation preview, including stage "
             "progress, review pauses, and errors."
         )
-        self.automation_console.setPlainText("[Ready]")
+        self.automation_console.setPlainText("Ready")
         console_layout.addWidget(self.automation_console, 1)
         automation_content.addWidget(console_panel, 2)
+        self.automation_console_panel = console_panel
+        self._automation_input_default_minimum_height = self.automation_input_stack.minimumHeight()
+        self._automation_input_default_maximum_height = self.automation_input_stack.maximumHeight()
+        self._automation_console_default_minimum_height = console_panel.minimumHeight()
+        self._automation_console_default_maximum_height = console_panel.maximumHeight()
         automation_layout.addLayout(automation_content, 1)
 
         run_row = QHBoxLayout()
-        self.run_readiness_label = QLabel("Preview only")
+        self.run_readiness_label = QLabel("Ready")
         self.run_readiness_label.setObjectName("ProfileStatusLabel")
         run_row.addWidget(self.run_readiness_label, 1)
+        self.skip_knee_correction_button = QPushButton("Skip knee correction")
+        self.skip_knee_correction_button.setObjectName("PipelineOptionButton")
+        self.skip_knee_correction_button.setCheckable(True)
+        self.skip_knee_correction_button.setAccessibleName(
+            "Exclude knee correction from this run"
+        )
+        self.skip_knee_correction_button.setToolTip(
+            "Use the DeepLabCut coordinates directly, even when the profile has a knee manifest."
+        )
+        run_row.addWidget(self.skip_knee_correction_button)
+        self.skip_gait_analysis_button = QPushButton("Skip gait analysis")
+        self.skip_gait_analysis_button.setObjectName("PipelineOptionButton")
+        self.skip_gait_analysis_button.setCheckable(True)
+        self.skip_gait_analysis_button.setAccessibleName(
+            "Exclude gait analysis from this run"
+        )
+        self.skip_gait_analysis_button.setToolTip(
+            "Finish after DeepLabCut or knee correction without stickplots or gait parameters."
+        )
+        run_row.addWidget(self.skip_gait_analysis_button)
+        self.open_pipeline_output_button = QPushButton("Open outputs")
+        self.open_pipeline_output_button.setObjectName("OpenPipelineOutputButton")
+        self.open_pipeline_output_button.setToolTip(str(self._automated_output_root))
+        run_row.addWidget(self.open_pipeline_output_button)
         self.run_pipeline_button = QPushButton("RUN pipeline")
         self.run_pipeline_button.setObjectName("RunPipelineButton")
         self.run_pipeline_button.setEnabled(True)
@@ -396,7 +470,14 @@ class AutomatedPipelineProfilesWidget(QWidget):
         manifest_row = QHBoxLayout()
         self.manifest_path_label = self._path_label()
         manifest_row.addWidget(self.manifest_path_label, 1)
+        self.open_video_settings_button = QPushButton("Open Video tool")
+        self.open_video_settings_button.setObjectName("OpenManualToolButton")
+        self.open_video_settings_button.setToolTip(
+            "Open Video Processing to create or update the video settings manifest."
+        )
+        manifest_row.addWidget(self.open_video_settings_button)
         self.manifest_upload_button = QPushButton("Upload manifest")
+        self.manifest_upload_button.setObjectName("ProfileUploadButton")
         self.manifest_upload_button.setToolTip(
             "Choose a video settings or processing manifest JSON file. Its crop-region "
             "names create the model slots in step 2."
@@ -408,7 +489,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.regions_label.setWordWrap(True)
         manifest_content.addWidget(self.regions_label)
         manifest_content.addStretch(1)
-        self.configuration_tabs.addTab(manifest_page, "1  Manifest + regions")
+        self.configuration_tabs.addTab(manifest_page, "1  Video settings")
         self.configuration_tabs.setTabToolTip(
             0,
             "Choose the video settings or processing manifest that defines cropping, "
@@ -420,9 +501,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.models_layout = QVBoxLayout(self.models_container)
         self.models_layout.setContentsMargins(0, 0, 0, 0)
         self.models_layout.setSpacing(6)
-        models_content.addWidget(self.models_container)
-        models_content.addStretch(1)
-        self.configuration_tabs.addTab(models_page, "2  Region models")
+        self.models_scroll = QScrollArea()
+        self.models_scroll.setObjectName("ProfileModelsScroll")
+        self.models_scroll.setWidgetResizable(True)
+        self.models_scroll.setFrameShape(QFrame.NoFrame)
+        self.models_scroll.setWidget(self.models_container)
+        models_content.addWidget(self.models_scroll, 1)
+        self.configuration_tabs.addTab(models_page, "2  DLC models")
         self.configuration_tabs.setTabToolTip(
             1,
             "Assign one trained DeepLabCut model file or model folder to each region "
@@ -430,11 +515,40 @@ class AutomatedPipelineProfilesWidget(QWidget):
         )
 
         calibration_page, calibration_content = self._stage_page()
+        calibration_content.addWidget(self._field_label("Included analysis stages"))
+        analysis_stage_row = QHBoxLayout()
+        self.include_gait_analysis_button = QPushButton("Gait analysis")
+        self.include_gait_analysis_button.setObjectName("ProfileStageToggle")
+        self.include_gait_analysis_button.setCheckable(True)
+        self.include_gait_analysis_button.setChecked(True)
+        self.include_gait_analysis_button.setToolTip(
+            "Include stickplot generation and final gait parameter extraction in this profile."
+        )
+        analysis_stage_row.addWidget(self.include_gait_analysis_button)
+        self.include_knee_correction_button = QPushButton("Knee correction")
+        self.include_knee_correction_button.setObjectName("ProfileStageToggle")
+        self.include_knee_correction_button.setCheckable(True)
+        self.include_knee_correction_button.setChecked(False)
+        self.include_knee_correction_button.setToolTip(
+            "Include knee-coordinate correction before stickplot or gait analysis."
+        )
+        analysis_stage_row.addWidget(self.include_knee_correction_button)
+        analysis_stage_row.addStretch(1)
+        calibration_content.addLayout(analysis_stage_row)
+
+        calibration_content.addSpacing(10)
         calibration_content.addWidget(self._field_label("Calibration map"))
         calibration_row = QHBoxLayout()
         self.calibration_path_label = self._path_label()
         calibration_row.addWidget(self.calibration_path_label, 1)
+        self.open_calibration_settings_button = QPushButton("Open Calibration tool")
+        self.open_calibration_settings_button.setObjectName("OpenManualToolButton")
+        self.open_calibration_settings_button.setToolTip(
+            "Open Calibration to create or update the calibration map."
+        )
+        calibration_row.addWidget(self.open_calibration_settings_button)
         self.calibration_upload_button = QPushButton("Upload calibration map")
+        self.calibration_upload_button.setObjectName("ProfileUploadButton")
         self.calibration_upload_button.setToolTip(
             "Choose the calibration-map JSON exported by the Calibration tool. It converts "
             "tracked image coordinates into physical measurements."
@@ -447,7 +561,14 @@ class AutomatedPipelineProfilesWidget(QWidget):
         analysis_row = QHBoxLayout()
         self.analysis_manifest_path_label = self._path_label()
         analysis_row.addWidget(self.analysis_manifest_path_label, 1)
+        self.open_gait_settings_button = QPushButton("Open Gait tool")
+        self.open_gait_settings_button.setObjectName("OpenManualToolButton")
+        self.open_gait_settings_button.setToolTip(
+            "Open Gait Parameter Analysis to create or update its analysis manifest."
+        )
+        analysis_row.addWidget(self.open_gait_settings_button)
         self.analysis_manifest_upload_button = QPushButton("Upload analysis manifest")
+        self.analysis_manifest_upload_button.setObjectName("ProfileUploadButton")
         self.analysis_manifest_upload_button.setToolTip(
             "Choose the gait-analysis manifest exported by the Gait tool. It stores the "
             "analysis settings that will be reused for this profile."
@@ -460,7 +581,14 @@ class AutomatedPipelineProfilesWidget(QWidget):
         knee_row = QHBoxLayout()
         self.knee_manifest_path_label = self._path_label()
         knee_row.addWidget(self.knee_manifest_path_label, 1)
+        self.open_knee_settings_button = QPushButton("Open Knee tool")
+        self.open_knee_settings_button.setObjectName("OpenManualToolButton")
+        self.open_knee_settings_button.setToolTip(
+            "Open Knee Correction to create or update its knee-analysis manifest."
+        )
+        knee_row.addWidget(self.open_knee_settings_button)
         self.knee_manifest_upload_button = QPushButton("Upload knee manifest")
+        self.knee_manifest_upload_button.setObjectName("ProfileUploadButton")
         self.knee_manifest_upload_button.setToolTip(
             "Choose the knee-analysis manifest exported by the Knee tool. It stores "
             "the knee lengths, label choices, confidence cutoff, and correction direction."
@@ -468,34 +596,65 @@ class AutomatedPipelineProfilesWidget(QWidget):
         knee_row.addWidget(self.knee_manifest_upload_button)
         calibration_content.addLayout(knee_row)
         calibration_content.addStretch(1)
-        self.configuration_tabs.addTab(calibration_page, "3  Gait analysis")
+        self.configuration_tabs.addTab(calibration_page, "3  Analysis settings")
         self.configuration_tabs.setTabToolTip(
             2,
-            "Choose the calibration map plus gait and knee manifests produced by the manual tools.",
+            "Choose which analysis stages to include, then supply only their required files.",
         )
 
-        save_page, save_content = self._stage_page()
-        save_row = QHBoxLayout()
+        readiness_panel = QFrame()
+        readiness_panel.setObjectName("ProfileReadinessPanel")
+        readiness_panel.setMinimumWidth(250)
+        readiness_panel.setMaximumWidth(300)
+        readiness_panel.setMinimumHeight(230)
+        readiness_panel.setMaximumHeight(360)
+        readiness_layout = QVBoxLayout(readiness_panel)
+        readiness_layout.setContentsMargins(12, 12, 12, 12)
+        readiness_layout.setSpacing(8)
+        readiness_title = QLabel("Profile readiness")
+        readiness_title.setObjectName("ProfileReadinessTitle")
+        readiness_layout.addWidget(readiness_title)
+        self.profile_readiness_values: dict[str, QLabel] = {}
+        for key, label_text in (
+            ("manifest", "Video settings"),
+            ("models", "DLC models"),
+            ("calibration", "Calibration"),
+            ("analysis", "Gait settings"),
+            ("knee", "Knee settings"),
+        ):
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            label = QLabel(label_text)
+            label.setObjectName("ProfileReadinessLabel")
+            row.addWidget(label)
+            value = QLabel()
+            value.setObjectName("ProfileReadinessValue")
+            value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row.addWidget(value, 1)
+            readiness_layout.addLayout(row)
+            self.profile_readiness_values[key] = value
+        readiness_layout.addStretch(1)
+
         self.status_label = QLabel("Start with the video processing manifest in step 1.")
         self.status_label.setObjectName("ProfileStatusLabel")
         self.status_label.setWordWrap(True)
-        save_row.addWidget(self.status_label, 1)
+        readiness_layout.addWidget(self.status_label)
         self.save_profile_button = QPushButton("Save new profile")
         self.save_profile_button.setObjectName("PrimaryButton")
         self.save_profile_button.setToolTip(
             "Validate the required inputs and save them together as a reusable profile. "
             "Saving a profile does not start the pipeline."
         )
-        save_row.addWidget(self.save_profile_button)
-        save_content.addLayout(save_row)
-        save_content.addStretch(1)
-        self.configuration_tabs.addTab(save_page, "4  Review + save")
-        self.configuration_tabs.setTabToolTip(
-            3,
-            "Check validation messages, then save the complete setup for future runs.",
-        )
-        self.configuration_tabs.setMinimumHeight(320)
-        configuration_layout.addWidget(self.configuration_tabs)
+        readiness_layout.addWidget(self.save_profile_button)
+
+        setup_layout = QHBoxLayout()
+        setup_layout.setSpacing(10)
+        setup_layout.addWidget(self.configuration_tabs, 1)
+        setup_layout.addWidget(readiness_panel)
+        self.configuration_tabs.setMinimumHeight(230)
+        self.configuration_tabs.setMaximumHeight(360)
+        configuration_layout.addLayout(setup_layout)
+        configuration_layout.addStretch(1)
         self.workspace_stack.addWidget(configuration_page)
         self.configuration_page = configuration_page
         root.addWidget(self.workspace_stack, 1)
@@ -528,11 +687,11 @@ class AutomatedPipelineProfilesWidget(QWidget):
         panel = QFrame()
         panel.setObjectName("PipelineStatusPanel")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(6, 5, 6, 5)
+        layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(4)
 
         header = QHBoxLayout()
-        title = QLabel("Automated pipeline progress")
+        title = QLabel("Progress")
         title.setObjectName("AutomationPanelTitle")
         header.addWidget(title)
         header.addStretch(1)
@@ -542,44 +701,42 @@ class AutomatedPipelineProfilesWidget(QWidget):
         layout.addLayout(header)
 
         stage_row = QHBoxLayout()
-        stage_row.setSpacing(5)
+        stage_row.setSpacing(6)
         self.pipeline_stage_cards: list[QFrame] = []
         self.pipeline_stage_status_labels: list[QLabel] = []
         self.pipeline_stage_review_labels: list[QLabel] = []
         self.pipeline_stage_progress_bars: list[CircularProgressIndicator] = []
         for index, stage_title in enumerate(PIPELINE_STAGE_LABELS):
             if index:
-                connector = QLabel("→")
+                connector = QFrame()
                 connector.setObjectName("PipelineConnector")
-                connector.setAlignment(Qt.AlignCenter)
-                stage_row.addWidget(connector)
+                connector.setFixedHeight(1)
+                connector.setMinimumWidth(6)
+                connector.setMaximumWidth(10)
+                stage_row.addWidget(connector, 0, Qt.AlignVCenter)
             card = QFrame()
             card.setObjectName("PipelineStageCard")
             card.setProperty("pipelineState", "pending")
-            card.setFixedHeight(116)
+            card.setFixedHeight(128)
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(4, 5, 4, 5)
-            card_layout.setSpacing(2)
+            card_layout.setContentsMargins(6, 8, 6, 7)
+            card_layout.setSpacing(4)
             stage_progress = CircularProgressIndicator(accent_role="primary")
             stage_progress.setObjectName("PipelineStageProgress")
             stage_progress.setRange(0, 100)
             stage_progress.setValue(0)
             stage_progress.setTextVisible(False)
             stage_progress.set_center_text(str(index + 1))
-            stage_progress.setFixedSize(52, 52)
+            stage_progress.setFixedSize(44, 44)
             card_layout.addWidget(stage_progress, 0, Qt.AlignHCenter)
             name = QLabel(stage_title)
             name.setObjectName("PipelineStageName")
             name.setAlignment(Qt.AlignCenter)
             name.setWordWrap(True)
             card_layout.addWidget(name, 1)
-            review_indicator = QLabel(
-                "Review required" if index in PIPELINE_REVIEW_GATES else ""
-            )
+            review_indicator = QLabel("")
             review_indicator.setObjectName("PipelineReviewIndicator")
-            review_indicator.setAlignment(Qt.AlignCenter)
-            review_indicator.setVisible(index in PIPELINE_REVIEW_GATES)
-            card_layout.addWidget(review_indicator)
+            review_indicator.hide()
             status = QLabel("Waiting")
             status.setObjectName("PipelineStageStatus")
             status.setAlignment(Qt.AlignCenter)
@@ -592,20 +749,22 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_stage_progress_bars.append(stage_progress)
         layout.addLayout(stage_row)
 
-        self.pipeline_current_stage_label = QLabel("Waiting to start")
+        self.pipeline_activity_panel = QFrame()
+        self.pipeline_activity_panel.setObjectName("PipelineActivityPanel")
+        activity_layout = QVBoxLayout(self.pipeline_activity_panel)
+        activity_layout.setContentsMargins(0, 16, 0, 0)
+        activity_layout.setSpacing(10)
+        self.pipeline_current_stage_label = QLabel("Overall progress")
         self.pipeline_current_stage_label.setObjectName("PipelineCurrentStage")
-        layout.addWidget(self.pipeline_current_stage_label)
+        activity_layout.addWidget(self.pipeline_current_stage_label)
         self.pipeline_progress_bar = DynamicProgressBar(accent_role="primary")
         self.pipeline_progress_bar.setObjectName("PipelineProgressBar")
         self.pipeline_progress_bar.setRange(0, 100)
         self.pipeline_progress_bar.setValue(0)
         self.pipeline_progress_bar.setTextVisible(True)
-        layout.addWidget(self.pipeline_progress_bar)
-        self.pipeline_progress_detail = QLabel(
-            "Stages run in order; inspection stages pause for review."
-        )
-        self.pipeline_progress_detail.setObjectName("PipelineProgressDetail")
-        layout.addWidget(self.pipeline_progress_detail)
+        activity_layout.addWidget(self.pipeline_progress_bar)
+        activity_layout.addStretch(1)
+        layout.addWidget(self.pipeline_activity_panel, 1)
 
         self.pipeline_review_panel = QFrame()
         self.pipeline_review_panel.setObjectName("PipelineReviewPanel")
@@ -674,8 +833,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         review_copy.addLayout(review_buttons)
         review_layout.addLayout(review_copy, 2)
         self.pipeline_review_panel.hide()
-        layout.addWidget(self.pipeline_review_panel)
-        layout.addStretch(1)
+        layout.addWidget(self.pipeline_review_panel, 1)
         return panel
 
     def _connect_signals(self) -> None:
@@ -688,10 +846,28 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.delete_profile_button.clicked.connect(self._delete_profile)
         self.open_profile_configuration_button.clicked.connect(self._show_profile_configuration)
         self.back_to_automation_button.clicked.connect(self._show_automation_menu)
+        self.open_video_settings_button.clicked.connect(
+            lambda _checked=False: self.manual_tool_requested.emit("video_processing")
+        )
+        self.open_calibration_settings_button.clicked.connect(
+            lambda _checked=False: self.manual_tool_requested.emit("manual_calibration")
+        )
+        self.open_gait_settings_button.clicked.connect(
+            lambda _checked=False: self.manual_tool_requested.emit("gait_parameter_analysis")
+        )
+        self.open_knee_settings_button.clicked.connect(
+            lambda _checked=False: self.manual_tool_requested.emit("knee_correction")
+        )
         self.manifest_upload_button.clicked.connect(self._choose_processing_manifest)
         self.calibration_upload_button.clicked.connect(self._choose_calibration_map)
         self.analysis_manifest_upload_button.clicked.connect(self._choose_analysis_manifest)
         self.knee_manifest_upload_button.clicked.connect(self._choose_knee_manifest)
+        self.include_gait_analysis_button.toggled.connect(
+            self._profile_stage_options_changed
+        )
+        self.include_knee_correction_button.toggled.connect(
+            self._profile_stage_options_changed
+        )
         self.save_profile_button.clicked.connect(self._save_profile)
         self.upload_videos_button.clicked.connect(self._choose_videos)
         self.remove_videos_button.clicked.connect(self._remove_selected_videos)
@@ -700,7 +876,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.video_list.itemEntered.connect(self._start_hover_preview)
         self.video_list.pointer_left.connect(self._stop_hover_preview)
         self.video_list.itemDoubleClicked.connect(self._open_large_video_preview)
-        self.run_pipeline_button.clicked.connect(self._toggle_pipeline_demo)
+        self.run_pipeline_button.clicked.connect(self._toggle_pipeline_run)
+        self.open_pipeline_output_button.clicked.connect(self._open_pipeline_output)
         self.pipeline_approve_button.clicked.connect(self._approve_pipeline_review)
         self.pipeline_needs_changes_button.clicked.connect(self._reject_pipeline_review)
         self.pipeline_change_settings_button.clicked.connect(self._open_pipeline_fix_settings)
@@ -781,6 +958,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 source.deeplabcut_models,
                 analysis_manifest=source.analysis_manifest,
                 knee_manifest=source.knee_manifest,
+                gait_analysis_enabled=source.gait_analysis_enabled,
+                knee_correction_enabled=source.knee_correction_enabled,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not duplicate profile", str(exc))
@@ -806,6 +985,15 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._regions = ()
         self._model_sources = {}
         self._saved_snapshot = None
+        blockers = (
+            QSignalBlocker(self.include_gait_analysis_button),
+            QSignalBlocker(self.include_knee_correction_button),
+        )
+        self.include_gait_analysis_button.setChecked(True)
+        self.include_knee_correction_button.setChecked(False)
+        del blockers
+        self._apply_profile_stage_option_state()
+        self._sync_run_options_to_profile(None)
         self._refresh_paths()
         self._render_model_rows()
         self.delete_profile_button.setEnabled(False)
@@ -822,6 +1010,15 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._knee_manifest_source = profile.knee_manifest
         self._regions = regions_from_processing_manifest(profile.processing_manifest)
         self._model_sources = {region: profile.deeplabcut_models.get(region) for region in self._regions}
+        blockers = (
+            QSignalBlocker(self.include_gait_analysis_button),
+            QSignalBlocker(self.include_knee_correction_button),
+        )
+        self.include_gait_analysis_button.setChecked(profile.gait_analysis_enabled)
+        self.include_knee_correction_button.setChecked(profile.knee_correction_enabled)
+        del blockers
+        self._apply_profile_stage_option_state()
+        self._sync_run_options_to_profile(profile)
         self._refresh_paths()
         self._render_model_rows()
         self._saved_snapshot = self._snapshot()
@@ -834,7 +1031,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Choose video settings or processing manifest",
-            str(find_project_root(Path.cwd()) / "outputs" / "videos"),
+            str(self._project_root / "outputs" / "manual_pipeline" / "processed_videos"),
             "Video manifest (*.json);;JSON files (*.json);;All files (*)",
         )
         if path:
@@ -862,7 +1059,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Choose calibration map",
-            str(find_project_root(Path.cwd()) / "outputs" / "calibration"),
+            str(self._project_root / "outputs" / "calibration"),
             "Calibration map (conversion_factor_map.json);;JSON files (*.json);;All files (*)",
         )
         if path:
@@ -870,11 +1067,76 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self._refresh_paths()
             self.status_label.setText("Calibration selected. Add the gait manifest and optional knee manifest below it.")
 
+    def _profile_stage_options_changed(self, _checked: bool = False) -> None:
+        self._apply_profile_stage_option_state()
+        self._refresh_profile_readiness()
+        included = []
+        if self.include_gait_analysis_button.isChecked():
+            included.append("gait analysis")
+        if self.include_knee_correction_button.isChecked():
+            included.append("knee correction")
+        self.status_label.setText(
+            "Included: " + (", ".join(included) if included else "video processing and DLC only")
+        )
+
+    def _apply_profile_stage_option_state(self) -> None:
+        gait_enabled = self.include_gait_analysis_button.isChecked()
+        knee_enabled = self.include_knee_correction_button.isChecked()
+        for widget in (
+            self.calibration_path_label,
+            self.open_calibration_settings_button,
+            self.calibration_upload_button,
+            self.analysis_manifest_path_label,
+            self.open_gait_settings_button,
+            self.analysis_manifest_upload_button,
+        ):
+            widget.setEnabled(gait_enabled)
+        for widget in (
+            self.knee_manifest_path_label,
+            self.open_knee_settings_button,
+            self.knee_manifest_upload_button,
+        ):
+            widget.setEnabled(knee_enabled)
+
+    def _sync_run_options_to_profile(
+        self,
+        profile: AutomatedPipelineProfile | None,
+    ) -> None:
+        blockers = (
+            QSignalBlocker(self.skip_knee_correction_button),
+            QSignalBlocker(self.skip_gait_analysis_button),
+        )
+        if profile is None:
+            self.skip_knee_correction_button.setChecked(False)
+            self.skip_gait_analysis_button.setChecked(False)
+        else:
+            self.skip_knee_correction_button.setChecked(
+                not profile.knee_correction_enabled
+            )
+            self.skip_gait_analysis_button.setChecked(not profile.gait_analysis_enabled)
+        del blockers
+        self._refresh_run_option_enabled_state(profile)
+
+    def _refresh_run_option_enabled_state(
+        self,
+        profile: AutomatedPipelineProfile | None = None,
+    ) -> None:
+        if profile is None:
+            profile = self._profiles.get(self._current_profile_id or "")
+        profile_knee_enabled = profile is None or profile.knee_correction_enabled
+        profile_gait_enabled = profile is None or profile.gait_analysis_enabled
+        self.skip_knee_correction_button.setEnabled(
+            not self._pipeline_running and profile_knee_enabled
+        )
+        self.skip_gait_analysis_button.setEnabled(
+            not self._pipeline_running and profile_gait_enabled
+        )
+
     def _choose_analysis_manifest(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Choose gait analysis manifest",
-            str(find_project_root(Path.cwd()) / "outputs" / "gait_analysis"),
+            str(self._project_root / "outputs" / "manual_pipeline" / "gait_analysis"),
             "Analysis manifest (analysis_manifest.json);;JSON files (*.json);;All files (*)",
         )
         if path:
@@ -888,15 +1150,16 @@ class AutomatedPipelineProfilesWidget(QWidget):
             QMessageBox.critical(self, "Could not read analysis manifest", str(exc))
             return False
         self._analysis_manifest_source = path
+        self.include_gait_analysis_button.setChecked(True)
         self._refresh_paths()
-        self.status_label.setText("Gait analysis settings selected. Review and save the profile.")
+        self.status_label.setText("Gait analysis settings selected. Save the profile when ready.")
         return True
 
     def _choose_knee_manifest(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Choose knee analysis manifest",
-            str(find_project_root(Path.cwd()) / "outputs" / "knee_correction"),
+            str(self._project_root / "outputs" / "manual_pipeline" / "knee_correction"),
             "Knee analysis manifest (*.json);;JSON files (*.json);;All files (*)",
         )
         if path:
@@ -910,8 +1173,9 @@ class AutomatedPipelineProfilesWidget(QWidget):
             QMessageBox.critical(self, "Could not read knee manifest", str(exc))
             return False
         self._knee_manifest_source = path
+        self.include_knee_correction_button.setChecked(True)
         self._refresh_paths()
-        self.status_label.setText("Knee analysis settings selected. Review and save the profile.")
+        self.status_label.setText("Knee analysis settings selected. Save the profile when ready.")
         return True
 
     def _choose_videos(self) -> None:
@@ -977,7 +1241,236 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.video_list.viewport().update()
 
     def _append_console(self, message: str) -> None:
-        self.automation_console.appendPlainText(message)
+        lowered = message.lower()
+        if any(token in lowered for token in ("error", "failed", "changes required")):
+            accent = theme.STATUS_ERROR
+        elif any(token in lowered for token in ("complete", "confirmed", "ready")):
+            accent = theme.STATUS_READY
+        elif any(token in lowered for token in ("review", "manual check", "resume")):
+            accent = theme.STATUS_RUNNING
+        else:
+            accent = theme.TEXT
+
+        cursor = self.automation_console.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertBlock()
+        prefix_end = message.find("]") + 1
+        if prefix_end > 0:
+            prefix_format = QTextCharFormat()
+            prefix_format.setForeground(QColor(accent))
+            cursor.insertText(message[:prefix_end], prefix_format)
+            body_format = QTextCharFormat()
+            body_format.setForeground(QColor(theme.TEXT))
+            cursor.insertText(message[prefix_end:], body_format)
+        else:
+            line_format = QTextCharFormat()
+            line_format.setForeground(QColor(accent))
+            cursor.insertText(message, line_format)
+        self.automation_console.setTextCursor(cursor)
+        self.automation_console.ensureCursorVisible()
+
+    def _set_pipeline_log_state(self, text: str, state: str) -> None:
+        self.pipeline_log_state.setText(text)
+        self.pipeline_log_state.setProperty("logState", state)
+        self.pipeline_log_state.style().unpolish(self.pipeline_log_state)
+        self.pipeline_log_state.style().polish(self.pipeline_log_state)
+
+    def _toggle_pipeline_run(self) -> None:
+        if self._pipeline_worker is not None and self._pipeline_worker.isRunning():
+            self._pipeline_worker.request_cancel()
+            self.run_pipeline_button.setText("Stopping")
+            self.run_pipeline_button.setEnabled(False)
+            self.run_readiness_label.setText("Stopping after current operation")
+            self._append_console("[Pipeline] Stop requested; waiting for the current operation.")
+            return
+        if self._pipeline_real_complete:
+            self._pipeline_real_complete = False
+            self._pipeline_demo_blocked_stage = None
+            self._pipeline_demo_waiting_for_review = None
+            self.set_pipeline_running(False)
+            self.run_pipeline_button.setText("RUN pipeline")
+            self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
+            self.run_pipeline_button.setEnabled(True)
+            self.run_readiness_label.setText("Ready")
+            return
+
+        profile = self._profiles.get(self._current_profile_id or "")
+        if profile is None or not self._video_paths:
+            self._toggle_pipeline_demo()
+            return
+        self._start_pipeline(profile)
+
+    def _start_pipeline(self, profile: AutomatedPipelineProfile) -> None:
+        self._pipeline_real_complete = False
+        self._pipeline_real_waiting_for_review = None
+        self._pipeline_demo_waiting_for_review = None
+        self._pipeline_demo_blocked_stage = None
+        self._pipeline_review_artifacts = None
+        self._pipeline_stickplot_path = None
+        self._pipeline_stickplot_pixmap = None
+        self._pipeline_output_folder = None
+        self.open_pipeline_output_button.setText("Open outputs")
+        self.open_pipeline_output_button.setToolTip(str(self._automated_output_root))
+        self._pipeline_skipped_stages.clear()
+        self.pipeline_review_panel.hide()
+        self.automation_console.clear()
+        self.set_pipeline_running(True)
+        self.run_pipeline_button.setText("Stop pipeline")
+        self.run_pipeline_button.setToolTip(
+            "Stop after the currently running external operation finishes."
+        )
+        self.run_pipeline_button.setEnabled(True)
+        self.run_readiness_label.setText("Running")
+        self._append_console(
+            f'[Pipeline] Running profile "{profile.name}" on {len(self._video_paths)} video(s).'
+        )
+        excluded = []
+        if self.skip_knee_correction_button.isChecked():
+            excluded.append("knee correction")
+        if self.skip_gait_analysis_button.isChecked():
+            excluded.append("gait analysis")
+        if excluded:
+            self._append_console(f"[Pipeline] Excluding {', '.join(excluded)} from this run.")
+
+        worker = AutomatedPipelineWorker(
+            profile,
+            list(self._video_paths),
+            self._project_root,
+            enable_knee_correction=not self.skip_knee_correction_button.isChecked(),
+            enable_gait_analysis=not self.skip_gait_analysis_button.isChecked(),
+            parent=self,
+        )
+        self._pipeline_worker = worker
+        worker.stage_started.connect(self._pipeline_stage_started)
+        worker.output_folder_ready.connect(self._pipeline_output_folder_ready)
+        worker.stage_progress.connect(self._pipeline_stage_progressed)
+        worker.stage_skipped.connect(self._pipeline_stage_skipped)
+        worker.log_message.connect(lambda message: self._append_console(f"[Pipeline] {message}."))
+        worker.review_requested.connect(self._pipeline_review_requested)
+        worker.run_completed.connect(self._pipeline_run_completed)
+        worker.run_failed.connect(self._pipeline_run_failed)
+        worker.run_cancelled.connect(self._pipeline_run_cancelled)
+        worker.finished.connect(lambda: self._pipeline_worker_finished(worker))
+        worker.start()
+
+    def _pipeline_output_folder_ready(self, output_folder: object) -> None:
+        self._pipeline_output_folder = Path(output_folder).expanduser().resolve()
+        self.open_pipeline_output_button.setText("Open run output")
+        self.open_pipeline_output_button.setToolTip(str(self._pipeline_output_folder))
+        self.pipeline_current_stage_label.setToolTip(str(self._pipeline_output_folder))
+
+    def _open_pipeline_output(self) -> None:
+        output_folder = self._pipeline_output_folder or self._automated_output_root
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_folder)))
+
+    def _pipeline_stage_started(self, stage_index: int, label: str) -> None:
+        activity = PIPELINE_STAGE_ACTIVITY[stage_index]
+        self.set_pipeline_stage(
+            stage_index,
+            progress=0,
+            processed_videos=0 if stage_index == 0 else None,
+            total_videos=len(self._video_paths) if stage_index == 0 else None,
+            status_text=activity,
+        )
+        self.pipeline_current_stage_label.setText(activity)
+        self.pipeline_current_stage_label.setToolTip("")
+        self.run_readiness_label.setText(label)
+
+    def _pipeline_stage_progressed(
+        self,
+        stage_index: int,
+        current: int,
+        total: int,
+        message: str,
+    ) -> None:
+        progress = None if total <= 0 else (max(0, current) / max(1, total)) * 100.0
+        activity = message or PIPELINE_STAGE_ACTIVITY[stage_index]
+        compact_activity = activity
+        if stage_index == 1 and ":" in compact_activity:
+            compact_activity = compact_activity.split(":", 1)[0]
+        self.set_pipeline_stage(
+            stage_index,
+            progress=progress,
+            processed_videos=current if stage_index == 0 else None,
+            total_videos=total if stage_index == 0 else None,
+            status_text=compact_activity,
+        )
+        self.pipeline_current_stage_label.setText(activity)
+        self.pipeline_current_stage_label.setToolTip(activity)
+        if message and stage_index != 1:
+            self._append_console(f"[{PIPELINE_STAGE_LABELS[stage_index]}] {message}.")
+
+    def _pipeline_stage_skipped(self, stage_index: int, reason: str) -> None:
+        self._pipeline_skipped_stages.add(stage_index)
+        card = self.pipeline_stage_cards[stage_index]
+        card.setProperty("pipelineState", "skipped")
+        card.style().unpolish(card)
+        card.style().polish(card)
+        self.pipeline_stage_status_labels[stage_index].setText("Skipped")
+        if stage_index in PIPELINE_REVIEW_GATES:
+            self.pipeline_stage_review_labels[stage_index].setText("Not included")
+        self._set_pipeline_stage_progress(stage_index, 0, False, "primary")
+        self._append_console(f"[Skipped] {reason}.")
+
+    def _pipeline_review_requested(self, stage_index: int, artifacts: object) -> None:
+        self._pipeline_real_waiting_for_review = stage_index
+        self._pipeline_review_artifacts = artifacts if isinstance(artifacts, dict) else None
+        self._pause_for_pipeline_review(stage_index, self._pipeline_review_artifacts)
+
+    def _pipeline_run_completed(self, result: object) -> None:
+        self._pipeline_real_waiting_for_review = None
+        self._pipeline_real_complete = True
+        self.complete_pipeline("Pipeline complete")
+        self.run_pipeline_button.setText("Back to videos")
+        self.run_pipeline_button.setToolTip("Return to the video queue.")
+        self.run_pipeline_button.setEnabled(True)
+        self.run_readiness_label.setText("Complete")
+        output_folder = getattr(result, "output_folder", None)
+        if output_folder is not None:
+            self._pipeline_output_folder_ready(output_folder)
+            self._append_console(f"[Complete] Results saved to {output_folder}.")
+        output_manifest = getattr(result, "output_manifest", None)
+        if output_manifest is not None:
+            self._append_console(f"[Complete] Run manifest: {output_manifest}.")
+
+    def _pipeline_run_failed(self, stage_index: int, message: str) -> None:
+        self._pipeline_real_waiting_for_review = None
+        self._pipeline_real_complete = True
+        self.pipeline_review_panel.hide()
+        self.pipeline_activity_panel.show()
+        self.pipeline_progress_bar.set_active(False)
+        self.pipeline_progress_bar.set_accent_role("error")
+        self._set_pipeline_log_state("Failed", "error")
+        if 0 <= stage_index < len(self.pipeline_stage_cards):
+            card = self.pipeline_stage_cards[stage_index]
+            card.setProperty("pipelineState", "blocked")
+            card.style().unpolish(card)
+            card.style().polish(card)
+            self.pipeline_stage_status_labels[stage_index].setText("Failed")
+            self._set_pipeline_stage_progress(stage_index, 100, False, "error")
+        self.run_pipeline_button.setText("Back to videos")
+        self.run_pipeline_button.setToolTip("Return to the queue, correct the profile, and run again.")
+        self.run_pipeline_button.setEnabled(True)
+        self.run_readiness_label.setText("Failed")
+        self._append_console(f"[Failed] {message}")
+
+    def _pipeline_run_cancelled(self) -> None:
+        if self._pipeline_demo_blocked_stage is not None:
+            return
+        self._pipeline_real_waiting_for_review = None
+        self._pipeline_real_complete = False
+        self.pipeline_review_panel.hide()
+        self.set_pipeline_running(False)
+        self.run_pipeline_button.setText("RUN pipeline")
+        self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
+        self.run_pipeline_button.setEnabled(True)
+        self.run_readiness_label.setText("Stopped")
+        self._append_console("[Pipeline] Stopped.")
+
+    def _pipeline_worker_finished(self, worker: AutomatedPipelineWorker) -> None:
+        if self._pipeline_worker is worker:
+            self._pipeline_worker = None
+        worker.deleteLater()
 
     def _toggle_pipeline_demo(self) -> None:
         if self._pipeline_demo_complete:
@@ -1021,7 +1514,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self._begin_pipeline_demo_stage(0)
 
     def _begin_pipeline_demo_stage(self, stage_index: int) -> None:
-        self.pipeline_progress_detail.show()
+        self.pipeline_activity_panel.show()
         self._pipeline_demo_stage = stage_index
         self._pipeline_demo_progress = 0.0
         if stage_index == 0:
@@ -1091,24 +1584,26 @@ class AutomatedPipelineProfilesWidget(QWidget):
             return
         self._begin_pipeline_demo_stage(next_stage)
 
-    def _pause_for_pipeline_review(self, stage_index: int) -> None:
+    def _pause_for_pipeline_review(
+        self,
+        stage_index: int,
+        artifacts: dict[str, object] | None = None,
+    ) -> None:
         gate = PIPELINE_REVIEW_GATES[stage_index]
         self._pipeline_demo_timer.stop()
         self._pipeline_demo_waiting_for_review = stage_index
+        self._set_pipeline_overview_compact(True)
         self.pipeline_review_title.setText(str(gate["title"]))
         self.pipeline_review_description.setText(str(gate["description"]))
-        self._populate_pipeline_review_preview(stage_index)
+        self._populate_pipeline_review_preview(stage_index, artifacts)
         self.pipeline_change_settings_button.hide()
         self.pipeline_needs_changes_button.show()
         self.pipeline_approve_button.show()
+        self.pipeline_activity_panel.hide()
         self.pipeline_review_panel.show()
+        self._set_pipeline_log_state("Review", "review")
         self.pipeline_stage_status_labels[stage_index].setText("Awaiting confirmation")
         self.pipeline_stage_review_labels[stage_index].setText("Awaiting review")
-        self.pipeline_current_stage_label.setText(f"Manual check: {gate['title']}")
-        self.pipeline_progress_detail.setText(
-            "The pipeline is paused until this preview is confirmed."
-        )
-        self.pipeline_progress_detail.hide()
         self.pipeline_progress_bar.set_active(False)
         self._set_pipeline_stage_progress(stage_index, 100, False, "ready")
         self.run_pipeline_button.setText("Awaiting confirmation")
@@ -1119,7 +1614,14 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.run_readiness_label.setText("Review required")
         self._append_console(f"[Manual check] {gate['title']}. Pipeline paused.")
 
-    def _populate_pipeline_review_preview(self, stage_index: int) -> None:
+    def _populate_pipeline_review_preview(
+        self,
+        stage_index: int,
+        artifacts: dict[str, object] | None = None,
+    ) -> None:
+        if artifacts is not None:
+            self._populate_real_pipeline_review_preview(stage_index, artifacts)
+            return
         if stage_index == 3:
             self.pipeline_stickplot_preview.setPixmap(_demo_stickplot_pixmap(640, 240))
             self.pipeline_stickplot_preview.setToolTip(
@@ -1147,6 +1649,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 item.setData(Qt.UserRole, str(path) if path is not None else "")
                 item.setData(Qt.UserRole + 1, details)
                 item.setData(Qt.UserRole + 2, display_name)
+                item.setData(Qt.UserRole + 4, "All regions")
                 item.setToolTip(
                     "Inspect this processed output for the expected crop regions and "
                     "enhancements. Double-click to open a larger preview."
@@ -1183,6 +1686,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     item.setData(Qt.UserRole, str(path) if path is not None else "")
                     item.setData(Qt.UserRole + 1, details)
                     item.setData(Qt.UserRole + 2, display_name)
+                    item.setData(Qt.UserRole + 4, component)
                     item.setToolTip(
                         f"Inspect the {component} tracking overlay produced with {model_name}. "
                         "Double-click to open a larger preview."
@@ -1195,6 +1699,82 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_review_preview_stack.setCurrentWidget(
             self.pipeline_review_video_list
         )
+
+    def _populate_real_pipeline_review_preview(
+        self,
+        stage_index: int,
+        artifacts: dict[str, object],
+    ) -> None:
+        raw_items = artifacts.get("items", [])
+        items = raw_items if isinstance(raw_items, list) else []
+        if stage_index == 3:
+            image_paths = [Path(path) for path in items if Path(path).is_file()]
+            self._pipeline_stickplot_path = image_paths[0] if image_paths else None
+            pixmap = (
+                _pixmap_from_image_file(self._pipeline_stickplot_path, 640, 240)
+                if self._pipeline_stickplot_path is not None
+                else None
+            )
+            self._pipeline_stickplot_pixmap = pixmap
+            if pixmap is None or pixmap.isNull():
+                self.pipeline_stickplot_preview.setPixmap(QPixmap())
+                self.pipeline_stickplot_preview.setText("No stickplot image was produced")
+            else:
+                self.pipeline_stickplot_preview.setText("")
+                self.pipeline_stickplot_preview.setPixmap(pixmap)
+            self.pipeline_review_preview_stack.setCurrentWidget(
+                self.pipeline_stickplot_preview
+            )
+            return
+
+        normalized = [item for item in items if isinstance(item, dict)]
+        if stage_index == 0:
+            self.pipeline_review_video_list.clear()
+            for item_data in normalized:
+                self._add_real_review_video_item(self.pipeline_review_video_list, item_data)
+            self.pipeline_review_preview_stack.setCurrentWidget(
+                self.pipeline_review_video_list
+            )
+            return
+
+        self.pipeline_component_video_lists.clear()
+        while self.pipeline_component_tabs.count():
+            page = self.pipeline_component_tabs.widget(0)
+            self.pipeline_component_tabs.removeTab(0)
+            page.deleteLater()
+        views = []
+        for item_data in normalized:
+            view = str(item_data.get("view", "Full frame"))
+            if view not in views:
+                views.append(view)
+        for view in views:
+            component_list = QListWidget()
+            component_list.setObjectName("PipelineReviewVideoList")
+            component_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            component_list.itemDoubleClicked.connect(self._open_pipeline_review_video)
+            self.pipeline_component_tabs.addTab(component_list, view)
+            self.pipeline_component_video_lists[view] = component_list
+            for item_data in normalized:
+                if str(item_data.get("view", "Full frame")) == view:
+                    self._add_real_review_video_item(component_list, item_data)
+        self.pipeline_review_preview_stack.setCurrentWidget(self.pipeline_component_tabs)
+
+    def _add_real_review_video_item(
+        self,
+        target: QListWidget,
+        item_data: dict,
+    ) -> None:
+        path = Path(item_data.get("path", ""))
+        title = str(item_data.get("title") or path.name)
+        view = str(item_data.get("view") or "Full frame")
+        details = f"View: {view}"
+        item = QListWidgetItem(f"{title}  —  {details}")
+        item.setData(Qt.UserRole, str(path))
+        item.setData(Qt.UserRole + 1, details)
+        item.setData(Qt.UserRole + 2, title)
+        item.setData(Qt.UserRole + 4, view)
+        item.setToolTip("Double-click to inspect this generated video.")
+        target.addItem(item)
 
     def _processing_enhancement_summary(self) -> str:
         if self._manifest_source is None:
@@ -1222,15 +1802,16 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def _open_pipeline_review_video(self, item: QListWidgetItem) -> None:
         if item.data(Qt.UserRole + 3) == "component_header":
             return
-        path_text = str(item.data(Qt.UserRole) or "")
         title = str(item.data(Qt.UserRole + 2) or item.text().splitlines()[0])
         details = str(item.data(Qt.UserRole + 1) or "")
+        review_sources, selected_index = self._pipeline_review_sources(item)
         try:
-            if path_text and Path(path_text).is_file():
+            if review_sources:
                 dialog: QDialog = AutomationVideoPreviewDialog(
-                    Path(path_text),
+                    review_sources[selected_index].path,
                     self,
-                    subtitle=f"{details}\nDemo preview uses the queued source video until output exists.",
+                    review_sources=review_sources,
+                    initial_source_index=selected_index,
                 )
             else:
                 dialog = PipelineTextPreviewDialog(
@@ -1243,11 +1824,48 @@ class AutomatedPipelineProfilesWidget(QWidget):
             return
         self._show_large_review_dialog(dialog)
 
+    def _pipeline_review_sources(
+        self,
+        selected_item: QListWidgetItem,
+    ) -> tuple[tuple[ReviewVideoSource, ...], int]:
+        selected_list = selected_item.listWidget()
+        if selected_list is self.pipeline_review_video_list:
+            review_lists = (("All regions", self.pipeline_review_video_list),)
+        else:
+            review_lists = tuple(self.pipeline_component_video_lists.items())
+
+        sources: list[ReviewVideoSource] = []
+        selected_index = 0
+        for fallback_view, review_list in review_lists:
+            for row in range(review_list.count()):
+                item = review_list.item(row)
+                if item.data(Qt.UserRole + 3) == "component_header":
+                    continue
+                path_text = str(item.data(Qt.UserRole) or "")
+                path = Path(path_text) if path_text else None
+                if path is None or not path.is_file():
+                    continue
+                source = ReviewVideoSource(
+                    path=path,
+                    title=str(item.data(Qt.UserRole + 2) or item.text().splitlines()[0]),
+                    details=str(item.data(Qt.UserRole + 1) or ""),
+                    view_name=str(item.data(Qt.UserRole + 4) or fallback_view),
+                )
+                if item is selected_item:
+                    selected_index = len(sources)
+                sources.append(source)
+        return tuple(sources), selected_index
+
     def _open_large_stickplot_preview(self) -> None:
+        pixmap = None
+        if self._pipeline_stickplot_path is not None:
+            pixmap = _pixmap_from_image_file(self._pipeline_stickplot_path, 1200, 700)
+        if pixmap is None or pixmap.isNull():
+            pixmap = _demo_stickplot_pixmap(1200, 700)
         self._show_large_review_dialog(
             PipelineImagePreviewDialog(
                 "Generated stickplot preview",
-                _demo_stickplot_pixmap(1200, 700),
+                pixmap,
                 self,
             )
         )
@@ -1271,9 +1889,20 @@ class AutomatedPipelineProfilesWidget(QWidget):
         stage_index = self._pipeline_demo_waiting_for_review
         if stage_index is None:
             return
+        real_review = self._pipeline_real_waiting_for_review == stage_index
         self._pipeline_demo_waiting_for_review = None
+        self._pipeline_real_waiting_for_review = None
         self.pipeline_review_panel.hide()
         self.run_pipeline_button.setEnabled(True)
+        if real_review and self._pipeline_worker is not None:
+            self.run_pipeline_button.setText("Stop pipeline")
+            self.run_pipeline_button.setToolTip(
+                "Stop after the currently running external operation finishes."
+            )
+            self.run_readiness_label.setText("Continuing")
+            self._append_console(f"[Confirmed] {PIPELINE_STAGES[stage_index]}.")
+            self._pipeline_worker.approve_review()
+            return
         self.run_pipeline_button.setText("Stop preview")
         self.run_pipeline_button.setToolTip(STOP_PREVIEW_TOOLTIP)
         self.run_readiness_label.setText("Playing preview")
@@ -1285,9 +1914,12 @@ class AutomatedPipelineProfilesWidget(QWidget):
         stage_index = self._pipeline_demo_waiting_for_review
         if stage_index is None:
             return
+        real_review = self._pipeline_real_waiting_for_review == stage_index
         gate = PIPELINE_REVIEW_GATES[stage_index]
         self._pipeline_demo_waiting_for_review = None
+        self._pipeline_real_waiting_for_review = None
         self._pipeline_demo_blocked_stage = stage_index
+        self._set_pipeline_log_state("Paused", "paused")
         self.pipeline_review_title.setText("Pipeline paused — changes required")
         self.pipeline_review_description.setText(
             f"Update the {gate['setting']}. Resuming will replay the preceding stage and "
@@ -1304,16 +1936,21 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_stage_status_labels[stage_index].setText("Changes required")
         self.pipeline_stage_review_labels[stage_index].setText("Needs changes")
         self._set_pipeline_stage_progress(stage_index, 100, False, "error")
-        self.pipeline_current_stage_label.setText("Pipeline paused for configuration changes")
-        self.pipeline_progress_detail.setText(
-            f"Change the {gate['setting']}, then resume the preview."
-        )
         self.run_pipeline_button.setEnabled(True)
-        self.run_pipeline_button.setText("Resume preview")
-        self.run_pipeline_button.setToolTip(
-            f"Replay the affected stage after updating the {gate['setting']}, then return "
-            "to this review checkpoint."
-        )
+        if real_review:
+            self._pipeline_real_complete = True
+            self.run_pipeline_button.setText("Back to videos")
+            self.run_pipeline_button.setToolTip(
+                "Return to the queue. The next run will use the corrected profile."
+            )
+            if self._pipeline_worker is not None:
+                self._pipeline_worker.reject_review()
+        else:
+            self.run_pipeline_button.setText("Resume preview")
+            self.run_pipeline_button.setToolTip(
+                f"Replay the affected stage after updating the {gate['setting']}, then return "
+                "to this review checkpoint."
+            )
         self.run_readiness_label.setText("Changes required")
         self._append_console(
             f"[Changes required] Update the {gate['setting']}; pipeline remains paused."
@@ -1346,9 +1983,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
         """Swap the video queue for pipeline progress without starting any work."""
         was_running = self._pipeline_running
         self._pipeline_running = running
+        self._refresh_run_option_enabled_state()
         if running:
+            self._set_pipeline_overview_compact(True)
             self._stop_hover_preview()
             self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
+            if self._pipeline_demo_waiting_for_review is None:
+                self.pipeline_activity_panel.show()
             self.pipeline_progress_bar.set_accent_role("running")
             self.pipeline_progress_bar.set_active(True)
             if not was_running:
@@ -1361,9 +2002,11 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     status_text="Preparing videos",
                 )
         else:
+            self._pipeline_skipped_stages.clear()
+            self._set_pipeline_overview_compact(False)
             self.automation_input_stack.setCurrentWidget(self.video_panel)
-            self.pipeline_progress_detail.show()
             self.pipeline_progress_bar.set_active(False)
+            self._set_pipeline_log_state("Ready", "ready")
 
     def set_pipeline_stage(
         self,
@@ -1378,9 +2021,12 @@ class AutomatedPipelineProfilesWidget(QWidget):
         if not 0 <= stage_index < len(PIPELINE_STAGES):
             raise ValueError(f"Pipeline stage index must be between 0 and {len(PIPELINE_STAGES) - 1}.")
         self._pipeline_running = True
+        self._set_pipeline_overview_compact(True)
         if self._pipeline_demo_waiting_for_review is None:
-            self.pipeline_progress_detail.show()
+            self.pipeline_review_panel.hide()
+            self.pipeline_activity_panel.show()
         self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
+        self._set_pipeline_log_state("Running", "running")
         active_status = status_text or "In progress"
         stage_progress = None if progress is None else max(0.0, min(100.0, float(progress)))
         for index, (card, label, review_label) in enumerate(
@@ -1390,11 +2036,17 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 self.pipeline_stage_review_labels,
             )
         ):
-            if index < stage_index:
+            if index < stage_index and index in self._pipeline_skipped_stages:
+                state, text = "skipped", "Skipped"
+                self._set_pipeline_stage_progress(index, 0, False, "primary")
+            elif index < stage_index:
                 state, text = "complete", "Complete"
                 self._set_pipeline_stage_progress(index, 100, False, "ready")
             elif index == stage_index:
-                state, text = "active", active_status
+                text = active_status
+                if stage_progress is not None:
+                    text = f"{active_status} {stage_progress:g}%"
+                state = "active"
                 self._set_pipeline_stage_progress(index, stage_progress, True, "running")
             else:
                 state, text = "pending", "Waiting"
@@ -1402,12 +2054,15 @@ class AutomatedPipelineProfilesWidget(QWidget):
             card.setProperty("pipelineState", state)
             label.setText(text)
             if index in PIPELINE_REVIEW_GATES:
-                review_label.setText("Reviewed" if index < stage_index else "Review required")
+                if index in self._pipeline_skipped_stages:
+                    review_label.setText("Not included")
+                else:
+                    review_label.setText(
+                        "Reviewed" if index < stage_index else "Review required"
+                    )
             card.style().unpolish(card)
             card.style().polish(card)
 
-        stage_title = PIPELINE_STAGES[stage_index]
-        self.pipeline_current_stage_label.setText(f"Current stage: {stage_title}")
         if processed_videos is not None or total_videos is not None:
             processed = max(0, processed_videos or 0)
             total = max(0, total_videos or 0)
@@ -1419,8 +2074,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_progress_bar.set_accent_role("running")
             self.pipeline_progress_bar.setRange(0, 0)
             self.pipeline_progress_bar.set_active(True)
-            self.pipeline_progress_bar.setFormat("Working…")
-            self.pipeline_progress_detail.setText(active_status)
+            self.pipeline_progress_bar.setFormat("Working")
             return
 
         overall = round(((stage_index + stage_progress / 100.0) / len(PIPELINE_STAGES)) * 100)
@@ -1428,34 +2082,58 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_progress_bar.setRange(0, 100)
         self.pipeline_progress_bar.setValue(overall)
         self.pipeline_progress_bar.set_active(True)
-        self.pipeline_progress_bar.setFormat(f"Overall progress  %p%")
-        self.pipeline_progress_detail.setText(
-            f"{stage_title}: {stage_progress:g}% complete"
+        self.pipeline_progress_bar.setFormat("%p%")
+
+    def _set_pipeline_overview_compact(self, compact: bool) -> None:
+        if compact:
+            target_height = max(380, min(760, self.height() - 160))
+            self.automation_input_stack.setMinimumHeight(target_height)
+            self.automation_input_stack.setMaximumHeight(target_height)
+            self.automation_console_panel.setMinimumHeight(target_height)
+            self.automation_console_panel.setMaximumHeight(target_height)
+            return
+        self.automation_input_stack.setMinimumHeight(
+            self._automation_input_default_minimum_height
+        )
+        self.automation_input_stack.setMaximumHeight(
+            self._automation_input_default_maximum_height
+        )
+        self.automation_console_panel.setMinimumHeight(
+            self._automation_console_default_minimum_height
+        )
+        self.automation_console_panel.setMaximumHeight(
+            self._automation_console_default_maximum_height
         )
 
     def complete_pipeline(self, status_text: str = "Pipeline complete") -> None:
         self._pipeline_running = False
         self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
+        self.pipeline_review_panel.hide()
+        self.pipeline_activity_panel.show()
         for index, (card, label, review_label) in enumerate(zip(
             self.pipeline_stage_cards,
             self.pipeline_stage_status_labels,
             self.pipeline_stage_review_labels,
         )):
-            card.setProperty("pipelineState", "complete")
-            label.setText("Complete")
+            skipped = index in self._pipeline_skipped_stages
+            card.setProperty("pipelineState", "skipped" if skipped else "complete")
+            label.setText("Skipped" if skipped else "Complete")
             if review_label.text():
-                review_label.setText("Reviewed")
-            self._set_pipeline_stage_progress(index, 100, False, "ready")
+                review_label.setText("Not included" if skipped else "Reviewed")
+            self._set_pipeline_stage_progress(
+                index,
+                0 if skipped else 100,
+                False,
+                "primary" if skipped else "ready",
+            )
             card.style().unpolish(card)
             card.style().polish(card)
-        self.pipeline_current_stage_label.setText(status_text)
         self.pipeline_progress_bar.set_accent_role("ready")
         self.pipeline_progress_bar.setRange(0, 100)
         self.pipeline_progress_bar.setValue(100)
         self.pipeline_progress_bar.set_active(False)
-        self.pipeline_progress_bar.setFormat("Overall progress  %p%")
-        self.pipeline_progress_detail.show()
-        self.pipeline_progress_detail.setText("All automated stages completed.")
+        self.pipeline_progress_bar.setFormat("%p%")
+        self._set_pipeline_log_state("Complete", "complete")
 
     def _set_pipeline_stage_progress(
         self,
@@ -1598,6 +2276,9 @@ class AutomatedPipelineProfilesWidget(QWidget):
 
     def closeEvent(self, event) -> None:
         self._pipeline_demo_timer.stop()
+        if self._pipeline_worker is not None and self._pipeline_worker.isRunning():
+            self._pipeline_worker.request_cancel()
+            self._pipeline_worker.wait()
         self._release_hover_capture()
         if self._large_preview_dialog is not None:
             self._large_preview_dialog.close()
@@ -1608,9 +2289,9 @@ class AutomatedPipelineProfilesWidget(QWidget):
     def _choose_model_file(self, region: str) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            f"Choose DeepLabCut model for {region}",
+            f"Choose DeepLabCut config for {region}",
             str(Path.home()),
-            "Model files (*.zip *.tar *.gz *.h5 *.pt *.pth *.yaml *.yml);;All files (*)",
+            "DeepLabCut config (config.yaml);;YAML files (*.yaml);;All files (*)",
         )
         if path:
             self._set_model_source(region, Path(path))
@@ -1629,6 +2310,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             raise ValueError(f"Unknown manifest region: {region}")
         self._model_sources[region] = path.expanduser().resolve()
         self._render_model_rows()
+        self._refresh_profile_readiness()
         selected = sum(path is not None for path in self._model_sources.values())
         self.status_label.setText(f"Models selected for {selected} of {len(self._regions)} regions.")
 
@@ -1663,15 +2345,15 @@ class AutomatedPipelineProfilesWidget(QWidget):
             path_label.setText(str(model_path) if model_path is not None else "Model required")
             path_label.setToolTip(str(model_path) if model_path is not None else "")
             layout.addWidget(path_label, 1)
-            file_button = QPushButton("Upload file")
+            file_button = QPushButton("Choose config")
             file_button.setToolTip(
-                f"Choose the trained DeepLabCut model file used to analyze the {region} region."
+                f"Choose config.yaml from the trained DeepLabCut project for {region}."
             )
             file_button.clicked.connect(lambda _checked=False, name=region: self._choose_model_file(name))
             layout.addWidget(file_button)
-            folder_button = QPushButton("Upload folder")
+            folder_button = QPushButton("Choose project")
             folder_button.setToolTip(
-                f"Choose the trained DeepLabCut model folder used to analyze the {region} region."
+                f"Choose the complete trained DeepLabCut project folder for {region}."
             )
             folder_button.clicked.connect(lambda _checked=False, name=region: self._choose_model_folder(name))
             layout.addWidget(folder_button)
@@ -1689,6 +2371,73 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.regions_label.setText("Detected regions: " + " → ".join(self._regions))
         else:
             self.regions_label.setText("No regions detected yet.")
+        self._refresh_profile_readiness()
+
+    def _refresh_profile_readiness(self) -> None:
+        gait_enabled = self.include_gait_analysis_button.isChecked()
+        knee_enabled = self.include_knee_correction_button.isChecked()
+        selected_models = sum(path is not None for path in self._model_sources.values())
+        total_models = len(self._regions)
+        model_state = "ready" if total_models and selected_models == total_models else "missing"
+        model_text = (
+            f"{selected_models} / {total_models} selected"
+            if total_models
+            else "Needs manifest"
+        )
+        self._set_profile_readiness_value(
+            "manifest",
+            "Selected" if self._manifest_source is not None else "Required",
+            "ready" if self._manifest_source is not None else "missing",
+        )
+        self._set_profile_readiness_value("models", model_text, model_state)
+        self._set_profile_readiness_value(
+            "calibration",
+            (
+                "Selected"
+                if gait_enabled and self._calibration_source is not None
+                else "Required" if gait_enabled else "Excluded"
+            ),
+            (
+                "ready"
+                if gait_enabled and self._calibration_source is not None
+                else "missing" if gait_enabled else "optional"
+            ),
+        )
+        self._set_profile_readiness_value(
+            "analysis",
+            (
+                "Selected"
+                if gait_enabled and self._analysis_manifest_source is not None
+                else "Required" if gait_enabled else "Excluded"
+            ),
+            (
+                "ready"
+                if gait_enabled and self._analysis_manifest_source is not None
+                else "missing" if gait_enabled else "optional"
+            ),
+        )
+        self._set_profile_readiness_value(
+            "knee",
+            (
+                "Selected"
+                if knee_enabled and self._knee_manifest_source is not None
+                else "Required" if knee_enabled else "Excluded"
+            ),
+            (
+                "ready"
+                if knee_enabled and self._knee_manifest_source is not None
+                else "missing" if knee_enabled else "optional"
+            ),
+        )
+
+    def _set_profile_readiness_value(self, key: str, text: str, state: str) -> None:
+        label = self.profile_readiness_values[key]
+        if label.text() == text and label.property("readinessState") == state:
+            return
+        label.setText(text)
+        label.setProperty("readinessState", state)
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     @staticmethod
     def _set_path_label(label: QLabel, path: Path | None) -> None:
@@ -1711,14 +2460,23 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 "Upload one DeepLabCut model for each region:\n• " + "\n• ".join(missing_models),
             )
             return
-        if self._calibration_source is None:
+        gait_enabled = self.include_gait_analysis_button.isChecked()
+        knee_enabled = self.include_knee_correction_button.isChecked()
+        if gait_enabled and self._calibration_source is None:
             QMessageBox.warning(self, "Calibration required", "Complete step 3 by uploading a calibration map.")
             return
-        if self._analysis_manifest_source is None:
+        if gait_enabled and self._analysis_manifest_source is None:
             QMessageBox.warning(
                 self,
                 "Analysis manifest required",
                 "Complete step 3 by uploading a gait analysis manifest.",
+            )
+            return
+        if knee_enabled and self._knee_manifest_source is None:
+            QMessageBox.warning(
+                self,
+                "Knee manifest required",
+                "Upload a knee analysis manifest or turn off Knee correction.",
             )
             return
         if self._current_profile_id is not None:
@@ -1731,11 +2489,13 @@ class AutomatedPipelineProfilesWidget(QWidget):
             profile = self._store.save(
                 name,
                 self._manifest_source,
-                self._calibration_source,
+                self._calibration_source if gait_enabled else None,
                 {region: path for region, path in self._model_sources.items() if path is not None},
                 profile_id=self._current_profile_id,
-                analysis_manifest=self._analysis_manifest_source,
-                knee_manifest=self._knee_manifest_source,
+                analysis_manifest=self._analysis_manifest_source if gait_enabled else None,
+                knee_manifest=self._knee_manifest_source if knee_enabled else None,
+                gait_analysis_enabled=gait_enabled,
+                knee_correction_enabled=knee_enabled,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not save profile", str(exc))
@@ -1796,6 +2556,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
             str(self._calibration_source or ""),
             str(self._analysis_manifest_source or ""),
             str(self._knee_manifest_source or ""),
+            "1" if self.include_gait_analysis_button.isChecked() else "0",
+            "1" if self.include_knee_correction_button.isChecked() else "0",
         )
 
     def _is_dirty(self) -> bool:
@@ -1824,7 +2586,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     color: {theme.TEXT};
                 }
                 QFrame#ProfileHeader, QFrame#MainAutomationMenu,
-                QFrame#ProfileConfigurationToolbar, QFrame#ProfileManagementPanel {
+                QFrame#ProfileConfigurationToolbar, QFrame#ProfileManagementPanel,
+                QFrame#ProfileReadinessPanel {
                     background: {theme.SURFACE};
                     border: 1px solid {theme.BORDER};
                     border-radius: 3px;
@@ -1838,26 +2601,62 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 QLabel#AutomatedProfileDescription, QLabel#ProfileStageDescription,
                 QLabel#DetectedRegionsLabel, QLabel#ModelsPlaceholder, QLabel#ProfileStatusLabel {
                     color: {theme.CONNECTOR};
-                    font-size: 12px;
+                    font-size: 13px;
+                }
+                QLabel#ProfileReadinessTitle {
+                    color: {theme.TEXT};
+                    font-size: 15px;
+                    font-weight: 650;
+                }
+                QLabel#ProfileReadinessLabel {
+                    color: {theme.TEXT};
+                    font-size: 13px;
+                }
+                QLabel#ProfileReadinessValue {
+                    color: {theme.CONNECTOR};
+                    font-size: 13px;
+                    font-weight: 650;
+                }
+                QLabel#ProfileReadinessValue[readinessState="ready"] {
+                    color: {theme.STATUS_READY};
+                }
+                QLabel#ProfileReadinessValue[readinessState="missing"] {
+                    color: {theme.STATUS_ERROR};
+                }
+                QLabel#ProfileReadinessValue[readinessState="optional"] {
+                    color: {theme.CONNECTOR};
                 }
                 QLabel#AutomationPanelTitle {
                     color: {theme.TEXT};
+                    font-size: 15px;
                     font-weight: 650;
                 }
                 QLabel#VideoCountLabel {
                     color: {theme.CONNECTOR};
-                    font-size: 12px;
+                    font-size: 13px;
                 }
                 QLabel#FieldLabel, QLabel#RegionName {
                     color: {theme.TEXT};
                     font-weight: 600;
                     min-width: 48px;
                 }
-                QFrame#VideoDropPanel, QFrame#AutomationConsolePanel,
-                QFrame#PipelineStatusPanel {
+                QFrame#VideoDropPanel {
                     background: {theme.BACKGROUND};
                     border: 1px solid {theme.BORDER};
                     border-radius: 2px;
+                }
+                QFrame#AutomationConsolePanel {
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 3px;
+                }
+                QFrame#PipelineStatusPanel {
+                    background: transparent;
+                    border: 0;
+                }
+                QFrame#PipelineActivityPanel {
+                    background: transparent;
+                    border: 0;
                 }
                 QStackedWidget#AutomationInputStack {
                     background: {theme.BACKGROUND};
@@ -1866,58 +2665,56 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 QFrame#PipelineStageCard {
                     background: {theme.SURFACE};
                     border: 1px solid {theme.BORDER};
-                    border-radius: 3px;
-                    min-width: 58px;
-                    min-height: 72px;
+                    border-radius: 2px;
                 }
                 QFrame#PipelineStageCard[pipelineState="active"] {
-                    background: {theme.SOFT};
-                    border: 2px solid {theme.PRIMARY};
+                    background: {theme.PANEL};
+                    border: 1px solid {theme.STATUS_RUNNING};
                 }
                 QFrame#PipelineStageCard[pipelineState="complete"] {
                     background: {theme.SURFACE};
-                    border: 2px solid {theme.STATUS_READY};
+                    border: 1px solid {theme.STATUS_READY};
+                }
+                QFrame#PipelineStageCard[pipelineState="skipped"] {
+                    background: {theme.BACKGROUND};
+                    border: 1px solid {theme.BORDER};
                 }
                 QFrame#PipelineStageCard[pipelineState="blocked"] {
-                    background: {theme.SURFACE};
-                    border: 2px solid {theme.STATUS_ERROR};
+                    background: {theme.PANEL};
+                    border: 1px solid {theme.STATUS_ERROR};
                 }
                 QProgressBar#PipelineStageProgress {
                     background: transparent;
                     border: 0;
-                    min-width: 52px;
-                    max-width: 52px;
-                    min-height: 52px;
-                    max-height: 52px;
+                    min-width: 44px;
+                    max-width: 44px;
+                    min-height: 44px;
+                    max-height: 44px;
                 }
                 QLabel#PipelineStageName {
                     color: {theme.TEXT};
-                    font-size: 10px;
+                    font-size: 13px;
                     font-weight: 650;
                 }
-                QLabel#PipelineStageStatus, QLabel#PipelineProgressDetail,
-                QLabel#PipelineVideoProgress {
+                QLabel#PipelineStageStatus, QLabel#PipelineVideoProgress {
                     color: {theme.CONNECTOR};
-                    font-size: 10px;
+                    font-size: 12px;
                 }
-                QLabel#PipelineReviewIndicator {
-                    color: {theme.PRIMARY};
-                    font-size: 9px;
-                    font-weight: 700;
+                QFrame#PipelineConnector {
+                    background: {theme.BORDER};
+                    border: 0;
                 }
                 QLabel#PipelineCurrentStage {
                     color: {theme.TEXT};
-                    font-size: 12px;
-                    font-weight: 650;
-                }
-                QLabel#PipelineConnector {
-                    color: {theme.CONNECTOR};
-                    font-size: 16px;
+                    font-size: 17px;
                     font-weight: 700;
-                    max-width: 10px;
+                }
+                QLabel#PipelineStagePosition {
+                    color: {theme.CONNECTOR};
+                    font-size: 14px;
                 }
                 QProgressBar#PipelineProgressBar {
-                    min-height: 22px;
+                    min-height: 28px;
                     text-align: center;
                     font-weight: 650;
                 }
@@ -1957,12 +2754,12 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 }
                 QLabel#PipelineReviewTitle {
                     color: {theme.TEXT};
-                    font-size: 12px;
+                    font-size: 15px;
                     font-weight: 700;
                 }
                 QLabel#PipelineReviewDescription {
                     color: {theme.CONNECTOR};
-                    font-size: 11px;
+                    font-size: 13px;
                 }
                 QFrame#VideoHoverCard {
                     background: {theme.SURFACE};
@@ -1996,10 +2793,49 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     border-color: {theme.PRIMARY};
                 }
                 QPlainTextEdit#AutomationConsole {
-                    background: {theme.CANVAS};
+                    background: {theme.BACKGROUND};
                     border: 1px solid {theme.BORDER};
-                    color: {theme.CANVAS_TEXT};
-                    font-size: 11px;
+                    border-radius: 2px;
+                    color: {theme.TEXT};
+                    font-size: 12px;
+                    padding: 12px;
+                    selection-background-color: {theme.PANEL};
+                    selection-color: {theme.TEXT};
+                }
+                QLabel#PipelineLogState {
+                    color: {theme.CONNECTOR};
+                    font-size: 12px;
+                }
+                QLabel#PipelineLogState[logState="running"],
+                QLabel#PipelineLogState[logState="review"] {
+                    color: {theme.STATUS_RUNNING};
+                }
+                QLabel#PipelineLogState[logState="paused"],
+                QLabel#PipelineLogState[logState="error"] {
+                    color: {theme.STATUS_ERROR};
+                }
+                QLabel#PipelineLogState[logState="complete"] {
+                    color: {theme.STATUS_READY};
+                }
+                QPushButton#PipelineOptionButton {
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER};
+                    color: {theme.TEXT};
+                    font-size: 12px;
+                    padding: 8px 11px;
+                }
+                QPushButton#PipelineOptionButton:hover {
+                    background: {theme.PANEL};
+                    border-color: {theme.CONNECTOR};
+                }
+                QPushButton#PipelineOptionButton:checked {
+                    background: {theme.PANEL};
+                    border-color: {theme.STATUS_ERROR};
+                    color: {theme.STATUS_ERROR};
+                    font-weight: 650;
+                }
+                QPushButton#PipelineOptionButton:disabled {
+                    color: {theme.CONNECTOR};
                 }
                 QPushButton#RunPipelineButton {
                     background: {theme.PRIMARY};
@@ -2027,6 +2863,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     color: {theme.TEXT};
                     font-weight: 650;
                 }
+                QScrollArea#ProfileModelsScroll {
+                    background: transparent;
+                    border: 0;
+                }
                 QWidget#ProfileStagePage {
                     background: {theme.SURFACE};
                 }
@@ -2042,6 +2882,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     color: {theme.CONNECTOR};
                     font-size: 12px;
                     padding: 4px 6px;
+                }
+                QLabel#AssetPath:disabled {
+                    background: {theme.PANEL};
+                    color: {theme.BORDER};
                 }
                 QPushButton#DeleteProfileButton:hover {
                     border-color: {theme.STATUS_ERROR};
@@ -2062,6 +2906,49 @@ class AutomatedPipelineProfilesWidget(QWidget):
                     background: {theme.SOFT};
                     border-color: {theme.TEXT};
                     color: {theme.TEXT};
+                }
+                QPushButton#OpenManualToolButton {
+                    background: {theme.SOFT};
+                    border-color: {theme.PRIMARY};
+                    color: {theme.PRIMARY};
+                    font-size: 11px;
+                    font-weight: 650;
+                }
+                QPushButton#OpenManualToolButton:hover {
+                    background: {theme.SURFACE};
+                    border-color: {theme.TEXT};
+                    color: {theme.TEXT};
+                }
+                QPushButton#ProfileUploadButton {
+                    background: {theme.PRIMARY};
+                    border-color: {theme.PRIMARY};
+                    color: {theme.PRIMARY_TEXT};
+                    font-size: 11px;
+                    font-weight: 650;
+                }
+                QPushButton#ProfileUploadButton:hover {
+                    background: {theme.SOFT};
+                    border-color: {theme.TEXT};
+                    color: {theme.TEXT};
+                }
+                QPushButton#OpenManualToolButton:disabled,
+                QPushButton#ProfileUploadButton:disabled {
+                    background: {theme.PANEL};
+                    border-color: {theme.BORDER};
+                    color: {theme.CONNECTOR};
+                }
+                QPushButton#ProfileStageToggle {
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER};
+                    color: {theme.CONNECTOR};
+                    font-size: 12px;
+                    padding: 7px 12px;
+                }
+                QPushButton#ProfileStageToggle:checked {
+                    background: {theme.SOFT};
+                    border-color: {theme.PRIMARY};
+                    color: {theme.PRIMARY};
+                    font-weight: 650;
                 }
                 QPushButton#BackToAutomationButton {
                     background: {theme.BACKGROUND};
@@ -2085,37 +2972,64 @@ class AutomationVideoPreviewDialog(QDialog):
         parent: QWidget | None = None,
         *,
         subtitle: str | None = None,
+        review_sources: tuple[ReviewVideoSource, ...] | None = None,
+        initial_source_index: int = 0,
     ):
         if cv2 is None:
             raise OSError("OpenCV is not available for video preview.")
         super().__init__(parent)
-        self._path = path.expanduser().resolve()
-        self._capture = cv2.VideoCapture(str(self._path))
-        if not self._capture.isOpened():
-            self._capture.release()
-            raise ValueError(f"Could not open video: {self._path.name}")
-        frame_count_value = self._capture.get(cv2.CAP_PROP_FRAME_COUNT)
-        fps_value = self._capture.get(cv2.CAP_PROP_FPS)
-        self._frame_count = max(1, int(frame_count_value)) if frame_count_value > 0 else 1
-        self._fps = float(fps_value) if fps_value > 0 else 0.0
+        initial_path = path.expanduser().resolve()
+        self._review_sources = review_sources or (
+            ReviewVideoSource(initial_path, initial_path.name, subtitle or "", ""),
+        )
+        if not self._review_sources:
+            raise ValueError("No videos are available for preview.")
+        self._source_index = max(0, min(initial_source_index, len(self._review_sources) - 1))
+        self._path = initial_path
+        self._capture = None
+        self._frame_count = 1
+        self._fps = 0.0
         self._source_pixmap = QPixmap()
 
-        self.setWindowTitle(f"Video preview — {self._path.name}")
+        self.setWindowTitle("Video preview")
         self.setMinimumSize(720, 500)
         self.resize(960, 680)
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 14, 14, 14)
         root.setSpacing(10)
 
-        title = QLabel(self._path.name)
-        title.setObjectName("LargeVideoPreviewTitle")
-        title.setWordWrap(True)
-        root.addWidget(title)
-        if subtitle:
-            subtitle_label = QLabel(subtitle)
-            subtitle_label.setObjectName("LargeVideoPreviewSubtitle")
-            subtitle_label.setWordWrap(True)
-            root.addWidget(subtitle_label)
+        self.title_label = QLabel()
+        self.title_label.setObjectName("LargeVideoPreviewTitle")
+        self.title_label.setWordWrap(True)
+        root.addWidget(self.title_label)
+
+        source_row = QHBoxLayout()
+        source_row.setSpacing(6)
+        self.previous_video_button = QToolButton()
+        self.previous_video_button.setObjectName("VideoPreviewNavigationButton")
+        self.previous_video_button.setText("←")
+        self.previous_video_button.setToolTip("Previous preview video")
+        source_row.addWidget(self.previous_video_button)
+        self.source_selector = QComboBox()
+        self.source_selector.setObjectName("VideoPreviewSourceSelector")
+        self.source_selector.setToolTip("Switch the video shown in this preview window.")
+        for source in self._review_sources:
+            self.source_selector.addItem(source.title)
+        source_row.addWidget(self.source_selector, 1)
+        self.next_video_button = QToolButton()
+        self.next_video_button.setObjectName("VideoPreviewNavigationButton")
+        self.next_video_button.setText("→")
+        self.next_video_button.setToolTip("Next preview video")
+        source_row.addWidget(self.next_video_button)
+        self.view_label = QLabel()
+        self.view_label.setObjectName("VideoPreviewView")
+        source_row.addWidget(self.view_label)
+        root.addLayout(source_row)
+
+        self.subtitle_label = QLabel()
+        self.subtitle_label.setObjectName("LargeVideoPreviewSubtitle")
+        self.subtitle_label.setWordWrap(True)
+        root.addWidget(self.subtitle_label)
         self.preview = QLabel("Loading preview…")
         self.preview.setObjectName("LargeVideoPreview")
         self.preview.setAlignment(Qt.AlignCenter)
@@ -2140,6 +3054,13 @@ class AutomationVideoPreviewDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
         self.frame_slider.valueChanged.connect(self._load_frame)
+        self.source_selector.currentIndexChanged.connect(self._select_review_source)
+        self.previous_video_button.clicked.connect(
+            lambda _checked=False: self._select_review_source(self._source_index - 1)
+        )
+        self.next_video_button.clicked.connect(
+            lambda _checked=False: self._select_review_source(self._source_index + 1)
+        )
         self.setStyleSheet(
             theme.stylesheet(
                 """
@@ -2151,6 +3072,24 @@ class AutomationVideoPreviewDialog(QDialog):
                 QLabel#LargeVideoPreviewSubtitle {
                     color: {theme.CONNECTOR};
                     font-size: 11px;
+                }
+                QLabel#VideoPreviewView {
+                    background: {theme.PANEL};
+                    border: 1px solid {theme.BORDER};
+                    border-radius: 2px;
+                    color: {theme.TEXT};
+                    font-size: 11px;
+                    font-weight: 650;
+                    padding: 3px 6px;
+                }
+                QComboBox#VideoPreviewSourceSelector {
+                    min-width: 260px;
+                }
+                QToolButton#VideoPreviewNavigationButton {
+                    min-width: 28px;
+                    min-height: 26px;
+                    font-size: 16px;
+                    font-weight: 700;
                 }
                 QLabel#LargeVideoPreview {
                     background: {theme.CANVAS};
@@ -2164,9 +3103,46 @@ class AutomationVideoPreviewDialog(QDialog):
                 """
             )
         )
+        self._select_review_source(self._source_index)
+
+    def _select_review_source(self, index: int) -> None:
+        index = max(0, min(index, len(self._review_sources) - 1))
+        source = self._review_sources[index]
+        capture = cv2.VideoCapture(str(source.path))
+        if not capture.isOpened():
+            capture.release()
+            raise ValueError(f"Could not open video: {source.path.name}")
+        if self._capture is not None:
+            self._capture.release()
+        self._capture = capture
+        self._source_index = index
+        self._path = source.path
+        frame_count_value = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        fps_value = capture.get(cv2.CAP_PROP_FPS)
+        self._frame_count = max(1, int(frame_count_value)) if frame_count_value > 0 else 1
+        self._fps = float(fps_value) if fps_value > 0 else 0.0
+        self.setWindowTitle(f"Video preview — {source.title}")
+        self.title_label.setText(source.title)
+        self.subtitle_label.setText(source.details)
+        self.subtitle_label.setVisible(bool(source.details))
+        self.view_label.setText(f"View: {source.view_name}")
+        self.view_label.setVisible(bool(source.view_name))
+        self.previous_video_button.setEnabled(index > 0)
+        self.next_video_button.setEnabled(index < len(self._review_sources) - 1)
+        source_blocker = QSignalBlocker(self.source_selector)
+        self.source_selector.setCurrentIndex(index)
+        del source_blocker
+        slider_blocker = QSignalBlocker(self.frame_slider)
+        self.frame_slider.setRange(0, self._frame_count - 1)
+        self.frame_slider.setSingleStep(1)
+        self.frame_slider.setPageStep(max(1, self._frame_count // 20))
+        self.frame_slider.setValue(0)
+        del slider_blocker
         self._load_frame(0)
 
     def _load_frame(self, frame_index: int) -> None:
+        if self._capture is None:
+            return
         self._capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
         success, frame = self._capture.read()
         if not success or frame is None:
@@ -2200,7 +3176,9 @@ class AutomationVideoPreviewDialog(QDialog):
         self._render_frame()
 
     def closeEvent(self, event) -> None:
-        self._capture.release()
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
         super().closeEvent(event)
 
 
@@ -2297,6 +3275,24 @@ class PipelineTextPreviewDialog(QDialog):
         )
 
 
+def _pixmap_from_image_file(path: Path, width: int, height: int) -> QPixmap | None:
+    try:
+        if path.suffix.casefold() == ".svg":
+            from dlc_gait_assembly.gui.gait_analysis.window import _qt_safe_svg_bytes
+
+            data = _qt_safe_svg_bytes(path.read_bytes())
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(data, "SVG"):
+                return None
+        else:
+            pixmap = QPixmap(str(path))
+    except OSError:
+        return None
+    if pixmap.isNull():
+        return None
+    return pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+
 def _demo_stickplot_pixmap(width: int, height: int) -> QPixmap:
     pixmap = QPixmap(width, height)
     pixmap.fill(QColor("white"))
@@ -2375,6 +3371,9 @@ class VideoDropList(QListWidget):
         if self.count():
             return
         painter = QPainter(self.viewport())
+        font = painter.font()
+        font.setPointSizeF(max(14.0, font.pointSizeF()))
+        painter.setFont(font)
         painter.setPen(self.palette().color(QPalette.ColorRole.PlaceholderText))
         painter.drawText(
             self.viewport().rect().adjusted(20, 20, -20, -20),

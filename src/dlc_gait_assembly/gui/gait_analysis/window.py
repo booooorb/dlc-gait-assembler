@@ -53,7 +53,10 @@ from dlc_gait_assembly.services.pipeline.alma import (
     settings_from_alma_config,
 )
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
-from dlc_gait_assembly.services.project_paths import find_project_root
+from dlc_gait_assembly.services.project_paths import (
+    find_project_root,
+    manual_pipeline_output_folders,
+)
 from dlc_gait_assembly.services.video_processing import probe_video
 
 
@@ -1433,9 +1436,7 @@ class AlmaKinematicsWidget(QWidget):
         self._update_run_state()
 
     def _default_output_root(self) -> Path:
-        output_root = self._project_root / "outputs" / "gait_analysis"
-        output_root.mkdir(parents=True, exist_ok=True)
-        return output_root
+        return manual_pipeline_output_folders(self._project_root).gait_analysis
 
     def _apply_style(self) -> None:
         runway_tab_style = """

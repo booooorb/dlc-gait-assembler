@@ -42,7 +42,10 @@ from dlc_gait_assembly.services.knee_correction import (
     read_dlc_csv,
 )
 from dlc_gait_assembly.services.pipeline.alma import pixels_per_cm_from_calibration_map
-from dlc_gait_assembly.services.project_paths import find_project_root
+from dlc_gait_assembly.services.project_paths import (
+    find_project_root,
+    manual_pipeline_output_folders,
+)
 
 try:
     import cv2
@@ -900,9 +903,7 @@ class KneeCorrectionWidget(QWidget):
         self._release_preview_capture()
 
     def _default_output_folder(self) -> Path:
-        path = self._project_root / "outputs" / "knee_correction"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return manual_pipeline_output_folders(self._project_root).knee_correction
 
     def _apply_style(self) -> None:
         settings_tab_style = """

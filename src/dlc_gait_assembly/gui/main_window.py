@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
         self._main_menu.automated_profiles.workspace_changed.connect(
             self._automated_workspace_changed
         )
+        self._main_menu.automated_profiles.manual_tool_requested.connect(self._open_tool)
         self._stack.addWidget(self._main_menu)
         self._build_shell(initial_theme_mode)
         if initial_tool_id is None:

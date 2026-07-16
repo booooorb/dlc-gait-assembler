@@ -29,7 +29,11 @@ from dlc_gait_assembly.services.imports import (
     deeplabcut_launch_display_command,
     deeplabcut_probe_command,
 )
-from dlc_gait_assembly.services.project_paths import find_project_root
+from dlc_gait_assembly.services.manual_outputs import organize_manual_deeplabcut_outputs
+from dlc_gait_assembly.services.project_paths import (
+    find_project_root,
+    manual_pipeline_output_folders,
+)
 
 
 DEEPLABCUT_DOCS_URL = "https://deeplabcut.github.io/DeepLabCut/"
@@ -49,9 +53,10 @@ class DeepLabCutWidget(QWidget):
         self._probe_process: QProcess | None = None
         self._running_command: str | None = None
         self._deeplabcut_available = False
-        self._project_root = find_project_root(Path.cwd())
+        self._project_root = find_project_root(__file__)
+        self._manual_outputs = manual_pipeline_output_folders(self._project_root)
         self._environment_file = deeplabcut_environment_file(self._project_root)
-        self._cwd = self._project_root
+        self._cwd = self._manual_outputs.root
         self._build_ui()
         self._install_shortcuts()
         self._connect_signals()
@@ -112,6 +117,13 @@ class DeepLabCutWidget(QWidget):
         self.launch_button.setObjectName("PrimaryButton")
         set_tooltip(self.launch_button, "Launch DeepLabCut from the DEEPLABCUT conda environment.", "Ctrl+R")
         toolbar_layout.addWidget(self.launch_button)
+
+        self.outputs_button = QPushButton("Outputs")
+        set_tooltip(
+            self.outputs_button,
+            "Open the manual pipeline folders for analyzed data, labeled videos, and gait results.",
+        )
+        toolbar_layout.addWidget(self.outputs_button)
 
         self.install_button = QPushButton("Install DeepLabCut")
         self.install_button.setObjectName("InstallButton")
@@ -176,6 +188,7 @@ class DeepLabCutWidget(QWidget):
 
     def _connect_signals(self) -> None:
         self.launch_button.clicked.connect(lambda: self._terminal.submit_command(DEEPLABCUT_LAUNCH_COMMAND))
+        self.outputs_button.clicked.connect(self._open_manual_outputs)
         self.install_button.clicked.connect(lambda: self._terminal.submit_command(DEEPLABCUT_INSTALL_COMMAND))
         self._terminal.command_submitted.connect(self._run_terminal_command)
         self._terminal.interrupt_requested.connect(self._interrupt_process)
@@ -183,6 +196,14 @@ class DeepLabCutWidget(QWidget):
         self.user_docs_button.clicked.connect(lambda: _open_url(DEEPLABCUT_DOCS_URL))
         self.github_button.clicked.connect(lambda: _open_url(DEEPLABCUT_GITHUB_URL))
         self.paper_button.clicked.connect(lambda: _open_url(DEEPLABCUT_PAPER_URL))
+
+    def _open_manual_outputs(self) -> None:
+        if not self._is_process_running():
+            organized = organize_manual_deeplabcut_outputs(self._manual_outputs)
+            moved_count = len(organized.analyzed_files) + len(organized.labeled_videos)
+            if moved_count:
+                self._terminal.append_output(f"Organized {moved_count} DeepLabCut output file(s).\n")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._manual_outputs.root)))
 
     def _run_terminal_command(self, command: str) -> None:
         command = command.strip()
@@ -369,6 +390,13 @@ class DeepLabCutWidget(QWidget):
         self._set_running(False)
         if exit_status == QProcess.NormalExit and exit_code == 0:
             self._set_progress_done("Command complete")
+            if completed_command == DEEPLABCUT_LAUNCH_COMMAND:
+                organized = organize_manual_deeplabcut_outputs(self._manual_outputs)
+                moved_count = len(organized.analyzed_files) + len(organized.labeled_videos)
+                if moved_count:
+                    self._terminal.append_output(
+                        f"Organized {moved_count} DeepLabCut output file(s).\n"
+                    )
         else:
             self._set_progress_error("Command stopped")
         self._terminal.append_prompt(self._cwd)
