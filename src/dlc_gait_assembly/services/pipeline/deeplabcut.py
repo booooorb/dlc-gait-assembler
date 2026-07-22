@@ -8,12 +8,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import yaml
-
 
 DLC_MODEL_FOLDER_NAMES = ("dlc-models-pytorch", "dlc-models")
 DLC_TRAINING_DATASET_FOLDER_NAME = "training-datasets"
@@ -278,7 +277,7 @@ def run_deeplabcut_analysis(
     request_jobs = []
     total = len(jobs)
     total_videos = sum(len(job.video_paths) for job in jobs)
-    for index, job in enumerate(jobs, start=1):
+    for job in jobs:
         config_path = validate_deeplabcut_project(job.model_path)
         region_name = _safe_name(job.region)
         analysis_folder = destination / "analyzed_videos" / region_name

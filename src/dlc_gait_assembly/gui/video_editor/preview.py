@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsPathItem,
+    QGraphicsPixmapItem,
+    QGraphicsRectItem,
+    QGraphicsScene,
+    QGraphicsView,
+)
 
+from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.video_editor.region_state import RegionEditorState
 from dlc_gait_assembly.services.domain.enhancements import EnhancementSettings
 from dlc_gait_assembly.services.domain.regions import CropRegion, NormalizedRect
-from dlc_gait_assembly.gui import theme
 
 try:
     import cv2
@@ -241,16 +249,13 @@ class RegionPreviewView(QGraphicsView):
 
         self._source_image: QImage | None = None
         self._image_bounds = QRectF()
-        self._crop_norms: dict[int, NormalizedRect] = {}
-        self._crop_names: dict[int, str] = {}
-        self._crop_flip_horizontal: dict[int, bool] = {}
-        self._crop_flip_vertical: dict[int, bool] = {}
-        self._crop_flip_horizontal_video_paths: dict[int, frozenset[str] | None] = {}
-        self._default_crop_flip_horizontal = False
-        self._default_crop_flip_horizontal_video_paths: frozenset[str] | None = None
-        self._next_crop_id = 1
-        self._invert_norms: dict[int, NormalizedRect] = {}
-        self._next_invert_id = 1
+        self._region_state = RegionEditorState()
+        self._crop_norms = self._region_state.crop_norms
+        self._crop_names = self._region_state.crop_names
+        self._crop_flip_horizontal = self._region_state.crop_flip_horizontal
+        self._crop_flip_vertical = self._region_state.crop_flip_vertical
+        self._crop_flip_horizontal_video_paths = self._region_state.crop_flip_horizontal_video_paths
+        self._invert_norms = self._region_state.invert_norms
         self._mode = "crop"
         self._drag_start: QPointF | None = None
         self._drag_target: str | int | None = None
@@ -260,7 +265,46 @@ class RegionPreviewView(QGraphicsView):
         self._enhancements = EnhancementSettings()
         self._enhancement_zoom = 1.0
         self._fit_pending = False
-        self._current_video_path: str | None = None
+
+    @property
+    def _default_crop_flip_horizontal(self) -> bool:
+        return self._region_state.default_crop_flip_horizontal
+
+    @_default_crop_flip_horizontal.setter
+    def _default_crop_flip_horizontal(self, value: bool) -> None:
+        self._region_state.default_crop_flip_horizontal = value
+
+    @property
+    def _default_crop_flip_horizontal_video_paths(self) -> frozenset[str] | None:
+        return self._region_state.default_crop_flip_horizontal_video_paths
+
+    @_default_crop_flip_horizontal_video_paths.setter
+    def _default_crop_flip_horizontal_video_paths(self, value: frozenset[str] | None) -> None:
+        self._region_state.default_crop_flip_horizontal_video_paths = value
+
+    @property
+    def _next_crop_id(self) -> int:
+        return self._region_state.next_crop_id
+
+    @_next_crop_id.setter
+    def _next_crop_id(self, value: int) -> None:
+        self._region_state.next_crop_id = value
+
+    @property
+    def _next_invert_id(self) -> int:
+        return self._region_state.next_invert_id
+
+    @_next_invert_id.setter
+    def _next_invert_id(self, value: int) -> None:
+        self._region_state.next_invert_id = value
+
+    @property
+    def _current_video_path(self) -> str | None:
+        return self._region_state.current_video_path
+
+    @_current_video_path.setter
+    def _current_video_path(self, value: str | None) -> None:
+        self._region_state.current_video_path = value
 
     def set_frame(self, image: QImage | None) -> None:
         self._source_image = image.copy() if image is not None else None
@@ -404,12 +448,7 @@ class RegionPreviewView(QGraphicsView):
         return tuple(regions)
 
     def set_crop_regions(self, regions: tuple[CropRegion, ...]) -> None:
-        self._crop_norms.clear()
-        self._crop_names.clear()
-        self._crop_flip_horizontal.clear()
-        self._crop_flip_vertical.clear()
-        self._crop_flip_horizontal_video_paths.clear()
-        self._next_crop_id = 1
+        self._region_state.clear_crops()
         for region in regions:
             if not region.rect.is_usable():
                 continue
@@ -431,8 +470,7 @@ class RegionPreviewView(QGraphicsView):
         return list(self._invert_norms.values())
 
     def set_invert_regions(self, regions: tuple[NormalizedRect, ...]) -> None:
-        self._invert_norms.clear()
-        self._next_invert_id = 1
+        self._region_state.clear_invert_regions()
         for region in regions:
             if not region.is_usable():
                 continue

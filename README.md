@@ -46,5 +46,6 @@ When the input DLC CSV contains RustLab1-style left (`l-`), right (`r-`), and do
 
 - `*_rustlab1_parameters.csv`: the 30 hindlimb parameters selected in `SOP.tex`, evaluated on ALMA's gait-cycle boundaries.
 - `*_expanded_parameters.csv`: the original ALMA columns followed by those 30 RustLab1 columns.
+- `*_rustlab1_figures/`: 18 SVG diagnostics matching the upstream RustLab1 runway figure categories, adapted to the current paired recording.
 
-The run log lists missing multi-view markers. The RustLab1 output can be disabled from the compact **Outputs** tab.
+The run log lists missing multi-view markers and the number of generated figures. The RustLab1 CSV and figure outputs can be disabled together from the compact **Outputs** tab.

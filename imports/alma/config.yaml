@@ -29,5 +29,5 @@ stride_length_min_cm: 0.0       # include strides with stride length >= this (cm
 stride_length_max_cm: 8.0       # include strides with stride length <= this (cm)
 
 # SOP post-ALMA integration
-# Write the selected 30 RustLab1 features and an ALMA+RustLab1 merged CSV when multi-view markers are available.
+# Write the selected 30 RustLab1 features, merged CSV, and 18 runway figures when multi-view markers are available.
 generate_rustlab1_parameters: True

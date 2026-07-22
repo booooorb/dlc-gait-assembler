@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 RUSTLAB1_PARAMETER_NAMES = (
     "LB__avg_Angle",
     "LB__max_Angle",
@@ -50,6 +49,27 @@ RUSTLAB1_MARKERS = (
     "r-iliac-crest",
 )
 
+RUSTLAB1_FIGURE_FILENAMES = (
+    "1_PLOT_bar_all_videos.svg",
+    "2_PLOT_Donut_Summary_Validation.svg",
+    "3_1_PLOT_control_for_outliers_before.svg",
+    "3_2_PLOT_control_for_outliers_after.svg",
+    "4_1_PLOT_Overview_Distribution_X.svg",
+    "4_2_PLOT_Overview_Distribution_Y.svg",
+    "5_PLOT_overview_steps.svg",
+    "6_1_PLOT_DOWN_Analysis_Speed_QC.svg",
+    "6_2_sync_plots.svg",
+    "7_1_PLOT_FIRST_OVERVIEW_VERTICAL_BARPLOT.svg",
+    "7.2_PLOT_SECOND_OVERVIEW_Vertical_TIMECOURSE.svg",
+    "8_1_PLOT_Horizontal_Analysis_QC.svg",
+    "8.2_PLOT_Protraction_Retraction.svg",
+    "8_3_PLOT_Protraction_Retraction_line.svg",
+    "9_1_PLOT_DURATION_of_STEPE.svg",
+    "9_2_PLOT_Distance_covered_per_step.svg",
+    "10_1_PLOT_selected_horizontal_Angle.svg",
+    "10_2_PLOT_horizontal_Angle_line.svg",
+)
+
 
 @dataclass(frozen=True)
 class RustLab1Extraction:
@@ -74,9 +94,8 @@ def extract_rustlab1_parameters(
     SOP's merge step.
     """
     import numpy as np
-    import pandas as pd
 
-    columns = _coordinate_columns(raw_dataframe)
+    columns = coordinate_columns(raw_dataframe)
     present_markers = {marker for marker, _coord in columns}
     if not present_markers.intersection(RUSTLAB1_MARKERS):
         return RustLab1Extraction(None, (), RUSTLAB1_MARKERS, None, "not available")
@@ -95,7 +114,7 @@ def extract_rustlab1_parameters(
 
     required_series = {
         marker: {
-            coord: _filtered_series(raw_dataframe, columns, marker, coord, settings, kinematics)
+            coord: filtered_series(raw_dataframe, columns, marker, coord, settings, kinematics)
             for coord in ("x", "y")
         }
         for marker in RUSTLAB1_MARKERS
@@ -133,7 +152,7 @@ def extract_rustlab1_parameters(
         for side in ("left", "right"):
             previous_by_group: dict[str, float] = {}
             differences: list[float] = []
-            for group, mean in zip(cycle_groups, hip_cycle_means[side]):
+            for group, mean in zip(cycle_groups, hip_cycle_means[side], strict=True):
                 previous = previous_by_group.get(group, np.nan)
                 differences.append((mean - previous) / pixels_per_cm if np.isfinite(mean) else np.nan)
                 if np.isfinite(mean):
@@ -145,7 +164,7 @@ def extract_rustlab1_parameters(
     return RustLab1Extraction(output, available, missing, pixels_per_cm, calibration_source)
 
 
-def _coordinate_columns(dataframe) -> dict[tuple[str, str], object]:
+def coordinate_columns(dataframe) -> dict[tuple[str, str], object]:
     columns: dict[tuple[str, str], object] = {}
     for column in dataframe.columns:
         if isinstance(column, tuple) and len(column) >= 2:
@@ -180,7 +199,7 @@ def _canonical_marker(value) -> str:
     return aliases.get(marker, marker)
 
 
-def _filtered_series(dataframe, columns, marker, coord, settings, kinematics):
+def filtered_series(dataframe, columns, marker, coord, settings, kinematics):
     import numpy as np
     import pandas as pd
 
@@ -315,3 +334,4 @@ def _safe_percentile(values, percentile, np) -> float:
     if values is None or not np.isfinite(values).any():
         return np.nan
     return float(np.nanpercentile(values, percentile))
+

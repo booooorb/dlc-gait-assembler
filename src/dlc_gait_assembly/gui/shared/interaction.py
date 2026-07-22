@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QEvent
+from PySide6.QtCore import QEvent, QObject
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QSpinBox, QWidget
-
 
 WHEEL_VALUE_WIDGETS = (QComboBox, QDoubleSpinBox, QSpinBox)
 

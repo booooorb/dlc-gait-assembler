@@ -7,17 +7,19 @@ from types import SimpleNamespace
 from dlc_gait_assembly.services.pipeline.alma import (
     AlmaSettings,
     AlmaViewCsvSet,
-    _filter_low_confidence_coordinates,
-    _hide_low_confidence_stickplot_frames,
-    _load_kinematics_functions,
-    _merge_multiview_rustlab1_dataframe,
+    filter_low_confidence_coordinates,
+    hide_low_confidence_stickplot_frames,
+    merge_multiview_rustlab1_dataframe,
     pixels_per_cm_from_calibration_map,
     run_alma_gait_analysis,
     settings_from_alma_config,
 )
+from dlc_gait_assembly.services.pipeline.alma.runner import load_kinematics_functions
 from dlc_gait_assembly.services.pipeline.rustlab1 import (
+    RUSTLAB1_FIGURE_FILENAMES,
     RUSTLAB1_PARAMETER_NAMES,
     extract_rustlab1_parameters,
+    generate_rustlab1_figures,
 )
 
 
@@ -69,6 +71,71 @@ def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
     assert result.dataframe.loc[1, "left__back__movement_per_step"] == 1.0
 
 
+def test_rustlab1_generates_complete_runway_figure_bundle(tmp_path):
+    import matplotlib
+    import numpy as np
+    import pandas as pd
+
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+
+    frame_count = 20
+    coordinates: dict[tuple[str, str], object] = {}
+    marker_values = {
+        "d-center-back": (np.linspace(0, 2, frame_count), np.zeros(frame_count)),
+        "d-back-left": (np.linspace(1, 5, frame_count), np.linspace(1, 2, frame_count)),
+        "d-back-right": (np.linspace(1, 4, frame_count), np.linspace(-1, -2, frame_count)),
+        "l-back-ankle": (np.linspace(0, 2, frame_count), np.sin(np.linspace(0, 4, frame_count)) + 5),
+        "l-back-toe": (np.linspace(2, 8, frame_count), np.sin(np.linspace(0, 4, frame_count)) + 6),
+        "l-hip": (np.linspace(0, 4, frame_count), np.cos(np.linspace(0, 4, frame_count)) + 4),
+        "l-iliac-crest": (np.linspace(-1, 3, frame_count), np.cos(np.linspace(0, 4, frame_count)) + 3),
+        "r-back-ankle": (np.linspace(0, 2, frame_count), np.sin(np.linspace(0, 4, frame_count)) + 5),
+        "r-back-toe": (np.linspace(2, 8, frame_count), np.sin(np.linspace(0, 4, frame_count)) + 6),
+        "r-hip": (np.linspace(0, 4, frame_count), np.cos(np.linspace(0, 4, frame_count)) + 4),
+        "r-iliac-crest": (np.linspace(-1, 3, frame_count), np.cos(np.linspace(0, 4, frame_count)) + 3),
+    }
+    for marker, (x, y) in marker_values.items():
+        coordinates[(marker, "x")] = x
+        coordinates[(marker, "y")] = y
+        coordinates[(marker, "likelihood")] = np.linspace(0.90, 1.0, frame_count)
+
+    raw = pd.DataFrame(coordinates)
+    alma_parameters = pd.DataFrame(
+        {
+            "limb (hind left / right)": ["left", "right"],
+            "stride_start (frame)": [0, 10],
+            "stride_end (frame)": [9, 19],
+            "cycle duration (s)": [0.1, 0.1],
+            "stride length (cm)": [1.2, 1.4],
+            "stance duration (s)": [0.06, 0.05],
+            "swing duration (s)": [0.04, 0.05],
+        }
+    )
+    settings = AlmaSettings(
+        calibration_method="manual",
+        pixels_per_cm=10.0,
+        frame_rate=120.0,
+        generate_stickplot=False,
+    )
+    identity_kinematics = SimpleNamespace(butterworth_filter=lambda values, _fps, _cutoff: values)
+    extraction = extract_rustlab1_parameters(raw, alma_parameters, settings, identity_kinematics)
+
+    output_paths = generate_rustlab1_figures(
+        raw,
+        alma_parameters,
+        extraction,
+        tmp_path / "mouse_rustlab1_figures",
+        settings,
+        identity_kinematics,
+        plt,
+    )
+
+    assert tuple(path.name for path in output_paths) == RUSTLAB1_FIGURE_FILENAMES
+    assert all(path.exists() for path in output_paths)
+    assert all("<svg" in path.read_text(encoding="utf-8") for path in output_paths)
+    assert plt.get_fignums() == []
+
+
 def test_multiview_csv_set_merges_separate_views_for_rustlab1(tmp_path):
     import pandas as pd
 
@@ -85,7 +152,7 @@ def test_multiview_csv_set_merges_separate_views_for_rustlab1(tmp_path):
         right_csv=right_csv,
         bottom_csv=bottom_csv,
     )
-    merged = _merge_multiview_rustlab1_dataframe(view_set, pd)
+    merged = merge_multiview_rustlab1_dataframe(view_set, pd)
 
     assert ("l-back-toe", "x") in merged.columns
     assert ("r-back-ankle", "y") in merged.columns
@@ -152,7 +219,7 @@ def test_pixels_per_cm_from_calibration_map_can_use_view_axis_average(tmp_path):
 def test_alma_bodypart_normalization_accepts_hyphenated_iliac_crest_aliases(alma_root):
     import pandas as pd
 
-    kinematics = _load_kinematics_functions(alma_root)
+    kinematics = load_kinematics_functions(alma_root)
 
     for crest_label in ("iliac-crest", "iliac_crest", "l-iliac-crest", "r-iliac-crest"):
         columns = []
@@ -198,7 +265,7 @@ def test_low_confidence_filter_interpolates_parameters_and_masks_stickplot_frame
         dataframe[f"{bodypart} likelihood"] = [0.9, 0.9, 0.9, 0.9]
     dataframe.loc[1, "toe likelihood"] = 0.1
 
-    filtered, valid_mask, messages = _filter_low_confidence_coordinates(dataframe, 0.5, pd)
+    filtered, valid_mask, messages = filter_low_confidence_coordinates(dataframe, 0.5, pd)
 
     assert valid_mask["toe"].tolist() == [True, False, True, True]
     assert valid_mask["iliac crest"].tolist() == [True, True, True, True]
@@ -206,7 +273,7 @@ def test_low_confidence_filter_interpolates_parameters_and_masks_stickplot_frame
     assert filtered.loc[1, "toe x"] == 1.0
     assert filtered.loc[1, "iliac crest y"] == 1000.0
 
-    masked = _hide_low_confidence_stickplot_frames(filtered, valid_mask)
+    masked = hide_low_confidence_stickplot_frames(filtered, valid_mask)
 
     assert np.isnan(masked.loc[1, "toe x"])
     assert masked.loc[1, "iliac crest y"] == 1000.0
@@ -221,7 +288,7 @@ def test_alma_config_uses_separate_kinematics_likelihood_threshold():
 def test_return_continuous_can_plot_one_valid_preview_stride(tmp_path, alma_root):
     import pandas as pd
 
-    kinematics = _load_kinematics_functions(alma_root)
+    kinematics = load_kinematics_functions(alma_root)
     parameters = pd.DataFrame(
         {
             "stride_start (frame)": [0],

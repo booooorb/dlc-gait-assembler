@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
 import json
+from datetime import datetime
 from pathlib import Path
 
-from dlc_gait_assembly.services.domain.calibration import CalibrationReport, CalibrationStick, build_conversion_factor_map
+from dlc_gait_assembly.services.domain.calibration import (
+    CalibrationReport,
+    CalibrationStick,
+    build_conversion_factor_map,
+)
 from dlc_gait_assembly.services.domain.enhancements import EnhancementSettings
 from dlc_gait_assembly.services.domain.regions import NormalizedRect
 from dlc_gait_assembly.services.domain.trimming import TrimRange

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 VIDEO_EXTENSIONS = {
     ".mp4",
     ".mov",

@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 from dlc_gait_assembly.services.analysis_manifests import (
     alma_settings_from_manifest,
@@ -21,6 +21,15 @@ from dlc_gait_assembly.services.pipeline.alma import (
     default_alma_root,
     run_alma_gait_analysis,
 )
+from dlc_gait_assembly.services.pipeline.automated.models import (
+    AutomatedPipelineResult,
+    ReviewArtifact,
+    StageReview,
+)
+from dlc_gait_assembly.services.pipeline.automated.stages import (
+    AutomatedStage,
+    coerce_automated_stage,
+)
 from dlc_gait_assembly.services.pipeline.deeplabcut import (
     DlcAnalysisJob,
     DlcAnalysisResult,
@@ -29,24 +38,12 @@ from dlc_gait_assembly.services.pipeline.deeplabcut import (
 )
 from dlc_gait_assembly.services.video_processing import process_video_outputs
 
-
 ProgressCallback = Callable[[int, int, str], None]
 VIEW_ALIASES = {
     "left": {"left", "lh", "leftside", "leftview"},
     "right": {"right", "rh", "rightside", "rightview"},
     "bottom": {"bottom", "down", "downward", "ventral", "below", "bottomview"},
 }
-
-
-@dataclass(frozen=True)
-class AutomatedPipelineResult:
-    output_folder: Path
-    output_manifest: Path
-    processed_videos: tuple[Path, ...]
-    coordinate_csvs: tuple[Path, ...]
-    labeled_videos: tuple[Path, ...]
-    stickplots: tuple[Path, ...]
-    analysis_outputs: tuple[Path, ...]
 
 
 class AutomatedPipelineRun:
@@ -113,9 +110,10 @@ class AutomatedPipelineRun:
 
     def run_stage(
         self,
-        stage_index: int,
+        stage_index: int | AutomatedStage,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
+        stage = coerce_automated_stage(stage_index)
         stages = (
             self._process_videos,
             self._run_deeplabcut,
@@ -124,22 +122,21 @@ class AutomatedPipelineRun:
             self._generate_stickplots,
             self._run_gait_analysis,
         )
-        if not 0 <= stage_index < len(stages):
-            raise ValueError(f"Unknown automated pipeline stage: {stage_index}")
-        if not self.stage_enabled(stage_index):
+        if not self.stage_enabled(stage):
             if progress_callback is not None:
-                progress_callback(1, 1, f"{self.stage_skip_reason(stage_index)}; skipped")
+                progress_callback(1, 1, f"{self.stage_skip_reason(stage)}; skipped")
             return
-        stages[stage_index](progress_callback)
+        stages[int(stage)](progress_callback)
 
-    def stage_enabled(self, stage_index: int) -> bool:
-        if stage_index == 2:
+    def stage_enabled(self, stage_index: int | AutomatedStage) -> bool:
+        stage = coerce_automated_stage(stage_index)
+        if stage is AutomatedStage.KNEE_CORRECTION:
             return (
                 self.enable_knee_correction
                 and self.profile.knee_correction_enabled
                 and self.profile.knee_manifest is not None
             )
-        if stage_index in (4, 5):
+        if stage in (AutomatedStage.STICKPLOT, AutomatedStage.GAIT_ANALYSIS):
             return (
                 self.enable_gait_analysis
                 and self.profile.gait_analysis_enabled
@@ -148,49 +145,54 @@ class AutomatedPipelineRun:
             )
         return True
 
-    def stage_skip_reason(self, stage_index: int) -> str:
-        if stage_index == 2:
+    def stage_skip_reason(self, stage_index: int | AutomatedStage) -> str:
+        stage = coerce_automated_stage(stage_index)
+        if stage is AutomatedStage.KNEE_CORRECTION:
             if not self.enable_knee_correction:
                 return "Knee correction disabled for this run"
             if not self.profile.knee_correction_enabled:
                 return "Knee correction excluded from this profile"
             return "No knee correction manifest in the profile"
-        if stage_index in (4, 5):
+        if stage in (AutomatedStage.STICKPLOT, AutomatedStage.GAIT_ANALYSIS):
             if not self.enable_gait_analysis:
                 return "Gait analysis disabled for this run"
             return "Gait analysis excluded from this profile"
         return "Stage disabled for this run"
 
-    def review_artifacts(self, stage_index: int) -> dict[str, object]:
-        if stage_index == 0:
-            return {
-                "kind": "videos",
-                "items": [
-                    {"path": path, "title": path.name, "view": region}
+    def review_artifacts(self, stage_index: int | AutomatedStage) -> StageReview:
+        stage = coerce_automated_stage(stage_index)
+        if stage is AutomatedStage.VIDEO_PROCESSING:
+            return StageReview(
+                stage=stage,
+                kind="videos",
+                items=tuple(
+                    ReviewArtifact(path=path, title=path.name, view=region)
                     for region, paths in self.processed_by_region.items()
                     for path in paths
-                ],
-            }
-        if stage_index == 3:
-            return {
-                "kind": "videos",
-                "items": [
-                    {"path": path, "title": path.name, "view": result.region}
+                ),
+            )
+        if stage is AutomatedStage.LABELED_VIDEOS:
+            return StageReview(
+                stage=stage,
+                kind="videos",
+                items=tuple(
+                    ReviewArtifact(path=path, title=path.name, view=result.region)
                     for result in self.dlc_results
                     for path in result.labeled_video_paths
-                ],
-            }
-        if stage_index == 4:
-            return {
-                "kind": "stickplots",
-                "items": [
-                    path
+                ),
+            )
+        if stage is AutomatedStage.STICKPLOT:
+            return StageReview(
+                stage=stage,
+                kind="stickplots",
+                items=tuple(
+                    ReviewArtifact(path=path, title=path.name)
                     for result in self.stickplot_results
                     for path in result.output_files
                     if path.suffix.casefold() in {".svg", ".png", ".jpg", ".jpeg"}
-                ],
-            }
-        return {"kind": "none", "items": []}
+                ),
+            )
+        return StageReview(stage=stage, kind="none")
 
     def result(self) -> AutomatedPipelineResult:
         result = AutomatedPipelineResult(

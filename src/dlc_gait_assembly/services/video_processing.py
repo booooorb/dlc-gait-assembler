@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from pathlib import Path
+import re
 import shutil
 import subprocess
-import re
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from dlc_gait_assembly.services.domain.enhancements import EnhancementSettings
 from dlc_gait_assembly.services.domain.regions import CropRegion, NormalizedRect, PixelRect

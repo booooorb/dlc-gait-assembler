@@ -35,7 +35,6 @@ from dlc_gait_assembly.services.project_paths import (
     manual_pipeline_output_folders,
 )
 
-
 DEEPLABCUT_DOCS_URL = "https://deeplabcut.github.io/DeepLabCut/"
 DEEPLABCUT_INSTALL_URL = "https://deeplabcut.github.io/DeepLabCut/docs/installation"
 DEEPLABCUT_GITHUB_URL = "https://github.com/DeepLabCut/DeepLabCut"
@@ -133,6 +132,11 @@ class DeepLabCutWidget(QWidget):
             "Ctrl+I",
         )
         toolbar_layout.addWidget(self.install_button)
+
+        reference_divider = QFrame()
+        reference_divider.setObjectName("TerminalToolbarDivider")
+        reference_divider.setFrameShape(QFrame.VLine)
+        toolbar_layout.addWidget(reference_divider)
 
         self.install_docs_button = QPushButton("Guide")
         self.user_docs_button = QPushButton("Docs")
@@ -462,6 +466,15 @@ class DeepLabCutWidget(QWidget):
                 background: {theme.CANVAS};
                 border: 1px solid {theme.BORDER};
                 border-radius: 2px;
+            }
+            QFrame#TerminalToolbarDivider {
+                background: {theme.BORDER};
+                border: 0;
+                min-width: 1px;
+                max-width: 1px;
+                min-height: 22px;
+                max-height: 22px;
+                margin: 0 4px;
             }
             QFrame#TerminalHeader {
                 background: {theme.CANVAS};

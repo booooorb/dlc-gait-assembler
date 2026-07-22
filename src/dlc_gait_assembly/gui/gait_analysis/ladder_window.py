@@ -35,6 +35,10 @@ from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import install_wheel_value_guard, set_tooltip
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
+from dlc_gait_assembly.services.pipeline.alma import (
+    default_alma_root,
+    load_alma_config_defaults,
+)
 from dlc_gait_assembly.services.pipeline.ladder import (
     DualLadderRunResult,
     LadderEvent,
@@ -46,10 +50,6 @@ from dlc_gait_assembly.services.pipeline.ladder import (
     run_ladder_analysis,
     suggested_ladder_bodyparts,
     write_ladder_events,
-)
-from dlc_gait_assembly.services.pipeline.alma import (
-    default_alma_root,
-    load_alma_config_defaults,
 )
 from dlc_gait_assembly.services.project_paths import (
     find_project_root,
@@ -129,6 +129,7 @@ class LadderAnalysisWidget(QWidget):
         root.addWidget(splitter, 1)
 
         controls = QWidget()
+        controls.setObjectName("WorkspaceSidebar")
         controls.setMinimumWidth(390)
         controls.setMaximumWidth(500)
         controls_layout = QVBoxLayout(controls)
@@ -265,6 +266,7 @@ class LadderAnalysisWidget(QWidget):
         controls_layout.addWidget(self.status_label)
 
         review = QWidget()
+        review.setObjectName("WorkspaceCanvas")
         review_layout = QVBoxLayout(review)
         review_layout.setContentsMargins(12, 0, 0, 0)
         review_layout.setSpacing(12)

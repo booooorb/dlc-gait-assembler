@@ -5,30 +5,30 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDoubleSpinBox,
     QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QDoubleSpinBox,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QScrollArea,
-    QSlider,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from dlc_gait_assembly.services.domain.enhancements import EnhancementSettings
-from dlc_gait_assembly.services.domain.trimming import TrimRange
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.shared.formatting import format_milliseconds
 from dlc_gait_assembly.gui.shared.interaction import set_tooltip
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
-
+from dlc_gait_assembly.services.domain.enhancements import EnhancementSettings
+from dlc_gait_assembly.services.domain.trimming import TrimRange
 
 _ENHANCEMENT_SLIDERS = [
     ("sharpening", "Sharpening", 0, 250, 100.0),
@@ -363,7 +363,10 @@ class OperationSettingsPanel(QGroupBox):
         title = QLabel(f"Range {index + 1}")
         title.setObjectName("RegionTitle")
         title.setStyleSheet(f"color: {theme.NUMBER_ICON};" if active else "")
-        duration = QLabel(f"{_format_ms(trim_range.start_ms)} - {_format_ms(trim_range.end_ms)}")
+        duration = QLabel(
+            f"{format_milliseconds(trim_range.start_ms)} - "
+            f"{format_milliseconds(trim_range.end_ms)}"
+        )
         duration.setObjectName("DimensionLabel")
         duration.setWordWrap(True)
         layout.addWidget(title, 0, 0)
@@ -571,7 +574,7 @@ class OperationSettingsPanel(QGroupBox):
         ]
         positions = [(row_offset, 0), (row_offset, 2), (row_offset + 1, 0), (row_offset + 1, 2)]
 
-        for (field, label, maximum), (row, column) in zip(fields, positions):
+        for (field, label, maximum), (row, column) in zip(fields, positions, strict=True):
             layout.addWidget(QLabel(label), row, column)
             spin = QSpinBox()
             spin.setRange(0, maximum)
@@ -789,15 +792,6 @@ class OperationSettingsPanel(QGroupBox):
             return "All videos"
         count = len(selected_paths)
         return f"{count} video" if count == 1 else f"{count} videos"
-
-
-def _format_ms(ms: int) -> str:
-    total_seconds, milliseconds = divmod(max(0, int(ms)), 1000)
-    minutes, seconds = divmod(total_seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
-    return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
 def _normalize_path(path: str | Path) -> str:

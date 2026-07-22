@@ -4,8 +4,8 @@ from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QSlider
 
-from dlc_gait_assembly.services.domain.trimming import TrimRange
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.services.domain.trimming import TrimRange
 
 
 class TrimTimelineSlider(QSlider):

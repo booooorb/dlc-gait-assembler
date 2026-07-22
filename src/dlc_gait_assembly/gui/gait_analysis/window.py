@@ -1,38 +1,30 @@
 from __future__ import annotations
 
-import csv
-import re
-import tempfile
-import xml.etree.ElementTree as ET
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, Qt, QThread, Signal
-from PySide6.QtSvgWidgets import QSvgWidget
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
-    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
     QStackedWidget,
     QTabWidget,
     QTextEdit,
-    QHeaderView,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -40,119 +32,50 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.gait_analysis.dialogs import (
+    CsvPairingDialog,
+    LabelMappingDialog,
+)
+from dlc_gait_assembly.gui.gait_analysis.pairing import (
+    build_view_csv_sets,
+    build_view_pair_rows,
+    path_name,
+)
+from dlc_gait_assembly.gui.gait_analysis.previews import (
+    StickPlotPairPreviewWidget,
+    StickPlotPreviewDialog,
+)
+from dlc_gait_assembly.gui.gait_analysis.settings import (
+    BOTTOM_VIEW_LABELS,
+    MULTI_SIDE_VIEW_MODE_LABEL,
+    SIDE_VIEW_LABELS,
+    SINGLE_SIDE_VIEW_MODE_LABEL,
+    STANDARD_BODYPARTS,
+    auto_bodypart_label,
+    read_dlc_bodyparts,
+    reference_segment_label,
+)
+from dlc_gait_assembly.gui.gait_analysis.workers import (
+    AlmaAnalysisThread,
+    StickPlotPreviewThread,
+)
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, install_wheel_value_guard, set_tooltip
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.services.analysis_manifests import write_analysis_manifest
+from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.pipeline.alma import (
     AlmaSettings,
     AlmaViewCsvSet,
     default_alma_root,
     load_alma_config_defaults,
     pixels_per_cm_from_calibration_map,
-    run_alma_gait_analysis,
     settings_from_alma_config,
 )
-from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.project_paths import (
     find_project_root,
     manual_pipeline_output_folders,
 )
 from dlc_gait_assembly.services.video_processing import probe_video
-
-
-STANDARD_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")
-SIDE_VIEW_LABELS = STANDARD_BODYPARTS
-BOTTOM_VIEW_LABELS = ("center back", "back left", "back right", "body reference")
-MULTI_SIDE_VIEW_MODE_LABEL = "Multi side view"
-SINGLE_SIDE_VIEW_MODE_LABEL = "Single side view"
-BODY_PART_ALIASES = {
-    "toe": ("toe", "toer", "toel", "toe_r", "toe_l", "l-back-toe", "l-back-toe_tip", "r-back-toe", "r-back-toe_tip"),
-    "mtp": ("mtp", "mtpr", "mtpl", "mtp_r", "mtp_l", "l-back-mtp", "r-back-mtp"),
-    "ankle": ("ankle", "ankler", "anklel", "ankle_r", "ankle_l", "l-back-ankle", "r-back-ankle"),
-    "knee": ("knee", "kneer", "kneel", "knee_r", "knee_l", "l-back-knee", "r-back-knee"),
-    "hip": ("hip", "hipr", "hipl", "hip_r", "hip_l", "l-hip", "r-hip"),
-    "iliac crest": (
-        "iliac crest",
-        "iliac-crest",
-        "iliac_crest",
-        "crest",
-        "crestr",
-        "crestl",
-        "crest_r",
-        "crest_l",
-        "iliac crestr",
-        "iliac crestl",
-        "iliacr",
-        "iliacl",
-        "l-iliac-crest",
-        "r-iliac-crest",
-    ),
-    "center back": ("center back", "center-back", "centre back", "centre-back", "back-center", "back-centre", "d-center-back"),
-    "back left": ("back left", "back-left", "left back", "left-back", "d-back-left"),
-    "back right": ("back right", "back-right", "right back", "right-back", "d-back-right"),
-    "body reference": ("body reference", "body-reference", "reference", "ref", "tail base", "tail-base"),
-}
-
-
-class DoubleClickSvgWidget(QSvgWidget):
-    double_clicked = Signal()
-
-    def mouseDoubleClickEvent(self, event) -> None:
-        self.double_clicked.emit()
-        event.accept()
-
-
-class StickPlotPairPreviewWidget(QWidget):
-    double_clicked = Signal()
-
-    def __init__(self):
-        super().__init__()
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(8)
-        self._panels: list[tuple[QLabel, QSvgWidget]] = []
-        for _index in range(2):
-            panel = QWidget()
-            panel_layout = QVBoxLayout(panel)
-            panel_layout.setContentsMargins(0, 0, 0, 0)
-            panel_layout.setSpacing(4)
-            label = QLabel("")
-            label.setObjectName("MutedLabel")
-            label.setAlignment(Qt.AlignCenter)
-            svg = QSvgWidget()
-            svg.setObjectName("StickPlotSvg")
-            svg.setMinimumSize(150, 104)
-            svg.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            panel_layout.addWidget(label, 0)
-            panel_layout.addWidget(svg, 1)
-            layout.addWidget(panel, 1)
-            panel.installEventFilter(self)
-            label.installEventFilter(self)
-            svg.installEventFilter(self)
-            self._panels.append((label, svg))
-        self._panels[1][0].parentWidget().hide()
-
-    def load_plots(self, plots: tuple[tuple[str, bytes], ...]) -> None:
-        for index, (label, svg) in enumerate(self._panels):
-            panel = label.parentWidget()
-            if index < len(plots):
-                plot_label, svg_data = plots[index]
-                label.setText(plot_label)
-                svg.load(QByteArray(_qt_safe_svg_bytes(svg_data)))
-                panel.show()
-            else:
-                panel.hide()
-
-    def mouseDoubleClickEvent(self, event) -> None:
-        self.double_clicked.emit()
-        event.accept()
-
-    def eventFilter(self, watched, event) -> bool:
-        if event.type() == QEvent.MouseButtonDblClick:
-            self.double_clicked.emit()
-            event.accept()
-            return True
-        return super().eventFilter(watched, event)
 
 
 class AlmaKinematicsWidget(QWidget):
@@ -221,7 +144,9 @@ class AlmaKinematicsWidget(QWidget):
         root.addWidget(splitter, 1)
 
         left_panel = QWidget()
+        left_panel.setObjectName("WorkspaceSidebar")
         left_panel.setMinimumWidth(440)
+        left_panel.setMaximumWidth(520)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(16, 16, 16, 16)
         left_layout.setSpacing(12)
@@ -372,7 +297,7 @@ class AlmaKinematicsWidget(QWidget):
         reference_layout.setVerticalSpacing(4)
         self.reference_segment_combo = QComboBox()
         self.reference_segment_combo.addItems(["ankle_toe (1.5cm)", "hip_knee (2.5cm)", "knee_ankle (2.0cm)", "ankle_mtp (0.8cm)"])
-        self.reference_segment_combo.setCurrentText(_reference_segment_label(self._defaults.reference_segment))
+        self.reference_segment_combo.setCurrentText(reference_segment_label(self._defaults.reference_segment))
         self.reference_length_spin = _double_spin(0.1, 10.0, self._defaults.reference_length_cm, 2)
         set_tooltip(self.reference_segment_combo, "Body segment used as the reference calibration length.")
         set_tooltip(self.reference_length_spin, "Known length of the selected reference segment in centimeters.")
@@ -487,11 +412,14 @@ class AlmaKinematicsWidget(QWidget):
         self.continuous_strides_spin.setValue(self._defaults.n_continuous_strides)
         self.stickplot_checkbox = QCheckBox("Generate stickplot SVG")
         self.stickplot_checkbox.setChecked(True)
-        self.rustlab1_checkbox = QCheckBox("Generate RustLab1 30-parameter + merged CSVs")
+        self.rustlab1_checkbox = QCheckBox("Generate RustLab1 parameters, merged CSV, and figures")
         self.rustlab1_checkbox.setChecked(self._defaults.generate_rustlab1_parameters)
         set_tooltip(self.continuous_strides_spin, "Number of continuous strides used for ALMA outputs.")
         set_tooltip(self.stickplot_checkbox, "Generate an SVG stickplot output.")
-        set_tooltip(self.rustlab1_checkbox, "Calculate the SOP's 30 RustLab1 parameters on ALMA gait cycles when multi-view labels are present.")
+        set_tooltip(
+            self.rustlab1_checkbox,
+            "Calculate the SOP's 30 RustLab1 parameters and 18 runway SVG figures on ALMA gait cycles when multi-view labels are present.",
+        )
         output_options_layout.addWidget(QLabel("Continuous strides"), 0, 0)
         output_options_layout.addWidget(self.continuous_strides_spin, 0, 1)
         output_options_layout.addWidget(self.stickplot_checkbox, 1, 0, 1, 2)
@@ -532,6 +460,7 @@ class AlmaKinematicsWidget(QWidget):
         left_layout.addWidget(self.run_button)
 
         right_panel = QWidget()
+        right_panel.setObjectName("WorkspaceCanvas")
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(16, 16, 16, 16)
         right_layout.setSpacing(12)
@@ -610,9 +539,9 @@ class AlmaKinematicsWidget(QWidget):
 
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([520, 760])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([500, 780])
 
     def _install_interactions(self) -> None:
         self._shortcuts = [
@@ -749,7 +678,7 @@ class AlmaKinematicsWidget(QWidget):
             self._view_sets = list(self._manual_view_sets)
             self._view_set_errors = []
         else:
-            self._view_sets, self._view_set_errors = _build_alma_view_csv_sets(self._selected_files)
+            self._view_sets, self._view_set_errors = build_view_csv_sets(self._selected_files)
         self._refresh_view_set_table()
         if self._manual_view_sets is not None and self._view_sets:
             suffix = "" if len(self._view_sets) == 1 else "s"
@@ -791,7 +720,7 @@ class AlmaKinematicsWidget(QWidget):
                 for view_set in self._view_sets
             ]
         else:
-            rows = _build_alma_view_pair_rows(self._selected_files)
+            rows = build_view_pair_rows(self._selected_files)
         self.view_set_table.blockSignals(True)
         self.view_set_table.clear()
         complete_index = 0
@@ -800,9 +729,9 @@ class AlmaKinematicsWidget(QWidget):
             item = QTreeWidgetItem(
                 [
                     row["name"],
-                    _path_name(row.get("left")),
-                    _path_name(row.get("right")),
-                    _path_name(row.get("bottom")),
+                    path_name(row.get("left")),
+                    path_name(row.get("right")),
+                    path_name(row.get("bottom")),
                     row["status"],
                 ]
             )
@@ -920,7 +849,7 @@ class AlmaKinematicsWidget(QWidget):
 
         csv_path = self._selected_preview_file()
         try:
-            self._raw_bodyparts = _read_dlc_bodyparts(csv_path)
+            self._raw_bodyparts = read_dlc_bodyparts(csv_path)
         except Exception as exc:
             self._raw_bodyparts = []
             self._refresh_bodypart_mapping_choices()
@@ -944,9 +873,9 @@ class AlmaKinematicsWidget(QWidget):
 
         try:
             labels_by_view = {
-                "left": _read_dlc_bodyparts(view_set.left_csv),
-                "right": _read_dlc_bodyparts(view_set.right_csv),
-                "bottom": _read_dlc_bodyparts(view_set.bottom_csv),
+                "left": read_dlc_bodyparts(view_set.left_csv),
+                "right": read_dlc_bodyparts(view_set.right_csv),
+                "bottom": read_dlc_bodyparts(view_set.bottom_csv),
             }
         except Exception as exc:
             QMessageBox.critical(self, "Could not read labels", str(exc))
@@ -1223,7 +1152,7 @@ class AlmaKinematicsWidget(QWidget):
         dialog.finished.connect(lambda _result: self._large_stickplot_dialog_closed(dialog))
         dialog.show()
 
-    def _large_stickplot_dialog_closed(self, dialog: "StickPlotPreviewDialog") -> None:
+    def _large_stickplot_dialog_closed(self, dialog: StickPlotPreviewDialog) -> None:
         if self._large_stickplot_dialog is dialog:
             self._large_stickplot_dialog = None
 
@@ -1390,7 +1319,7 @@ class AlmaKinematicsWidget(QWidget):
                 ("bottom", view_set.bottom_csv, BOTTOM_VIEW_LABELS[:3]),
             ):
                 try:
-                    raw_bodyparts = _read_dlc_bodyparts(csv_path)
+                    raw_bodyparts = read_dlc_bodyparts(csv_path)
                 except Exception:
                     missing.extend(f"{view} {label}" for label in required_labels)
                     continue
@@ -1495,443 +1424,6 @@ class GaitAnalysisWidget(QWidget):
         self.kinematics_widget._apply_style()
 
 
-class StickPlotPreviewDialog(QDialog):
-    def __init__(self, plots: tuple[tuple[str, bytes], ...], source_name: str, parent=None):
-        super().__init__(parent)
-        title = "Stick-plot preview"
-        if source_name:
-            title = f"{title}: {source_name}"
-        self.setWindowTitle(title)
-        self.resize(1180, 760)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(False)
-        scroll.setObjectName("LargeStickPlotScroll")
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(12, 12, 12, 12)
-        content_layout.setSpacing(14)
-        self.previews: list[QSvgWidget] = []
-        for plot_label, svg_data in plots:
-            label = QLabel(plot_label)
-            label.setObjectName("PreviewTitle")
-            content_layout.addWidget(label)
-            preview = QSvgWidget()
-            preview.setObjectName("LargeStickPlotSvg")
-            preview.load(QByteArray(_qt_safe_svg_bytes(svg_data)))
-            width, height = _expanded_svg_size(preview)
-            preview.setFixedSize(width, height)
-            content_layout.addWidget(preview)
-            self.previews.append(preview)
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-
-        self.setStyleSheet(
-            theme.workspace_stylesheet(
-                "StickPlotPreviewDialog",
-                """
-                QScrollArea#LargeStickPlotScroll {
-                    border: 1px solid {theme.BORDER};
-                    border-radius: 2px;
-                    background: white;
-                }
-                QSvgWidget#LargeStickPlotSvg {
-                    background: white;
-                }
-                """
-            )
-        )
-
-
-class CsvPairingDialog(QDialog):
-    def __init__(self, csv_files: list[Path], initial_sets: list[AlmaViewCsvSet], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("CSV pairing")
-        self.resize(980, 520)
-        self._csv_files = list(csv_files)
-        self._rows: list[dict[str, object]] = []
-        self._pairings: list[AlmaViewCsvSet] = []
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        self._row_container = QWidget()
-        self._row_layout = QVBoxLayout(self._row_container)
-        self._row_layout.setContentsMargins(0, 0, 0, 0)
-        self._row_layout.setSpacing(8)
-        scroll.setWidget(self._row_container)
-        layout.addWidget(scroll, 1)
-
-        source_sets = list(initial_sets)
-        if not source_sets and len(self._csv_files) >= 3:
-            source_sets = [_suggest_view_set_from_files(self._csv_files)]
-        for view_set in source_sets:
-            self._add_row(view_set)
-        if not self._rows:
-            self._add_row()
-
-        action_row = QHBoxLayout()
-        self.add_set_button = QPushButton("Add CSV set")
-        self.auto_pair_button = QPushButton("Use filename pairs")
-        set_tooltip(self.add_set_button, "Add another left/right/bottom CSV set.")
-        set_tooltip(self.auto_pair_button, "Replace manual rows with pairs inferred from CSV filenames.")
-        self.add_set_button.clicked.connect(lambda: self._add_row())
-        self.auto_pair_button.clicked.connect(self._use_filename_pairs)
-        action_row.addWidget(self.add_set_button)
-        action_row.addWidget(self.auto_pair_button)
-        action_row.addStretch(1)
-        layout.addLayout(action_row)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.setStyleSheet(theme.workspace_stylesheet("CsvPairingDialog", ""))
-
-    def _add_row(self, view_set: AlmaViewCsvSet | None = None) -> None:
-        frame = QFrame()
-        frame.setObjectName("PairingRow")
-        row_layout = QGridLayout(frame)
-        row_layout.setContentsMargins(10, 10, 10, 10)
-        row_layout.setHorizontalSpacing(10)
-        row_layout.setVerticalSpacing(6)
-
-        name_edit = QLineEdit(view_set.name if view_set is not None else f"set_{len(self._rows) + 1}")
-        left_combo = self._path_combo(view_set.left_csv if view_set is not None else None)
-        right_combo = self._path_combo(view_set.right_csv if view_set is not None else None)
-        bottom_combo = self._path_combo(view_set.bottom_csv if view_set is not None else None)
-        remove_button = QPushButton("Remove")
-
-        row_layout.addWidget(QLabel("CSV set name"), 0, 0)
-        row_layout.addWidget(name_edit, 0, 1, 1, 3)
-        row_layout.addWidget(remove_button, 0, 4)
-        row_layout.addWidget(QLabel("Left side view CSV"), 1, 0)
-        row_layout.addWidget(left_combo, 1, 1)
-        row_layout.addWidget(QLabel("Right side view CSV"), 1, 2)
-        row_layout.addWidget(right_combo, 1, 3)
-        row_layout.addWidget(QLabel("Bottom view CSV"), 2, 0)
-        row_layout.addWidget(bottom_combo, 2, 1, 1, 3)
-
-        row = {
-            "frame": frame,
-            "name": name_edit,
-            "left": left_combo,
-            "right": right_combo,
-            "bottom": bottom_combo,
-        }
-        remove_button.clicked.connect(lambda _checked=False, row=row: self._remove_row(row))
-        self._rows.append(row)
-        self._row_layout.addWidget(frame)
-
-    def _remove_row(self, row: dict[str, object]) -> None:
-        if row not in self._rows:
-            return
-        self._rows.remove(row)
-        frame = row["frame"]
-        if isinstance(frame, QWidget):
-            frame.setParent(None)
-            frame.deleteLater()
-        if not self._rows:
-            self._add_row()
-
-    def _path_combo(self, selected: Path | None = None) -> QComboBox:
-        combo = QComboBox()
-        combo.addItem("(none)", "")
-        selected_text = str(Path(selected).expanduser().resolve()) if selected is not None else ""
-        for path in self._csv_files:
-            combo.addItem(_csv_choice_label(path, self._csv_files), str(path))
-        if selected_text:
-            index = combo.findData(selected_text)
-            if index >= 0:
-                combo.setCurrentIndex(index)
-        return combo
-
-    def _use_filename_pairs(self) -> None:
-        view_sets, _errors = _build_alma_view_csv_sets(self._csv_files)
-        for row in list(self._rows):
-            self._remove_row(row)
-        for view_set in view_sets:
-            self._add_row(view_set)
-        if not self._rows:
-            self._add_row()
-
-    def accept(self) -> None:
-        try:
-            self._pairings = self._collect_pairings()
-        except ValueError as exc:
-            QMessageBox.warning(self, "CSV pairing incomplete", str(exc))
-            return
-        super().accept()
-
-    def _collect_pairings(self) -> list[AlmaViewCsvSet]:
-        pairings: list[AlmaViewCsvSet] = []
-        used_paths: dict[Path, str] = {}
-        used_names: set[str] = set()
-        for index, row in enumerate(self._rows, start=1):
-            name_edit = row["name"]
-            left_combo = row["left"]
-            right_combo = row["right"]
-            bottom_combo = row["bottom"]
-            if not isinstance(name_edit, QLineEdit) or not isinstance(left_combo, QComboBox):
-                continue
-            if not isinstance(right_combo, QComboBox) or not isinstance(bottom_combo, QComboBox):
-                continue
-
-            name = name_edit.text().strip() or f"set_{index}"
-            selected = {
-                "left": _combo_path(left_combo),
-                "right": _combo_path(right_combo),
-                "bottom": _combo_path(bottom_combo),
-            }
-            if not any(selected.values()):
-                continue
-            missing = [view for view, path in selected.items() if path is None]
-            if missing:
-                raise ValueError(f"{name}: missing " + ", ".join(missing) + " CSV.")
-            row_paths = [path for path in selected.values() if path is not None]
-            if len(set(row_paths)) != len(row_paths):
-                raise ValueError(f"{name}: each view must use a different CSV file.")
-            if name in used_names:
-                raise ValueError(f"{name}: CSV set names must be unique.")
-            used_names.add(name)
-            for view, path in selected.items():
-                if path is None:
-                    continue
-                previous = used_paths.get(path)
-                if previous is not None:
-                    raise ValueError(f"{path.name} is already assigned to {previous}.")
-                used_paths[path] = f"{name} {view}"
-            pairings.append(
-                AlmaViewCsvSet(
-                    name=name,
-                    left_csv=selected["left"],
-                    right_csv=selected["right"],
-                    bottom_csv=selected["bottom"],
-                )
-            )
-        if not pairings:
-            raise ValueError("Create at least one complete left/right/bottom CSV set.")
-        return pairings
-
-    def pairings(self) -> list[AlmaViewCsvSet]:
-        return list(self._pairings)
-
-
-class LabelMappingDialog(QDialog):
-    def __init__(
-        self,
-        view_set: AlmaViewCsvSet,
-        labels_by_view: dict[str, list[str]],
-        existing_mapping: dict[str, dict[str, str]],
-        parent=None,
-    ):
-        super().__init__(parent)
-        self.setWindowTitle(f"Label matching: {view_set.name}")
-        self.resize(820, 560)
-        self._combos: dict[tuple[str, str], QComboBox] = {}
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
-
-        tabs = QTabWidget()
-        tabs.setDocumentMode(True)
-        layout.addWidget(tabs, 1)
-
-        for view, title, csv_path, required_labels in (
-            ("left", "Left hindlimb", view_set.left_csv, SIDE_VIEW_LABELS),
-            ("right", "Right hindlimb", view_set.right_csv, SIDE_VIEW_LABELS),
-            ("bottom", "Bottom view", view_set.bottom_csv, BOTTOM_VIEW_LABELS),
-        ):
-            page = QWidget()
-            page_layout = QVBoxLayout(page)
-            page_layout.setContentsMargins(8, 8, 8, 8)
-            page_layout.setSpacing(10)
-            file_label = QLabel(csv_path.name)
-            file_label.setObjectName("MutedLabel")
-            page_layout.addWidget(file_label)
-
-            grid = QGridLayout()
-            grid.setHorizontalSpacing(12)
-            grid.setVerticalSpacing(8)
-            raw_labels = labels_by_view.get(view, [])
-            choices = ["(none)", *raw_labels]
-            existing_for_view = existing_mapping.get(view, {})
-            for row, standard_label in enumerate(required_labels):
-                combo = QComboBox()
-                combo.addItems(choices)
-                selected = _raw_label_for_standard(existing_for_view, standard_label)
-                if selected not in raw_labels:
-                    selected = _auto_bodypart_label(raw_labels, standard_label)
-                combo.setCurrentText(selected or "(none)")
-                set_tooltip(combo, f"Raw DLC label to use as {standard_label}.")
-                self._combos[(view, standard_label)] = combo
-                grid.addWidget(QLabel(standard_label), row, 0)
-                grid.addWidget(combo, row, 1)
-            page_layout.addLayout(grid)
-            page_layout.addStretch(1)
-            tabs.addTab(page, title)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.setStyleSheet(theme.workspace_stylesheet("LabelMappingDialog", ""))
-
-    def mapping(self) -> dict[str, dict[str, str]]:
-        mapping: dict[str, dict[str, str]] = {"left": {}, "right": {}, "bottom": {}}
-        for (view, standard_label), combo in self._combos.items():
-            raw_label = combo.currentText()
-            if raw_label and raw_label != "(none)":
-                mapping[view][raw_label] = standard_label
-        return {view: view_mapping for view, view_mapping in mapping.items() if view_mapping}
-
-
-def _expanded_svg_size(svg_widget: QSvgWidget) -> tuple[int, int]:
-    default_size = svg_widget.renderer().defaultSize()
-    if default_size.isValid() and default_size.width() > 0 and default_size.height() > 0:
-        aspect = default_size.width() / default_size.height()
-        width = max(default_size.width(), 1200)
-        height = max(default_size.height(), int(width / aspect))
-        if height < 700:
-            height = 700
-            width = max(width, int(height * aspect))
-        return width, height
-    return 1200, 700
-
-
-class StickPlotPreviewThread(QThread):
-    progress_updated = Signal(int, str)
-    log_message = Signal(str)
-    preview_ready = Signal(object, str)
-    preview_failed = Signal(str)
-
-    def __init__(self, csv_files: tuple[tuple[str, Path], ...], settings: AlmaSettings, alma_root: Path):
-        super().__init__()
-        self._csv_files = tuple((label, Path(csv_file)) for label, csv_file in csv_files)
-        self._settings = settings
-        self._alma_root = alma_root
-
-    def run(self) -> None:
-        try:
-            source_name = ", ".join(csv_file.name for _label, csv_file in self._csv_files)
-            self.log_message.emit(f"Generating preview from {source_name}")
-
-            def progress(index: int, total: int, message: str) -> None:
-                value = 10 + int(index * 75 / max(1, total))
-                self.progress_updated.emit(value, message)
-                self.log_message.emit(message)
-
-            temp_root = Path("/private/tmp") if Path("/private/tmp").is_dir() else None
-            with tempfile.TemporaryDirectory(prefix="dlc-gait-stickplot-", dir=temp_root) as temp_dir:
-                plots: list[tuple[str, bytes]] = []
-                for input_index, (label, csv_file) in enumerate(self._csv_files, start=1):
-                    side_mapping = None
-                    if self._settings.view_bodypart_mapping:
-                        side_mapping = self._settings.view_bodypart_mapping.get(label.lower())
-                    side_settings = replace(
-                        self._settings,
-                        custom_bodypart_mapping=side_mapping or self._settings.custom_bodypart_mapping,
-                        view_bodypart_mapping=None,
-                    )
-
-                    def side_progress(index: int, total: int, message: str) -> None:
-                        overall_index = ((input_index - 1) * max(1, total)) + index
-                        overall_total = max(1, len(self._csv_files) * max(1, total))
-                        progress(overall_index, overall_total, message)
-
-                    results = run_alma_gait_analysis(
-                        [csv_file],
-                        Path(temp_dir),
-                        side_settings,
-                        self._alma_root,
-                        progress_callback=side_progress,
-                    )
-                    for result in results:
-                        for message in result.messages:
-                            self.log_message.emit(message)
-                    svg_path = next(
-                        (
-                            path
-                            for result in results
-                            for path in result.output_files
-                            if path.suffix.lower() == ".svg" and path.exists()
-                        ),
-                        None,
-                    )
-                    if svg_path is not None:
-                        plots.append((label, svg_path.read_bytes()))
-
-                if not plots:
-                    raise RuntimeError(
-                        "ALMA did not find a valid stride for the stick plot. Check body-part mapping, "
-                        "walking direction, calibration, and stride filters."
-                    )
-            self.preview_ready.emit(tuple(plots), source_name)
-        except Exception as exc:
-            csv_file = self._csv_files[0][1] if self._csv_files else Path("")
-            self.preview_failed.emit(_format_stickplot_failure(exc, csv_file, self._settings))
-
-
-class AlmaAnalysisThread(QThread):
-    progress_updated = Signal(int, str)
-    log_message = Signal(str)
-    analysis_completed = Signal(bool, str)
-
-    def __init__(self, files: list[Path | AlmaViewCsvSet], output_folder: Path, settings: AlmaSettings, alma_root: Path):
-        super().__init__()
-        self._files = files
-        self._output_folder = output_folder
-        self._settings = settings
-        self._alma_root = alma_root
-
-    def run(self) -> None:
-        try:
-            self.log_message.emit(f"ALMA root: {self._alma_root}")
-            self.log_message.emit(f"Output folder: {self._output_folder}")
-            self.log_message.emit(f"Setup: {self._settings.analysis_type}")
-            self.log_message.emit(f"Frame rate: {self._settings.frame_rate:g} fps")
-            self.log_message.emit(f"Calibration method: {self._settings.calibration_method}")
-            if self._settings.calibration_method == "manual":
-                self.log_message.emit(f"Pixels per CM: {self._settings.pixels_per_cm:g}")
-                if self._settings.calibration_map_path is not None:
-                    self.log_message.emit(f"Calibration map: {self._settings.calibration_map_path}")
-            if self._settings.custom_bodypart_mapping:
-                self.log_message.emit(f"Body part mapping: {self._settings.custom_bodypart_mapping}")
-
-            def progress(index: int, total: int, message: str) -> None:
-                value = 10 + int((index - 1) * 80 / max(1, total))
-                self.progress_updated.emit(value, message)
-                self.log_message.emit(message)
-
-            results = run_alma_gait_analysis(
-                self._files,
-                self._output_folder,
-                self._settings,
-                self._alma_root,
-                progress_callback=progress,
-            )
-            for result in results:
-                self.log_message.emit(f"{result.input_file.name}:")
-                for output in result.output_files:
-                    self.log_message.emit(f"  {output}")
-                for message in result.messages:
-                    self.log_message.emit(f"  {message}")
-            self.progress_updated.emit(100, "ALMA gait analysis complete.")
-            self.analysis_completed.emit(True, f"Analysis complete. Results saved to:\n{self._output_folder}")
-        except Exception as exc:
-            self.analysis_completed.emit(False, str(exc))
-
-
 def _double_spin(minimum: float, maximum: float, value: float, decimals: int) -> QDoubleSpinBox:
     spin = QDoubleSpinBox()
     spin.setRange(minimum, maximum)
@@ -1940,271 +1432,4 @@ def _double_spin(minimum: float, maximum: float, value: float, decimals: int) ->
     return spin
 
 
-def _format_stickplot_failure(exc: Exception, csv_file: Path, settings: AlmaSettings) -> str:
-    message = str(exc)
-    try:
-        bodyparts = ", ".join(_read_dlc_bodyparts(csv_file))
-    except Exception:
-        bodyparts = "could not read body-part labels"
-
-    hints = [
-        f"Input CSV: {csv_file.name}",
-        f"Detected body parts: {bodyparts}",
-        f"Likelihood min: {settings.likelihood_threshold:.2f}",
-        "Check Label matching for three-view sets, or the Mapping tab in single-side ALMA mode.",
-        "If the confidence cutoff is too strict, lower Likelihood min or set it to 0.",
-        "If no stride is found, try Auto-detect direction or relax stride height/length filters.",
-    ]
-    return message + "\n\n" + "\n".join(hints)
-
-
-def _reference_segment_label(segment: str) -> str:
-    labels = {
-        "ankle_toe": "ankle_toe (1.5cm)",
-        "hip_knee": "hip_knee (2.5cm)",
-        "knee_ankle": "knee_ankle (2.0cm)",
-        "ankle_mtp": "ankle_mtp (0.8cm)",
-    }
-    return labels.get(segment, "ankle_toe (1.5cm)")
-
-
-def _read_dlc_bodyparts(csv_path: Path) -> list[str]:
-    with Path(csv_path).open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.reader(handle)
-        try:
-            next(reader)
-            bodyparts = next(reader)
-            coords = next(reader)
-        except StopIteration as exc:
-            raise ValueError(f"{csv_path} does not look like a DeepLabCut CSV with scorer/bodyparts/coords rows.") from exc
-
-    labels: list[str] = []
-    seen: set[str] = set()
-    for bodypart, coord in zip(bodyparts, coords):
-        label = bodypart.strip()
-        if coord.strip().lower() == "x" and label and label not in seen:
-            labels.append(label)
-            seen.add(label)
-    if not labels:
-        raise ValueError(f"No body part labels were found in {csv_path}.")
-    return labels
-
-
-def _auto_bodypart_label(raw_bodyparts: list[str], standard_bodypart: str) -> str | None:
-    aliases = {
-        _normalized_bodypart_label(alias)
-        for alias in BODY_PART_ALIASES.get(standard_bodypart, (standard_bodypart,))
-    }
-    for raw_bodypart in raw_bodyparts:
-        if _normalized_bodypart_label(raw_bodypart) in aliases:
-            return raw_bodypart
-    return None
-
-
-def _raw_label_for_standard(mapping: dict[str, str], standard_bodypart: str) -> str | None:
-    for raw_bodypart, mapped_bodypart in mapping.items():
-        if mapped_bodypart == standard_bodypart:
-            return raw_bodypart
-    return None
-
-
-def _combo_path(combo: QComboBox) -> Path | None:
-    value = combo.currentData()
-    if not value:
-        return None
-    return Path(str(value))
-
-
-def _csv_choice_label(path: Path, all_paths: list[Path]) -> str:
-    if sum(1 for candidate in all_paths if candidate.name == path.name) <= 1:
-        return path.name
-    return f"{path.name}  ({path.parent.name})"
-
-
-def _qt_safe_svg_bytes(svg_data: bytes) -> bytes:
-    try:
-        root = ET.fromstring(svg_data)
-    except ET.ParseError:
-        return svg_data
-
-    parent_by_child = {child: parent for parent in root.iter() for child in parent}
-    defined_ids = {
-        element_id
-        for element in root.iter()
-        if (element_id := element.attrib.get("id"))
-    }
-    unusable_ids = {
-        element.attrib["id"]
-        for element in root.iter()
-        if _xml_local_name(element.tag) == "path"
-        and element.attrib.get("id")
-        and not element.attrib.get("d", "").strip()
-    }
-    removed = False
-    for element in list(root.iter()):
-        parent = parent_by_child.get(element)
-        if parent is None:
-            continue
-        tag = _xml_local_name(element.tag)
-        if tag == "path":
-            path_data = element.attrib.get("d", "")
-            if not path_data.strip() or _svg_path_has_nonfinite_values(path_data):
-                parent.remove(element)
-                removed = True
-                continue
-        if tag == "use":
-            href = (
-                element.attrib.get("{http://www.w3.org/1999/xlink}href")
-                or element.attrib.get("href")
-                or ""
-            )
-            if href.startswith("#") and (href[1:] not in defined_ids or href[1:] in unusable_ids):
-                parent.remove(element)
-                removed = True
-    if not removed:
-        return svg_data
-    ET.register_namespace("", "http://www.w3.org/2000/svg")
-    ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
-
-
-def _xml_local_name(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
-
-
-def _svg_path_has_nonfinite_values(path_data: str) -> bool:
-    return bool(re.search(r"(?i)(?:^|[^a-z])(?:nan|inf|-inf|infinity|-infinity)(?:$|[^a-z])", path_data))
-
-
-def _suggest_view_set_from_files(paths: list[Path]) -> AlmaViewCsvSet:
-    by_view: dict[str, Path] = {}
-    for path in paths:
-        view = _csv_view_from_name(path)
-        if view is not None and view not in by_view:
-            by_view[view] = path
-    remaining = [path for path in paths if path not in by_view.values()]
-    for view in ("left", "right", "bottom"):
-        if view not in by_view and remaining:
-            by_view[view] = remaining.pop(0)
-    return AlmaViewCsvSet(
-        name=_csv_view_group_key(by_view.get("left", paths[0])) if paths else "set_1",
-        left_csv=by_view.get("left", paths[0]),
-        right_csv=by_view.get("right", paths[min(1, len(paths) - 1)]),
-        bottom_csv=by_view.get("bottom", paths[min(2, len(paths) - 1)]),
-    )
-
-
-def _normalized_bodypart_label(label: str) -> str:
-    return " ".join(label.strip().lower().replace("_", " ").replace("-", " ").split())
-
-
-def _build_alma_view_csv_sets(paths: list[Path]) -> tuple[list[AlmaViewCsvSet], list[str]]:
-    rows = _build_alma_view_pair_rows(paths)
-    view_sets: list[AlmaViewCsvSet] = []
-    errors: list[str] = []
-    for row in rows:
-        if row["status"] != "Ready":
-            errors.append(f"{row['name']}: {row['status']}.")
-            continue
-        view_sets.append(
-            AlmaViewCsvSet(
-                name=row["name"],
-                left_csv=row["left"],
-                right_csv=row["right"],
-                bottom_csv=row["bottom"],
-            )
-        )
-    return view_sets, errors
-
-
-def _build_alma_view_pair_rows(paths: list[Path]) -> list[dict[str, object]]:
-    grouped: dict[tuple[Path, str], dict[str, Path]] = {}
-    rows: list[dict[str, object]] = []
-    for path in paths:
-        view = _csv_view_from_name(path)
-        if view is None:
-            rows.append(
-                {
-                    "name": path.stem,
-                    "left": None,
-                    "right": None,
-                    "bottom": None,
-                    "status": "Unclassified view",
-                }
-            )
-            continue
-        group_key = (path.parent, _csv_view_group_key(path))
-        group = grouped.setdefault(group_key, {})
-        if view in group:
-            rows.append(
-                {
-                    "name": _view_group_label(group_key),
-                    "left": path if view == "left" else None,
-                    "right": path if view == "right" else None,
-                    "bottom": path if view == "bottom" else None,
-                    "status": f"Duplicate {view}",
-                }
-            )
-            continue
-        group[view] = path
-
-    for group_key, group in sorted(grouped.items(), key=lambda item: (str(item[0][0]), item[0][1])):
-        missing = [view for view in ("left", "right", "bottom") if view not in group]
-        rows.append(
-            {
-                "name": _view_group_label(group_key),
-                "left": group.get("left"),
-                "right": group.get("right"),
-                "bottom": group.get("bottom"),
-                "status": "Ready" if not missing else "Missing " + ", ".join(missing),
-            }
-        )
-    return rows
-
-
-def _path_name(path) -> str:
-    return Path(path).name if path is not None else "-"
-
-
-def _csv_view_from_name(path: Path) -> str | None:
-    tokens = _filename_tokens(path)
-    stem = path.stem.lower()
-    if tokens & {"left", "lhs", "lview"} or "leftview" in stem:
-        return "left"
-    if tokens & {"right", "rhs", "rview"} or "rightview" in stem:
-        return "right"
-    if tokens & {"bottom", "down", "ventral", "below", "bview", "dview"} or "bottomview" in stem or "downview" in stem:
-        return "bottom"
-    return None
-
-
-def _csv_view_group_key(path: Path) -> str:
-    view_tokens = {
-        "left",
-        "lhs",
-        "lview",
-        "right",
-        "rhs",
-        "rview",
-        "bottom",
-        "down",
-        "ventral",
-        "below",
-        "bview",
-        "dview",
-    }
-    tokens = [token for token in _filename_token_list(path) if token not in view_tokens]
-    return "_".join(tokens) or path.stem.lower()
-
-
-def _view_group_label(group_key: tuple[Path, str]) -> str:
-    _parent, key = group_key
-    return key or "view_set"
-
-
-def _filename_tokens(path: Path) -> set[str]:
-    return set(_filename_token_list(path))
-
-
-def _filename_token_list(path: Path) -> list[str]:
-    return [token for token in re.split(r"[^a-z0-9]+", path.stem.lower()) if token]
+_auto_bodypart_label = auto_bodypart_label

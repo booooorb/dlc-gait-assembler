@@ -8,7 +8,7 @@ class TrimRange:
     start_ms: int
     end_ms: int
 
-    def clamped(self, duration_ms: int) -> "TrimRange":
+    def clamped(self, duration_ms: int) -> TrimRange:
         duration_ms = max(0, int(duration_ms))
         start = _clamp_int(self.start_ms, 0, duration_ms)
         end = _clamp_int(self.end_ms, start, duration_ms)

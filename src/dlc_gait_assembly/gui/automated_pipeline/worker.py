@@ -6,10 +6,10 @@ from threading import Event
 from PySide6.QtCore import QThread, Signal
 
 from dlc_gait_assembly.services.automated_profiles import AutomatedPipelineProfile
-from dlc_gait_assembly.services.pipeline.automated import AutomatedPipelineRun
-
-
-REVIEW_STAGES = {0, 3, 4}
+from dlc_gait_assembly.services.pipeline.automated import (
+    AUTOMATED_STAGE_SPECS,
+    AutomatedPipelineRun,
+)
 
 
 class AutomatedPipelineWorker(QThread):
@@ -71,16 +71,9 @@ class AutomatedPipelineWorker(QThread):
             )
             self.output_folder_ready.emit(pipeline.output_folder)
             self.log_message.emit(f"Output folder: {pipeline.output_folder}")
-            for stage_index, label in enumerate(
-                (
-                    "Video processing",
-                    "DeepLabCut analysis",
-                    "Knee correction",
-                    "Labeled video creation",
-                    "Stickplot generation",
-                    "Gait analysis",
-                )
-            ):
+            for spec in AUTOMATED_STAGE_SPECS:
+                stage_index = int(spec.stage)
+                label = spec.label
                 if self._cancel_requested.is_set():
                     self.run_cancelled.emit()
                     return
@@ -107,7 +100,7 @@ class AutomatedPipelineWorker(QThread):
                     self.run_cancelled.emit()
                     return
 
-                if stage_index in REVIEW_STAGES:
+                if spec.review_kind is not None:
                     self._waiting_for_review = True
                     self._review_approved = False
                     self._review_released.clear()

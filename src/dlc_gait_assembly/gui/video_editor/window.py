@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from PySide6.QtCore import QTimer, Qt
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -26,9 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dlc_gait_assembly.services.domain.trimming import TrimRange
-from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.shared.formatting import format_milliseconds
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
@@ -39,14 +39,15 @@ from dlc_gait_assembly.services.analysis_manifests import (
     video_settings_from_manifest,
     write_video_settings_manifest,
 )
-from dlc_gait_assembly.services.video_processing import ProcessingOptions, ffmpeg_available
+from dlc_gait_assembly.services.domain.trimming import TrimRange
+from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.output_documents import write_video_processing_session_documents
 from dlc_gait_assembly.services.project_paths import (
     find_project_root,
     make_session_output_dir,
     manual_pipeline_output_folders,
 )
-from dlc_gait_assembly.services.video_processing import is_supported_video
+from dlc_gait_assembly.services.video_processing import ProcessingOptions, ffmpeg_available, is_supported_video
 
 try:
     import cv2
@@ -121,6 +122,7 @@ class VideoEditorWidget(QWidget):
         self.preview = RegionPreviewView()
 
         left_panel = QWidget()
+        left_panel.setObjectName("WorkspaceSidebar")
         left_panel.setMinimumWidth(350)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(16, 16, 16, 16)
@@ -153,7 +155,7 @@ class VideoEditorWidget(QWidget):
         self.video_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.video_list.setTextElideMode(Qt.ElideNone)
         self.video_list.setUniformItemSizes(True)
-        self.video_list.setAlternatingRowColors(True)
+        self.video_list.setAlternatingRowColors(False)
         self.video_list.setSpacing(0)
         list_font = self.video_list.font()
         list_font.setPointSize(9)
@@ -193,6 +195,7 @@ class VideoEditorWidget(QWidget):
         left_layout.addWidget(self.progress)
 
         right_panel = QWidget()
+        right_panel.setObjectName("WorkspaceCanvas")
         right_panel.setMinimumWidth(390)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(16, 16, 16, 16)
@@ -599,7 +602,9 @@ class VideoEditorWidget(QWidget):
         height, width, channels = rgb.shape
         image = QImage(rgb.data, width, height, channels * width, QImage.Format_RGB888)
         self.preview.set_frame(image)
-        self.time_label.setText(f"{_format_ms(ms)} / {_format_ms(self._duration_ms)}")
+        self.time_label.setText(
+            f"{format_milliseconds(ms)} / {format_milliseconds(self._duration_ms)}"
+        )
 
     def _select_video_by_path(self, path_text: str) -> None:
         for index in range(self.video_list.count()):
@@ -1098,15 +1103,6 @@ class ExportSettingsDialog(QDialog):
         )
         if directory:
             self.output_root_edit.setText(directory)
-
-
-def _format_ms(ms: int) -> str:
-    total_seconds, milliseconds = divmod(max(0, int(ms)), 1000)
-    minutes, seconds = divmod(total_seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
-    return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
 VideoProcessingWindow = VideoEditorWidget

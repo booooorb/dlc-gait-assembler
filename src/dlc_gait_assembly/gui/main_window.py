@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QActionGroup, QColor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -13,32 +13,35 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QPushButton,
+    QSizePolicy,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.gait_analysis.window import GaitAnalysisWidget
 from dlc_gait_assembly.gui.knee_correction import KneeCorrectionWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
-from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 from dlc_gait_assembly.gui.shared.widgets import CurrentPageStackedWidget
-
+from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
 WORKFLOW_ROW_HEIGHT = 78
 APP_TOOLBAR_HEIGHT = 60
 MAIN_MENU_LOGO_HEIGHT = 24
 MAIN_MENU_LOGO_MAX_WIDTH = 104
+MINIMUM_WINDOW_SIZE = QSize(1100, 640)
+DEFAULT_WINDOW_SIZE = QSize(1440, 900)
+WINDOW_SCREEN_MARGIN = 64
 
 HEADER_STAGE_LABELS = {
-    "manual_calibration": "Calibration",
+    "manual_calibration": "Calib.",
     "video_processing": "Video",
-    "deeplabcut": "DeepLabCut",
+    "deeplabcut": "DLC",
     "knee_correction": "Knee",
     "gait_parameter_analysis": "Gait",
     "pca_random_forest": "PCA/RF",
@@ -106,8 +109,8 @@ class MainWindow(QMainWindow):
     def __init__(self, initial_tool_id: str | None = None, initial_theme_mode: str = "light"):
         super().__init__()
         self.setWindowTitle("DLC Gait Assembler")
-        self.setMinimumSize(1100, 640)
-        self.resize(1360, 860)
+        self.setMinimumSize(MINIMUM_WINDOW_SIZE)
+        self.resize(self._screen_aware_initial_size())
         self._active_tool: QWidget | None = None
         self._active_tool_id: str | None = None
         self._automation_menu_active = False
@@ -172,11 +175,12 @@ class MainWindow(QMainWindow):
         primary_row = QFrame()
         primary_row.setObjectName("PrimaryToolbarRow")
         primary_layout = QHBoxLayout(primary_row)
-        primary_layout.setContentsMargins(16, 0, 16, 0)
+        primary_layout.setContentsMargins(18, 0, 18, 0)
         primary_layout.setSpacing(0)
 
-        home_button = QPushButton("DLC Gait Assembler")
+        home_button = QPushButton("Gait Assembler")
         home_button.setObjectName("HomeNavigationButton")
+        home_button.setAccessibleName("DLC Gait Assembler home")
         home_button.setCursor(Qt.PointingHandCursor)
         home_button.setToolTip("Open the automated pipeline")
         home_button.clicked.connect(self._show_automated_pipeline)
@@ -187,7 +191,7 @@ class MainWindow(QMainWindow):
         divider.setFrameShape(QFrame.VLine)
         primary_layout.addWidget(divider)
 
-        automated_label = QLabel("AUTOMATED PIPELINE")
+        automated_label = QLabel("Automated")
         automated_label.setObjectName("AutomationGroupLabel")
         primary_layout.addWidget(automated_label)
         self._automation_run_button = QPushButton("Run")
@@ -216,7 +220,7 @@ class MainWindow(QMainWindow):
 
         manual_tools_button = QToolButton()
         manual_tools_button.setObjectName("ManualPipelineButton")
-        manual_tools_button.setText("MANUAL PIPELINE  ›")
+        manual_tools_button.setText("Manual pipeline  ›")
         manual_tools_button.setToolTip(
             "Open the manual pipeline overview and expand its tools."
         )
@@ -228,6 +232,10 @@ class MainWindow(QMainWindow):
 
         manual_stage_frame = QFrame()
         manual_stage_frame.setObjectName("ManualStageExpansion")
+        # The stage strip is an optional use of existing toolbar space. Ignoring
+        # its size hint prevents showing it from raising the native window's
+        # minimum width and causing an OS-level resize.
+        manual_stage_frame.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         manual_stage_layout = QHBoxLayout(manual_stage_frame)
         manual_stage_layout.setContentsMargins(4, 0, 0, 0)
         manual_stage_layout.setSpacing(2)
@@ -249,7 +257,7 @@ class MainWindow(QMainWindow):
             manual_stage_layout.addWidget(button)
         manual_stage_frame.setVisible(False)
         self._manual_stage_frame = manual_stage_frame
-        primary_layout.addWidget(manual_stage_frame)
+        primary_layout.addWidget(manual_stage_frame, 100)
 
         primary_layout.addStretch(1)
 
@@ -311,10 +319,10 @@ class MainWindow(QMainWindow):
                     border: 0;
                     border-radius: 0;
                     color: {theme.TEXT};
-                    font-size: 15px;
-                    font-weight: 650;
+                    font-size: 16px;
+                    font-weight: 700;
                     padding: 4px 0;
-                    margin-right: 12px;
+                    margin-right: 14px;
                 }
                 QPushButton#HomeNavigationButton:hover {
                     color: {theme.CONNECTOR};
@@ -338,10 +346,10 @@ class MainWindow(QMainWindow):
                     margin: 0 12px;
                 }
                 QLabel#AutomationGroupLabel {
-                    color: {theme.TEXT};
-                    font-size: 11px;
-                    font-weight: 750;
-                    padding-right: 5px;
+                    color: {theme.CONNECTOR};
+                    font-size: 12px;
+                    font-weight: 600;
+                    padding-right: 6px;
                 }
                 QPushButton#TopAutomationButton {
                     background: transparent;
@@ -368,8 +376,8 @@ class MainWindow(QMainWindow):
                     border-bottom: 2px solid transparent;
                     border-radius: 0;
                     color: {theme.TEXT};
-                    font-size: 11px;
-                    font-weight: 750;
+                    font-size: 12px;
+                    font-weight: 600;
                     min-height: 42px;
                     padding: 0 10px;
                 }
@@ -400,7 +408,7 @@ class MainWindow(QMainWindow):
                     color: {theme.CONNECTOR};
                     font-size: 12px;
                     min-height: 42px;
-                    padding: 0 10px;
+                    padding: 0 4px;
                 }
                 QPushButton#ManualStageButton:hover {
                     background: {theme.PANEL};
@@ -415,10 +423,10 @@ class MainWindow(QMainWindow):
                 QToolButton#SettingsButton {
                     background: transparent;
                     border: 1px solid {theme.BORDER};
-                    border-radius: 3px;
+                    border-radius: 4px;
                     color: {theme.TEXT};
-                    min-height: 26px;
-                    padding: 2px 8px;
+                    min-height: 28px;
+                    padding: 2px 10px;
                 }
                 QToolButton#SettingsButton:hover,
                 QToolButton#SettingsButton:open {
@@ -460,11 +468,29 @@ class MainWindow(QMainWindow):
             self.theme_mode_requested.emit(mode)
 
     def _set_manual_pipeline_expanded(self, expanded: bool) -> None:
-        if expanded and self.width() < 1360:
-            self.resize(1360, self.height())
         self._manual_stage_frame.setVisible(expanded)
         self._manual_tools_button.setText(
-            "MANUAL PIPELINE  ‹" if expanded else "MANUAL PIPELINE  ›"
+            "Manual pipeline  ‹" if expanded else "Manual pipeline  ›"
+        )
+
+    @staticmethod
+    def _screen_aware_initial_size() -> QSize:
+        """Return a generous display-aware default above the supported minimum."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return DEFAULT_WINDOW_SIZE
+        available = screen.availableGeometry()
+        usable_width = available.width() - WINDOW_SCREEN_MARGIN
+        usable_height = available.height() - WINDOW_SCREEN_MARGIN
+        return QSize(
+            max(
+                MINIMUM_WINDOW_SIZE.width(),
+                min(DEFAULT_WINDOW_SIZE.width(), usable_width),
+            ),
+            max(
+                MINIMUM_WINDOW_SIZE.height(),
+                min(DEFAULT_WINDOW_SIZE.height(), usable_height),
+            ),
         )
 
     def _show_main_menu(self) -> None:
@@ -622,11 +648,13 @@ class MainMenuWidget(QWidget):
 
         content = QWidget()
         content.setObjectName("MenuContent")
+        content.setMaximumWidth(1280)
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
 
-        section_title = QLabel("Manual pipeline workflow")
+        section_title = QLabel("Manual pipeline")
         section_title.setObjectName("WorkflowTitle")
         content_layout.addWidget(section_title)
         self.section_title = section_title
@@ -657,12 +685,22 @@ class MainMenuWidget(QWidget):
         pipeline_tabs.currentChanged.connect(self._update_pipeline_heading)
         content_layout.addWidget(pipeline_tabs)
 
-        root.addWidget(content, 1)
+        # Give the workspace a stable width based on the window, rather than its
+        # current page's size hint. Pipeline previews must not make this centered
+        # container grow or shrink while a run is in progress.
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
+        content_row.addStretch(1)
+        content_row.addWidget(content, 100)
+        content_row.addStretch(1)
+        root.addLayout(content_row, 1)
+        self._content = content
 
     def _update_pipeline_heading(self, index: int) -> None:
         self.section_title.setVisible(index == 0)
         if index == 0:
-            self.section_title.setText("Manual pipeline workflow")
+            self.section_title.setText("Manual pipeline")
 
     def _workflow_list(self, tools: list[ToolSpec], connect_tools: bool) -> QFrame:
         workflow_list = QFrame()

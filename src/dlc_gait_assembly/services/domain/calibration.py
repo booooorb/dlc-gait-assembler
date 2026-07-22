@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import hypot, isfinite
 
-
 Axis = str
 
 
@@ -12,7 +11,7 @@ class CalibrationPoint:
     x: float
     y: float
 
-    def interpolate(self, other: "CalibrationPoint", fraction: float) -> "CalibrationPoint":
+    def interpolate(self, other: CalibrationPoint, fraction: float) -> CalibrationPoint:
         fraction = max(0.0, min(1.0, fraction))
         return CalibrationPoint(
             self.x + (other.x - self.x) * fraction,
@@ -42,7 +41,7 @@ class CalibrationStick:
     def segment_pixel_lengths(self, use_euclidean: bool = False) -> tuple[float, ...]:
         points = self.marker_points()
         lengths: list[float] = []
-        for first, second in zip(points, points[1:]):
+        for first, second in zip(points, points[1:], strict=False):
             if use_euclidean:
                 pixel_length = hypot(second.x - first.x, second.y - first.y)
             elif self.axis == "x":

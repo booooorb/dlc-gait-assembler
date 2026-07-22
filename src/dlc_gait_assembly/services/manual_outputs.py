@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-import shutil
 
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.project_paths import ManualPipelineOutputFolders
-
 
 _ANALYZED_FILE_EXTENSIONS = {".csv", ".h5", ".hdf5", ".pickle", ".pkl"}
 

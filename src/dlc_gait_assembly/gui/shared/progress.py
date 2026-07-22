@@ -3,7 +3,7 @@ from __future__ import annotations
 from math import cos, pi, sin
 from time import monotonic
 
-from PySide6.QtCore import QRectF, QTimer, Qt
+from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -17,7 +17,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QProgressBar
 
 from dlc_gait_assembly.gui import theme
-
 
 _ACCENT_ROLES = {
     "tool_1": "TOOL_1",

@@ -17,8 +17,12 @@ class PcaRandomForestWidget(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
-        status = QLabel("No analysis controls are available yet.")
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(8)
+        title = QLabel("PCA and random forest analysis")
+        title.setObjectName("TitleLabel")
+        root.addWidget(title)
+        status = QLabel("Analysis controls are not available in this build.")
         status.setObjectName("StatusLabel")
         root.addWidget(status)
         root.addStretch(1)

@@ -174,6 +174,28 @@ def test_profile_store_rejects_duplicate_names(tmp_path):
         _save(store, "treadmill", _profile_sources(tmp_path, "_other"))
 
 
+def test_profile_store_rolls_back_failed_transactional_replacement(tmp_path, monkeypatch):
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    original = _save(store, "Original profile", _profile_sources(tmp_path))
+    original_rename = Path.rename
+
+    def fail_staging_install(path: Path, target: Path):
+        if path.name.endswith(".staging"):
+            raise OSError("simulated install failure")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", fail_staging_install)
+
+    with pytest.raises(OSError, match="simulated install failure"):
+        _save(store, "Replacement profile", _profile_sources(tmp_path, "_replacement"), original.id)
+
+    restored = store.load(original.id)
+    assert restored.name == "Original profile"
+    assert restored.calibration_map.read_text(encoding="utf-8") == '{"calibration": "first"}'
+    assert not list(store.root.glob(".*.staging"))
+    assert not list(store.root.glob(".*.backup"))
+
+
 def test_profile_store_persists_video_and_dlc_only_profile(tmp_path):
     store = AutomatedProfileStore(tmp_path / "profiles")
     sources = _profile_sources(tmp_path)
@@ -418,7 +440,7 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
 
     widget.run_pipeline_button.click()
     assert widget.automation_input_stack.currentWidget() is widget.video_panel
-    assert widget.run_pipeline_button.text() == "RUN pipeline"
+    assert widget.run_pipeline_button.text() == "Run pipeline"
     widget.close()
     app.processEvents()
 

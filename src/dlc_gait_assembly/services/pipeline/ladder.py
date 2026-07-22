@@ -9,8 +9,10 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from dlc_gait_assembly.services.pipeline.alma import _alma_compatible_python, _temporary_dir
-
+from dlc_gait_assembly.services.pipeline.runtime import (
+    find_alma_python,
+    temporary_directory_root,
+)
 
 LadderDetectionMethod = Literal["Deviation", "Baseline", "Threshold"]
 LadderClassification = Literal["unreviewed", "footfall", "slip", "fall"]
@@ -98,7 +100,7 @@ def read_dlc_bodyparts(csv_path: Path) -> list[str]:
         raise ValueError("Expected a three-row DeepLabCut CSV header.")
 
     bodyparts: list[str] = []
-    for bodypart, coordinate in zip(bodypart_row, coordinate_row):
+    for bodypart, coordinate in zip(bodypart_row, coordinate_row, strict=False):
         label = bodypart.strip()
         if coordinate.strip().lower() == "y" and label and label not in bodyparts:
             bodyparts.append(label)
@@ -126,7 +128,7 @@ def run_ladder_analysis(
 ) -> LadderRunResult:
     """Run the ported ALMA detector and write its standard event CSV."""
 
-    external_python = _alma_compatible_python()
+    external_python = find_alma_python()
     if external_python is not None:
         return _run_external(csv_file, output_folder, settings, bodyparts, external_python)
     return _run_in_process(csv_file, output_folder, settings, bodyparts)
@@ -303,7 +305,7 @@ def _detect_bodypart(dataframe, bodypart, settings, np, find_peaks, sparse, spso
         peaks = _adjust_times(y, peaks, window, np)
 
     events: list[LadderEvent] = []
-    for peak, start, end in zip(peaks, left_bases, right_bases):
+    for peak, start, end in zip(peaks, left_bases, right_bases, strict=False):
         peak = int(peak)
         start = int(start)
         end = int(end)
@@ -425,7 +427,7 @@ def _load_dependencies():
 
 
 def _run_external(csv_file, output_folder, settings, bodyparts, python_executable):
-    with tempfile.TemporaryDirectory(prefix="alma-ladder-", dir=_temporary_dir()) as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="alma-ladder-", dir=temporary_directory_root()) as temp_dir:
         request_path = Path(temp_dir) / "request.json"
         result_path = Path(temp_dir) / "result.json"
         request_path.write_text(

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 import numpy as np
 import pandas as pd
@@ -547,14 +547,16 @@ def _triangulated_knees(
     statuses = ["Not evaluated"] * len(output)
     previous: np.ndarray | None = None
     preferred_signs = []
-    for hip, ankle, knee in zip(hips, ankles, raw_knees):
+    for hip, ankle, knee in zip(hips, ankles, raw_knees, strict=False):
         if np.isfinite(hip).all() and np.isfinite(ankle).all() and np.isfinite(knee).all():
             cross = np.cross(ankle - hip, knee - hip)
             if cross != 0:
                 preferred_signs.append(float(np.sign(cross)))
     preferred_sign = float(np.sign(np.median(preferred_signs))) if preferred_signs else 1.0
 
-    for index, (hip, ankle, raw_knee) in enumerate(zip(hips, ankles, raw_knees)):
+    for index, (hip, ankle, raw_knee) in enumerate(
+        zip(hips, ankles, raw_knees, strict=False)
+    ):
         if not hip_coordinates_valid[index]:
             statuses[index] = "Missing hip coordinates"
             continue

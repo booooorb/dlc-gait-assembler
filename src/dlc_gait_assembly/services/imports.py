@@ -4,7 +4,6 @@ import shlex
 import sys
 from pathlib import Path
 
-
 DEEPLABCUT_ENV_NAME = "DEEPLABCUT"
 DEEPLABCUT_ENVIRONMENT_FILE = "DEEPLABCUT.yaml"
 IMPORTS_DIR_NAME = "imports"

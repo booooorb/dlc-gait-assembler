@@ -9,10 +9,6 @@ from dlc_gait_assembly.services.pipeline.alma import (
     run_alma_gait_analysis,
     settings_from_alma_config,
 )
-from dlc_gait_assembly.services.pipeline.rustlab1 import (
-    RUSTLAB1_PARAMETER_NAMES,
-    extract_rustlab1_parameters,
-)
 from dlc_gait_assembly.services.pipeline.ladder import (
     COMBINED_LADDER_OUTPUT_COLUMNS,
     LADDER_OUTPUT_COLUMNS,
@@ -27,6 +23,12 @@ from dlc_gait_assembly.services.pipeline.ladder import (
     suggested_ladder_bodyparts,
     write_ladder_events,
 )
+from dlc_gait_assembly.services.pipeline.rustlab1 import (
+    RUSTLAB1_FIGURE_FILENAMES,
+    RUSTLAB1_PARAMETER_NAMES,
+    extract_rustlab1_parameters,
+    generate_rustlab1_figures,
+)
 
 __all__ = [
     "AlmaRunResult",
@@ -36,8 +38,10 @@ __all__ = [
     "pixels_per_cm_from_calibration_map",
     "run_alma_gait_analysis",
     "settings_from_alma_config",
+    "RUSTLAB1_FIGURE_FILENAMES",
     "RUSTLAB1_PARAMETER_NAMES",
     "extract_rustlab1_parameters",
+    "generate_rustlab1_figures",
     "LADDER_OUTPUT_COLUMNS",
     "COMBINED_LADDER_OUTPUT_COLUMNS",
     "DualLadderRunResult",

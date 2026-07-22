@@ -12,6 +12,7 @@ from dlc_gait_assembly.services.analysis_manifests import (
 from dlc_gait_assembly.services.automated_profiles import AutomatedPipelineProfile
 from dlc_gait_assembly.services.domain.regions import CropRegion, NormalizedRect
 from dlc_gait_assembly.services.pipeline import automated
+from dlc_gait_assembly.services.pipeline.automated import run as automated_run
 from dlc_gait_assembly.services.pipeline.alma import AlmaRunResult, AlmaSettings, AlmaViewCsvSet
 from dlc_gait_assembly.services.pipeline.deeplabcut import (
     DlcAnalysisResult,
@@ -145,14 +146,14 @@ def test_automated_pipeline_hands_outputs_through_all_six_stages(tmp_path, monke
                 progress_callback(index, len(inputs), item.name)
         return results
 
-    monkeypatch.setattr(automated, "process_video_outputs", fake_process)
-    monkeypatch.setattr(automated, "run_deeplabcut_analysis", fake_dlc)
+    monkeypatch.setattr(automated_run, "process_video_outputs", fake_process)
+    monkeypatch.setattr(automated_run, "run_deeplabcut_analysis", fake_dlc)
     monkeypatch.setattr(
-        automated,
+        automated_run,
         "run_deeplabcut_labeled_video_creation",
         fake_create_labeled,
     )
-    monkeypatch.setattr(automated, "run_alma_gait_analysis", fake_alma)
+    monkeypatch.setattr(automated_run, "run_alma_gait_analysis", fake_alma)
 
     run = automated.AutomatedPipelineRun(profile, videos, tmp_path, tmp_path / "runs")
     for stage in range(6):
@@ -168,9 +169,9 @@ def test_automated_pipeline_hands_outputs_through_all_six_stages(tmp_path, monke
     assert alma_calls[0][1].generate_stickplot is True
     assert alma_calls[0][1].generate_rustlab1_parameters is False
     assert alma_calls[1][1].generate_stickplot is False
-    assert len(run.review_artifacts(0)["items"]) == 6
-    assert len(run.review_artifacts(3)["items"]) == 6
-    assert len(run.review_artifacts(4)["items"]) == 2
+    assert len(run.review_artifacts(0).items) == 6
+    assert len(run.review_artifacts(3).items) == 6
+    assert len(run.review_artifacts(4).items) == 2
     assert result.output_manifest.is_file()
     manifest = json.loads(result.output_manifest.read_text(encoding="utf-8"))
     assert Path(manifest["folders"]["analyzed_videos"]) == run.analyzed_videos_folder
@@ -473,7 +474,7 @@ def test_three_view_knee_stage_leaves_bottom_coordinates_unchanged(tmp_path, mon
     run.analysis_csvs_by_region = {}
     corrected_regions = []
 
-    monkeypatch.setattr(automated, "knee_settings_from_manifest", lambda _path: object())
+    monkeypatch.setattr(automated_run, "knee_settings_from_manifest", lambda _path: object())
 
     def fake_correct(pair, output_folder, settings):
         corrected_regions.append(Path(output_folder).name)
@@ -484,7 +485,7 @@ def test_three_view_knee_stage_leaves_bottom_coordinates_unchanged(tmp_path, mon
         output_h5.write_bytes(f"corrected {pair.stem}".encode())
         return SimpleNamespace(output_csv=output_csv, output_h5=output_h5)
 
-    monkeypatch.setattr(automated, "correct_knee_pair", fake_correct)
+    monkeypatch.setattr(automated_run, "correct_knee_pair", fake_correct)
 
     run._correct_knees(None)
 

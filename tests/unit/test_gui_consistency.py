@@ -14,7 +14,13 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QTabWidget, QWidget
 
 from dlc_gait_assembly.gui import theme
-from dlc_gait_assembly.gui.app import THEME_SETTING_KEY, resolved_theme_mode
+from dlc_gait_assembly.gui.app import (
+    THEME_SETTING_KEY,
+    WINDOW_GEOMETRY_SETTING_KEY,
+    resolved_theme_mode,
+    restore_window_geometry,
+    save_window_geometry,
+)
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.gait_analysis.ladder_window import LadderAnalysisWidget
 from dlc_gait_assembly.gui.gait_analysis.window import AlmaKinematicsWidget, _auto_bodypart_label
@@ -128,12 +134,11 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     assert not automated_page.findChildren(QPushButton, "OpenToolButton")
     configuration_tabs = automated_profiles.findChild(QTabWidget, "ProfileConfigurationTabs")
     assert [configuration_tabs.tabText(index) for index in range(configuration_tabs.count())] == [
-        "1  Manifest + regions",
-        "2  Region models",
-        "3  Gait analysis",
-        "4  Review + save",
+        "1  Video settings",
+        "2  DLC models",
+        "3  Analysis settings",
     ]
-    assert automated_profiles.run_pipeline_button.text() == "RUN pipeline"
+    assert automated_profiles.run_pipeline_button.text() == "Run pipeline"
     assert automated_profiles.run_pipeline_button.isEnabled()
     assert automated_profiles.workspace_stack.currentWidget() is automated_profiles.automation_page
     automated_profiles.open_profile_configuration_button.click()
@@ -152,7 +157,7 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
     assert not widget.findChildren(QLabel, "ProfileStageDescription")
     assert not widget.findChildren(QLabel, "ProfileStageTitle")
     assert widget.automation_console.toPlainText() == "[Ready]"
-    assert widget.run_readiness_label.text() == "Preview only"
+    assert widget.run_readiness_label.text() == "Ready"
 
     interactive_controls = [
         window._automation_run_button,
@@ -205,9 +210,9 @@ def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right()
     window._manual_tools_button.click()
     assert not window._manual_stage_frame.isHidden()
     assert [button.text() for button in window._manual_stage_buttons.values()] == [
-        "Calibration",
+        "Calib.",
         "Video",
-        "DeepLabCut",
+        "DLC",
         "Knee",
         "Gait",
         "PCA/RF",
@@ -224,6 +229,86 @@ def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right()
     assert window._manual_tools_button.property("activeManual") is True
     assert window._manual_tools_button.isChecked()
     assert window._active_tool_id is None
+    window.close()
+
+
+def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    widget = window._main_menu.automated_profiles
+
+    assert window.findChild(QLabel, "AppMark") is None
+    assert window.findChild(QLabel, "AutomationPageSubtitle") is None
+    assert not window.findChildren(QLabel, "AutomationPanelSubtitle")
+    assert widget.run_status_bar.objectName() == "RunStatusBar"
+    assert widget.upload_videos_button.text() == "Add videos"
+    assert not widget.remove_videos_button.isEnabled()
+    assert not widget.clear_videos_button.isEnabled()
+    assert "Drop source videos" in widget.video_list.accessibleDescription()
+
+    video = tmp_path / "mouse_walk.mp4"
+    video.write_bytes(b"fixture")
+    widget._add_video_paths([video])
+    assert widget.video_count_label.text() == "1 video"
+    assert widget.remove_videos_button.isEnabled()
+    assert widget.clear_videos_button.isEnabled()
+    assert widget.video_list.item(0).toolTip() == str(video.resolve())
+
+    widget._clear_videos()
+    assert not widget.remove_videos_button.isEnabled()
+    assert not widget.clear_videos_button.isEnabled()
+
+    window.close()
+
+
+def test_navigation_does_not_override_the_user_window_size():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    window.resize(1180, 700)
+    app.processEvents()
+    chosen_size = window.size()
+    collapsed_minimum_width = window.minimumSizeHint().width()
+
+    window._set_manual_pipeline_expanded(True)
+    app.processEvents()
+    assert window.minimumSizeHint().width() == collapsed_minimum_width
+    window._show_automated_pipeline()
+    window._main_menu.automated_profiles.set_pipeline_running(True)
+    app.processEvents()
+
+    assert window.size() == chosen_size
+    window.close()
+
+
+def test_pipeline_geometry_stays_constant_through_stickplot_review():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    window.resize(1180, 700)
+    app.processEvents()
+    widget = window._main_menu.automated_profiles
+
+    initial_geometry = {
+        "window": window.geometry(),
+        "workspace": window._main_menu._content.geometry(),
+        "pipeline": widget.geometry(),
+        "input": widget.automation_input_stack.geometry(),
+        "console": widget.automation_console_panel.geometry(),
+    }
+    preview_hint = widget.pipeline_stickplot_preview.sizeHint()
+
+    widget.set_pipeline_running(True)
+    widget.set_pipeline_stage(4, progress=100)
+    widget._pause_for_pipeline_review(4)
+    app.processEvents()
+
+    assert window.geometry() == initial_geometry["window"]
+    assert window._main_menu._content.geometry() == initial_geometry["workspace"]
+    assert widget.geometry() == initial_geometry["pipeline"]
+    assert widget.automation_input_stack.geometry() == initial_geometry["input"]
+    assert widget.automation_console_panel.geometry() == initial_geometry["console"]
+    assert widget.pipeline_stickplot_preview.sizeHint() == preview_hint
     window.close()
 
 
@@ -433,3 +518,22 @@ def test_saved_theme_mode_overrides_system_theme(tmp_path):
 
     settings.setValue(THEME_SETTING_KEY, "unsupported")
     assert resolved_theme_mode(settings, Qt.ColorScheme.Light) == "light"
+
+
+def test_window_geometry_is_saved_and_restored(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat)
+    original = MainWindow()
+    restored = MainWindow()
+    # The offscreen Qt test display is narrower than the app's minimum width,
+    # so vary the height while keeping the saved geometry display-valid.
+    original.resize(1100, 730)
+    app.processEvents()
+
+    save_window_geometry(original, settings)
+
+    assert settings.contains(WINDOW_GEOMETRY_SETTING_KEY)
+    assert restore_window_geometry(restored, settings)
+    assert restored.size() == original.size()
+    original.close()
+    restored.close()

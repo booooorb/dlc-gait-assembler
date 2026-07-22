@@ -3,7 +3,7 @@ from __future__ import annotations
 from math import hypot, isfinite
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, QTimer, Qt
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -26,12 +26,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dlc_gait_assembly.services.domain.calibration import CalibrationReport, CalibrationStick, calculate_calibration_report
-from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationPreviewView
+from dlc_gait_assembly.gui.shared.formatting import format_milliseconds
 from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
 from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
+from dlc_gait_assembly.services.domain.calibration import (
+    CalibrationReport,
+    CalibrationStick,
+    calculate_calibration_report,
+)
+from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.output_documents import write_calibration_conversion_export
 from dlc_gait_assembly.services.project_paths import find_project_root, make_session_output_dir
 
@@ -95,6 +100,7 @@ class ManualCalibrationWidget(QWidget):
         root_layout.addWidget(splitter)
 
         left_panel = QWidget()
+        left_panel.setObjectName("WorkspaceSidebar")
         left_panel.setMinimumWidth(320)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(16, 16, 16, 16)
@@ -124,7 +130,7 @@ class ManualCalibrationWidget(QWidget):
         self.media_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.media_list.setTextElideMode(Qt.ElideNone)
         self.media_list.setUniformItemSizes(True)
-        self.media_list.setAlternatingRowColors(True)
+        self.media_list.setAlternatingRowColors(False)
         list_font = self.media_list.font()
         list_font.setPointSize(9)
         self.media_list.setFont(list_font)
@@ -154,6 +160,7 @@ class ManualCalibrationWidget(QWidget):
         left_layout.addWidget(results_box, 1)
 
         right_panel = QWidget()
+        right_panel.setObjectName("WorkspaceCanvas")
         right_panel.setMinimumWidth(420)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(16, 16, 16, 16)
@@ -323,9 +330,11 @@ class ManualCalibrationWidget(QWidget):
                 border-radius: 2px;
                 background: {theme.CANVAS};
             }
-            """
+                """
             )
         )
+        if hasattr(self, "results_label"):
+            self._update_calibration_results()
 
     def _open_media(self) -> None:
         extensions = " ".join(f"*{extension}" for extension in sorted(IMAGE_EXTENSIONS | VIDEO_EXTENSIONS))
@@ -538,7 +547,9 @@ class ManualCalibrationWidget(QWidget):
         height, width, channels = rgb.shape
         image = QImage(rgb.data, width, height, channels * width, QImage.Format_RGB888).copy()
         self.preview.set_frame(image)
-        self.time_label.setText(f"{_format_ms(ms)} / {_format_ms(self._duration_ms)}")
+        self.time_label.setText(
+            f"{format_milliseconds(ms)} / {format_milliseconds(self._duration_ms)}"
+        )
 
     def _set_timeline_value(self, value: int) -> None:
         self._loading_slider = True
@@ -791,7 +802,7 @@ def _status_text(value: bool | None) -> str:
         return f"<span style='color:{theme.STATUS_READY}; font-weight:700;'>PASS</span>"
     if value is False:
         return f"<span style='color:{theme.STATUS_ERROR}; font-weight:700;'>FAIL</span>"
-    return "<span style='color:#000000; font-weight:700;'>NEEDS DATA</span>"
+    return f"<span style='color:{theme.CONNECTOR}; font-weight:700;'>NEEDS DATA</span>"
 
 
 def _percent(value: float | None) -> str:
@@ -820,7 +831,7 @@ def _failed_location_marker_indices(
     worst_delta = 0.0
     worst_segment_index: int | None = None
     points = stick.marker_points()
-    for segment_index, (first, second) in enumerate(zip(points, points[1:])):
+    for segment_index, (first, second) in enumerate(zip(points, points[1:], strict=False)):
         pixel_length = _segment_pixel_length(stick.axis, first, second, use_euclidean_lengths)
         if pixel_length <= 0 or not isfinite(pixel_length):
             continue
@@ -886,11 +897,3 @@ def _tool_button_style(color: str) -> str:
             color: {theme.CONNECTOR};
         }}
     """
-
-def _format_ms(ms: int) -> str:
-    total_seconds, milliseconds = divmod(max(0, int(ms)), 1000)
-    minutes, seconds = divmod(total_seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
-    return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
