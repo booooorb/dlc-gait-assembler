@@ -3,7 +3,7 @@ from __future__ import annotations
 from math import hypot, isfinite
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -29,7 +29,12 @@ from PySide6.QtWidgets import (
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationPreviewView
 from dlc_gait_assembly.gui.shared.formatting import format_milliseconds
-from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
+from dlc_gait_assembly.gui.shared.icons import interface_icon
+from dlc_gait_assembly.gui.shared.interaction import (
+    add_shortcut,
+    animate_button_emphasis,
+    set_tooltip,
+)
 from dlc_gait_assembly.gui.video_editor.timeline import TrimTimelineSlider
 from dlc_gait_assembly.services.domain.calibration import (
     CalibrationReport,
@@ -73,6 +78,7 @@ class ManualCalibrationWidget(QWidget):
         self._install_shortcuts()
         self._connect_signals()
         self._apply_style()
+        self._emphasize_calibration_tool("x")
         self._update_calibration_results()
 
     def can_close(self, parent=None) -> bool:
@@ -333,6 +339,15 @@ class ManualCalibrationWidget(QWidget):
                 """
             )
         )
+        icon_specs = (
+            (self.open_media_button, "plus", theme.TEXT),
+            (self.remove_media_button, "trash", theme.STATUS_ERROR),
+            (self.clear_calibration_button, "clear", theme.STATUS_ERROR),
+            (self.export_conversion_button, "download", theme.TEXT),
+        )
+        for button, icon_name, color in icon_specs:
+            button.setIcon(interface_icon(icon_name, color))
+            button.setIconSize(QSize(16, 16))
         if hasattr(self, "results_label"):
             self._update_calibration_results()
 
@@ -587,6 +602,20 @@ class ManualCalibrationWidget(QWidget):
 
     def _set_active_tool(self, name: str) -> None:
         self.preview.set_mode(name)
+        self._emphasize_calibration_tool(name)
+
+    def _emphasize_calibration_tool(self, active_name: str) -> None:
+        for name, button in (
+            ("x", self.x_tool_button),
+            ("y", self.y_tool_button),
+            ("cm", self.cm_tool_button),
+        ):
+            animate_button_emphasis(
+                button,
+                name == active_name,
+                resting_height=30,
+                emphasized_height=40,
+            )
 
     def _activate_tool_button(self, button: QToolButton, name: str) -> None:
         button.setChecked(True)

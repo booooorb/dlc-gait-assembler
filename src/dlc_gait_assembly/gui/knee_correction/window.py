@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QBrush, QColor, QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.knee_correction.preview import KneeStickplotPreview
 from dlc_gait_assembly.gui.knee_correction.workers import KneeCorrectionThread
+from dlc_gait_assembly.gui.shared.icons import interface_icon
+from dlc_gait_assembly.gui.shared.interaction import animate_button_emphasis
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.services.analysis_manifests import write_knee_analysis_manifest
 from dlc_gait_assembly.services.knee_correction import (
@@ -856,6 +858,8 @@ class KneeCorrectionWidget(QWidget):
             return
         self.progress.setValue(0)
         self.progress.set_active(True)
+        self.run_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
+        animate_button_emphasis(self.run_button, True)
         self.log.clear()
         self._worker = KneeCorrectionThread(
             tuple(self._pairs), output_folder, self._settings()
@@ -874,10 +878,13 @@ class KneeCorrectionWidget(QWidget):
     def _completed(self, success: bool, message: str) -> None:
         self.status_label.setText(message)
         self.progress.set_active(False)
+        animate_button_emphasis(self.run_button, False)
         if success:
             self.progress.setValue(100)
+            self.run_button.setIcon(interface_icon("check", theme.PRIMARY_TEXT))
             QMessageBox.information(self, "Knee correction complete", message)
         else:
+            self.run_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
             QMessageBox.critical(self, "Knee correction failed", message)
 
     def _worker_finished(self) -> None:
@@ -937,6 +944,19 @@ class KneeCorrectionWidget(QWidget):
                 """,
             )
         )
+        icon_specs = (
+            (self.add_files_button, "plus", theme.TEXT),
+            (self.add_folder_button, "folder", theme.TEXT),
+            (self.remove_button, "trash", theme.STATUS_ERROR),
+            (self.clear_button, "clear", theme.STATUS_ERROR),
+            (self.calibration_map_button, "upload", theme.TEXT),
+            (self.output_folder_button, "folder", theme.TEXT),
+            (self.export_manifest_button, "download", theme.TEXT),
+            (self.run_button, "play", theme.PRIMARY_TEXT),
+        )
+        for button, icon_name, color in icon_specs:
+            button.setIcon(interface_icon(icon_name, color))
+            button.setIconSize(QSize(16, 16))
 
 
 def _length_spin() -> QDoubleSpinBox:

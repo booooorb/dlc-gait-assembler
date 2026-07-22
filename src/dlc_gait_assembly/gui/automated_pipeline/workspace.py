@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QPixmap,
 )
@@ -44,6 +44,7 @@ from dlc_gait_assembly.gui.automated_pipeline.run_workspace import (
 )
 from dlc_gait_assembly.gui.automated_pipeline.styles import automated_pipeline_stylesheet
 from dlc_gait_assembly.gui.automated_pipeline.worker import AutomatedPipelineWorker
+from dlc_gait_assembly.gui.shared.icons import interface_icon
 from dlc_gait_assembly.gui.shared.progress import CircularProgressIndicator, DynamicProgressBar
 from dlc_gait_assembly.services.automated_profiles import (
     AutomatedPipelineProfile,
@@ -112,6 +113,16 @@ class AutomatedPipelineProfilesWidget(
         self._pipeline_demo_timer = QTimer(self)
         self._pipeline_demo_timer.setInterval(60)
         self._pipeline_demo_timer.timeout.connect(self._advance_pipeline_demo)
+        self._pipeline_stage_emphasis_timer = QTimer(self)
+        self._pipeline_stage_emphasis_timer.setInterval(33)
+        self._pipeline_stage_emphasis_timer.timeout.connect(
+            self._advance_pipeline_stage_emphasis
+        )
+        self._pipeline_emphasized_stage: int | None = None
+        self._pipeline_stage_emphasis_initialized = False
+        self._pipeline_stage_emphasis_elapsed = 0
+        self._pipeline_stage_emphasis_starts: list[tuple[int, int]] = []
+        self._pipeline_stage_emphasis_targets: list[tuple[int, int]] = []
         self._pipeline_worker: AutomatedPipelineWorker | None = None
         self._pipeline_output_folder: Path | None = None
         self._pipeline_real_complete = False
@@ -275,7 +286,7 @@ class AutomatedPipelineProfilesWidget(
         console_title.setObjectName("AutomationPanelTitle")
         console_header.addWidget(console_title)
         console_header.addStretch(1)
-        self.pipeline_log_state = QLabel("Ready")
+        self.pipeline_log_state = QLabel("●  Ready")
         self.pipeline_log_state.setObjectName("PipelineLogState")
         self.pipeline_log_state.setProperty("logState", "ready")
         console_header.addWidget(self.pipeline_log_state)
@@ -305,8 +316,9 @@ class AutomatedPipelineProfilesWidget(
         run_row = QHBoxLayout(run_bar)
         run_row.setContentsMargins(12, 10, 12, 10)
         run_row.setSpacing(10)
-        self.run_readiness_label = QLabel("Ready")
-        self.run_readiness_label.setObjectName("ProfileStatusLabel")
+        self.run_readiness_label = QLabel("●  Ready")
+        self.run_readiness_label.setObjectName("RunReadinessBadge")
+        self.run_readiness_label.setProperty("readinessState", "ready")
         self.run_readiness_label.setAccessibleName("Run status")
         run_row.addWidget(self.run_readiness_label)
         run_row.addStretch(1)
@@ -665,7 +677,7 @@ class AutomatedPipelineProfilesWidget(
             status.setAlignment(Qt.AlignCenter)
             status.setWordWrap(True)
             card_layout.addWidget(status)
-            stage_row.addWidget(card, 1)
+            stage_row.addWidget(card, 1, Qt.AlignVCenter)
             self.pipeline_stage_cards.append(card)
             self.pipeline_stage_status_labels.append(status)
             self.pipeline_stage_review_labels.append(review_indicator)
@@ -814,3 +826,19 @@ class AutomatedPipelineProfilesWidget(
 
     def _apply_style(self) -> None:
         self.setStyleSheet(automated_pipeline_stylesheet())
+        icon_specs = (
+            (self.upload_videos_button, "plus", theme.PRIMARY_TEXT),
+            (self.remove_videos_button, "trash", theme.STATUS_ERROR),
+            (self.clear_videos_button, "clear", theme.STATUS_ERROR),
+            (self.open_profile_configuration_button, "stack", theme.PRIMARY_TEXT),
+            (self.open_video_settings_button, "external", theme.PRIMARY),
+            (self.open_calibration_settings_button, "external", theme.PRIMARY),
+            (self.open_gait_settings_button, "external", theme.PRIMARY),
+            (self.open_knee_settings_button, "external", theme.PRIMARY),
+            (self.pipeline_change_settings_button, "sliders", theme.TEXT),
+            (self.open_pipeline_output_button, "folder", theme.TEXT),
+            (self.run_pipeline_button, "play", theme.PRIMARY_TEXT),
+        )
+        for button, icon_name, color in icon_specs:
+            button.setIcon(interface_icon(icon_name, color))
+            button.setIconSize(QSize(16, 16))

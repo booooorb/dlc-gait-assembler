@@ -60,13 +60,15 @@ class PipelineReviewMixin:
         self.pipeline_stage_status_labels[stage_index].setText("Awaiting confirmation")
         self.pipeline_stage_review_labels[stage_index].setText("Awaiting review")
         self.pipeline_progress_bar.set_active(False)
-        self._set_pipeline_stage_progress(stage_index, 100, False, "ready")
+        self._set_pipeline_stage_progress(
+            stage_index, 100, False, "ready", indicator_state="active"
+        )
         self.run_pipeline_button.setText("Awaiting confirmation")
         self.run_pipeline_button.setEnabled(False)
         self.run_pipeline_button.setToolTip(
             "The walkthrough is paused. Use Confirm and continue or Needs changes in the review panel."
         )
-        self.run_readiness_label.setText("Review required")
+        self._set_run_readiness("Review required", "review")
         self._append_console(f"[Manual check] {gate['title']}. Pipeline paused.")
 
     def _populate_pipeline_review_preview(
@@ -352,13 +354,13 @@ class PipelineReviewMixin:
             self.run_pipeline_button.setToolTip(
                 "Stop after the currently running external operation finishes."
             )
-            self.run_readiness_label.setText("Continuing")
+            self._set_run_readiness("Continuing", "running")
             self._append_console(f"[Confirmed] {PIPELINE_STAGES[stage_index]}.")
             self._pipeline_worker.approve_review()
             return
         self.run_pipeline_button.setText("Stop preview")
         self.run_pipeline_button.setToolTip(STOP_PREVIEW_TOOLTIP)
-        self.run_readiness_label.setText("Playing preview")
+        self._set_run_readiness("Playing preview", "running")
         self._append_console(f"[Confirmed] {PIPELINE_STAGES[stage_index]}.")
         self._append_console(f"[Complete] {PIPELINE_STAGES[stage_index]}.")
         self._begin_pipeline_demo_stage(stage_index + 1)
@@ -388,7 +390,9 @@ class PipelineReviewMixin:
         card.style().polish(card)
         self.pipeline_stage_status_labels[stage_index].setText("Changes required")
         self.pipeline_stage_review_labels[stage_index].setText("Needs changes")
-        self._set_pipeline_stage_progress(stage_index, 100, False, "error")
+        self._set_pipeline_stage_progress(
+            stage_index, 100, False, "error", indicator_state="error"
+        )
         self.run_pipeline_button.setEnabled(True)
         if real_review:
             self._pipeline_real_complete = True
@@ -404,7 +408,7 @@ class PipelineReviewMixin:
                 f"Replay the affected stage after updating the {gate['setting']}, then return "
                 "to this review checkpoint."
             )
-        self.run_readiness_label.setText("Changes required")
+        self._set_run_readiness("Changes required", "error")
         self._append_console(
             f"[Changes required] Update the {gate['setting']}; pipeline remains paused."
         )
@@ -426,9 +430,8 @@ class PipelineReviewMixin:
         self.pipeline_review_panel.hide()
         self.run_pipeline_button.setText("Stop preview")
         self.run_pipeline_button.setToolTip(STOP_PREVIEW_TOOLTIP)
-        self.run_readiness_label.setText("Replaying stage")
+        self._set_run_readiness("Replaying stage", "running")
         self._append_console(
             f"[Resume] Replaying {PIPELINE_STAGES[replay_stage]} before re-checking the preview."
         )
         self._begin_pipeline_demo_stage(replay_stage)
-

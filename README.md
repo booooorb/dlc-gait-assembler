@@ -1,5 +1,9 @@
 # DLC Gait Assembler
 
+<p align="center">
+  <img src="assets/images/DLC-Gait-Assembler-logo-light-original-clean.png" alt="DLC Gait Assembler" width="720">
+</p>
+
 ## Setup
 
 Create the environment, then install the application command once:

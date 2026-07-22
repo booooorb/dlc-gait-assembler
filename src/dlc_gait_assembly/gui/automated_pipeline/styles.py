@@ -88,7 +88,7 @@ QLabel#RunStatusLabel {
     font-size: 12px;
     font-weight: 700;
 }
-QLabel#ProfileStatusLabel {
+QLabel#ProfileStatusLabel, QLabel#RunReadinessBadge {
     background: {theme.SURFACE};
     border: 1px solid {theme.BORDER};
     border-radius: 3px;
@@ -96,6 +96,20 @@ QLabel#ProfileStatusLabel {
     font-size: 11px;
     font-weight: 650;
     padding: 4px 8px;
+}
+QLabel#RunReadinessBadge[readinessState="ready"],
+QLabel#RunReadinessBadge[readinessState="complete"] {
+    border-color: {theme.STATUS_READY};
+    color: {theme.STATUS_READY};
+}
+QLabel#RunReadinessBadge[readinessState="running"],
+QLabel#RunReadinessBadge[readinessState="review"] {
+    border-color: {theme.STATUS_RUNNING};
+    color: {theme.STATUS_RUNNING};
+}
+QLabel#RunReadinessBadge[readinessState="error"] {
+    border-color: {theme.STATUS_ERROR};
+    color: {theme.STATUS_ERROR};
 }
 QFrame#PipelineStatusPanel {
     background: transparent;
@@ -275,13 +289,17 @@ QLabel#PipelineLogState {
 }
 QLabel#PipelineLogState[logState="running"],
 QLabel#PipelineLogState[logState="review"] {
+    border-color: {theme.STATUS_RUNNING};
     color: {theme.STATUS_RUNNING};
 }
 QLabel#PipelineLogState[logState="paused"],
 QLabel#PipelineLogState[logState="error"] {
+    border-color: {theme.STATUS_ERROR};
     color: {theme.STATUS_ERROR};
 }
+QLabel#PipelineLogState[logState="ready"],
 QLabel#PipelineLogState[logState="complete"] {
+    border-color: {theme.STATUS_READY};
     color: {theme.STATUS_READY};
 }
 QPushButton#RunPipelineButton {
@@ -303,6 +321,28 @@ QPushButton#AddVideosButton:hover {
     background: {theme.PRIMARY_HOVER};
     border-color: {theme.PRIMARY_HOVER};
     color: {theme.PRIMARY_TEXT};
+}
+QPushButton#RemoveButton, QPushButton#ClearButton {
+    background: {theme.SURFACE};
+    border: 1px solid {theme.STATUS_ERROR};
+    border-radius: 2px;
+    color: {theme.STATUS_ERROR};
+    font-weight: 650;
+}
+QPushButton#RemoveButton:hover, QPushButton#ClearButton:hover {
+    background: {theme.PANEL};
+    border-color: {theme.STATUS_ERROR};
+    color: {theme.STATUS_ERROR};
+}
+QPushButton#RemoveButton:pressed, QPushButton#ClearButton:pressed {
+    background: {theme.SOFT};
+    border-color: {theme.STATUS_ERROR};
+    color: {theme.STATUS_ERROR};
+}
+QPushButton#RemoveButton:disabled, QPushButton#ClearButton:disabled {
+    background: {theme.PANEL};
+    border-color: {theme.STATUS_ERROR};
+    color: {theme.STATUS_ERROR};
 }
 QPushButton#RunPipelineButton:disabled {
     background: {theme.PANEL};

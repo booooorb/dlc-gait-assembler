@@ -10,7 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QTabWidget, QWidget
 
 from dlc_gait_assembly.gui import theme
@@ -27,7 +28,13 @@ from dlc_gait_assembly.gui.gait_analysis.window import AlmaKinematicsWidget, _au
 from dlc_gait_assembly.gui.knee_correction import KneeCorrectionWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
-from dlc_gait_assembly.gui.main_window import MainMenuWidget, MainWindow, PartnerLogoLabel, TOOL_SPECS
+from dlc_gait_assembly.gui.main_window import (
+    BRAND_LOGO_FILENAMES,
+    MainMenuWidget,
+    MainWindow,
+    PartnerLogoLabel,
+    TOOL_SPECS,
+)
 from dlc_gait_assembly.gui.merging.window import MergingWidget
 from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
@@ -72,6 +79,12 @@ def test_every_tool_workspace_uses_the_shared_workspace_contract(monkeypatch):
         assert "QPushButton#RemoveButton, QPushButton#ClearButton" in stylesheet
         assert "border-radius: 2px" in stylesheet
 
+    video_editor = widgets[1]
+    assert not video_editor.remove_videos_button.icon().isNull()
+    assert not video_editor.clear_videos_button.icon().isNull()
+    assert not video_editor.import_video_manifest_button.icon().isNull()
+    assert not video_editor.export_video_manifest_button.icon().isNull()
+
     deep_lab_cut = widgets[2]
     assert deep_lab_cut.findChild(type(deep_lab_cut.status_label), "StatusDot") is None
     assert deep_lab_cut.findChild(type(deep_lab_cut.status_label), "StatusPill") is None
@@ -96,7 +109,12 @@ def test_visible_settings_dropdown_emits_theme_choices_without_reemitting_update
     window.theme_mode_requested.connect(requested_modes.append)
 
     assert window.menuWidget() is None
+    assert window._home_button.text() == ""
+    assert not window._home_button.icon().isNull()
+    assert window._brand_logo_filename == "DLC-Gait-Assembler-logo-light-original-clean.png"
     assert window._settings_button.isVisible()
+    assert not window._settings_button.icon().isNull()
+    assert window._settings_button.toolButtonStyle() == Qt.ToolButtonTextBesideIcon
     assert [action.text() for action in window._settings_menu.actions()] == [
         "Light mode",
         "Dark mode",
@@ -157,7 +175,10 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
     assert not widget.findChildren(QLabel, "ProfileStageDescription")
     assert not widget.findChildren(QLabel, "ProfileStageTitle")
     assert widget.automation_console.toPlainText() == "[Ready]"
-    assert widget.run_readiness_label.text() == "Ready"
+    assert widget.pipeline_log_state.text() == "●  Ready"
+    assert widget.pipeline_log_state.property("logState") == "ready"
+    assert widget.run_readiness_label.text() == "●  Ready"
+    assert widget.run_readiness_label.property("readinessState") == "ready"
 
     interactive_controls = [
         window._automation_run_button,
@@ -196,7 +217,7 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
     app.processEvents()
 
 
-def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right():
+def test_one_bar_gives_each_primary_destination_a_visual_identity():
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     automation_buttons = window.findChildren(QPushButton, "TopAutomationButton")
@@ -205,10 +226,20 @@ def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right()
     assert window._stack.currentWidget() is window._main_menu
     assert window._main_menu.pipeline_tabs.currentIndex() == 1
     assert window._automation_run_button.property("activeNavigation") is True
+    assert window._automation_run_button.property("navigationRole") == "run"
+    assert window._automation_profiles_button.property("navigationRole") == "profiles"
+    assert window._manual_tools_button.property("navigationRole") == "manual"
+    assert not window._automation_run_button.icon().isNull()
+    assert not window._automation_profiles_button.icon().isNull()
+    assert not window._manual_tools_button.icon().isNull()
+    assert not window._settings_button.icon().isNull()
     assert window._active_tool_id is None
+    assert window._manual_tools_button.parentWidget() is not window._primary_navigation
     assert window._manual_stage_frame.isHidden()
     window._manual_tools_button.click()
+    assert window._manual_tools_button.text() == "Manual  ‹"
     assert not window._manual_stage_frame.isHidden()
+    assert window._manual_stage_frame.maximumWidth() > 0
     assert [button.text() for button in window._manual_stage_buttons.values()] == [
         "Calib.",
         "Video",
@@ -217,17 +248,19 @@ def test_one_bar_prioritizes_automation_and_expands_manual_stages_to_the_right()
         "Gait",
         "PCA/RF",
     ]
+    assert window._main_menu.pipeline_tabs.currentIndex() == 0
+    assert window._manual_tools_button.property("activeManual") is True
 
     window._automation_profiles_button.click()
     assert window._main_menu.automated_profiles.workspace_stack.currentWidget() is (
         window._main_menu.automated_profiles.configuration_page
     )
     assert window._automation_profiles_button.property("activeNavigation") is True
+    assert window._manual_stage_frame.isHidden()
 
     window._manual_tools_button.click()
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
     assert window._manual_tools_button.property("activeManual") is True
-    assert window._manual_tools_button.isChecked()
     assert window._active_tool_id is None
     window.close()
 
@@ -242,6 +275,16 @@ def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path
     assert not window.findChildren(QLabel, "AutomationPanelSubtitle")
     assert widget.run_status_bar.objectName() == "RunStatusBar"
     assert widget.upload_videos_button.text() == "Add videos"
+    assert not widget.upload_videos_button.icon().isNull()
+    assert not widget.remove_videos_button.icon().isNull()
+    assert not widget.clear_videos_button.icon().isNull()
+    assert not widget.open_profile_configuration_button.icon().isNull()
+    assert not widget.pipeline_change_settings_button.icon().isNull()
+    assert widget.run_readiness_label.objectName() == "RunReadinessBadge"
+    assert widget.run_readiness_label.text() == "●  Ready"
+    assert widget.run_readiness_label.property("readinessState") == "ready"
+    assert "QPushButton#RemoveButton, QPushButton#ClearButton" in widget.styleSheet()
+    assert theme.STATUS_ERROR in widget.styleSheet()
     assert not widget.remove_videos_button.isEnabled()
     assert not widget.clear_videos_button.isEnabled()
     assert "Drop source videos" in widget.video_list.accessibleDescription()
@@ -268,11 +311,9 @@ def test_navigation_does_not_override_the_user_window_size():
     window.resize(1180, 700)
     app.processEvents()
     chosen_size = window.size()
-    collapsed_minimum_width = window.minimumSizeHint().width()
-
-    window._set_manual_pipeline_expanded(True)
+    window._show_main_menu()
     app.processEvents()
-    assert window.minimumSizeHint().width() == collapsed_minimum_width
+    assert window.minimumSizeHint().width() <= window.minimumWidth()
     window._show_automated_pipeline()
     window._main_menu.automated_profiles.set_pipeline_running(True)
     app.processEvents()
@@ -299,9 +340,14 @@ def test_pipeline_geometry_stays_constant_through_stickplot_review():
     preview_hint = widget.pipeline_stickplot_preview.sizeHint()
 
     widget.set_pipeline_running(True)
+    assert widget.run_readiness_label.text() == "●  Running"
+    assert widget.run_readiness_label.property("readinessState") == "running"
     widget.set_pipeline_stage(4, progress=100)
     widget._pause_for_pipeline_review(4)
     app.processEvents()
+
+    assert widget.run_readiness_label.text() == "●  Review required"
+    assert widget.run_readiness_label.property("readinessState") == "review"
 
     assert window.geometry() == initial_geometry["window"]
     assert window._main_menu._content.geometry() == initial_geometry["workspace"]
@@ -330,6 +376,56 @@ def test_partner_logos_use_pixel_outlines_only_in_dark_mode():
         logo.close()
     finally:
         theme.set_dark_mode(previous_mode)
+
+
+def test_brand_logo_switches_assets_without_resizing_the_toolbar_button():
+    app = QApplication.instance() or QApplication([])
+    previous_mode = theme.IS_DARK
+    window = None
+    try:
+        theme.set_dark_mode(False)
+        window = MainWindow(initial_theme_mode="light")
+        button_size = window._home_button.size()
+        light_icon_size = window._home_button.iconSize()
+        assert window._brand_logo_filename == BRAND_LOGO_FILENAMES["light"]
+
+        theme.set_dark_mode(True)
+        window.apply_theme()
+
+        assert window._brand_logo_filename == BRAND_LOGO_FILENAMES["dark"]
+        assert window._home_button.size() == button_size
+        assert window._home_button.iconSize() == light_icon_size
+    finally:
+        if window is not None:
+            window.close()
+        theme.set_dark_mode(previous_mode)
+        app.setPalette(theme.application_palette())
+        app.setStyleSheet(theme.application_stylesheet())
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_url"),
+    (
+        ("choforcelab.png", "https://www.choforcelab.ca"),
+        ("NERVES_Logo.png", "https://nerves.bme.utah.edu"),
+    ),
+)
+def test_partner_logos_open_their_websites(monkeypatch, filename, expected_url):
+    app = QApplication.instance() or QApplication([])
+    opened_urls = []
+    monkeypatch.setattr(
+        QDesktopServices,
+        "openUrl",
+        lambda url: opened_urls.append(url.toString()) or True,
+    )
+    logo = PartnerLogoLabel(filename)
+    logo.show()
+    app.processEvents()
+
+    QTest.mouseClick(logo, Qt.LeftButton)
+
+    assert opened_urls == [expected_url]
+    logo.close()
 
 
 def test_gait_workspaces_fit_the_window_and_keep_their_bottom_accessible():
@@ -498,7 +594,12 @@ def test_main_navigation_uses_one_primary_bar_instead_of_a_duplicate_tab_strip()
         menu = window._main_menu
 
         assert menu.pipeline_tabs.tabBar().isHidden()
-        assert window._toolbar.height() == 60
+        assert window._toolbar.height() == 64
+        assert window._home_button.size().width() == 168
+        assert window._home_button.size().height() == 44
+        assert not window._home_button.icon().isNull()
+        assert window._brand_logo_filename == "DLC-Gait-Assembler-logo-light-original-clean.png"
+        assert window._primary_navigation.objectName() == "PrimaryNavigation"
         assert "QPushButton#TopAutomationButton" in window._shell.styleSheet()
         window.close()
     finally:

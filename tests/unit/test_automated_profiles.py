@@ -10,6 +10,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QPushButton
 
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
@@ -349,6 +350,12 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
         for bar in widget.pipeline_stage_progress_bars
     )
     assert widget.pipeline_stage_progress_bars[0].value() == 0
+    QTest.qWait(300)
+    assert widget.pipeline_stage_cards[0].height() > widget.pipeline_stage_cards[1].height()
+    assert (
+        widget.pipeline_stage_progress_bars[0].width()
+        > widget.pipeline_stage_progress_bars[1].width()
+    )
     assert widget.pipeline_video_progress_label.text() == "0 / 2 videos processed"
     output_folder = tmp_path / "automated_run"
     output_folder.mkdir()
@@ -369,6 +376,10 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
     assert widget.pipeline_stage_status_labels[1].text() == "Analyzing poses 50%"
     assert widget.pipeline_stage_progress_bars[0].value() == 100
     assert widget.pipeline_stage_progress_bars[1].value() == 50
+    assert widget.pipeline_stage_progress_bars[0]._center_text == "✓"
+    assert widget.pipeline_stage_progress_bars[1]._center_text == "2"
+    QTest.qWait(300)
+    assert widget.pipeline_stage_cards[1].height() > widget.pipeline_stage_cards[0].height()
     assert widget.pipeline_progress_bar.value() == 25
     assert widget.pipeline_video_progress_label.text() == "2 / 2 videos processed"
 
@@ -384,6 +395,7 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
         for card in widget.pipeline_stage_cards
     )
     assert all(bar.value() == 100 for bar in widget.pipeline_stage_progress_bars)
+    assert all(bar._center_text == "✓" for bar in widget.pipeline_stage_progress_bars)
     widget.set_pipeline_running(False)
     assert widget.automation_input_stack.currentWidget() is widget.video_panel
     widget.close()

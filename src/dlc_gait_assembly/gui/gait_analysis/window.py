@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -59,7 +59,13 @@ from dlc_gait_assembly.gui.gait_analysis.workers import (
     AlmaAnalysisThread,
     StickPlotPreviewThread,
 )
-from dlc_gait_assembly.gui.shared.interaction import add_shortcut, install_wheel_value_guard, set_tooltip
+from dlc_gait_assembly.gui.shared.icons import interface_icon
+from dlc_gait_assembly.gui.shared.interaction import (
+    add_shortcut,
+    animate_button_emphasis,
+    install_wheel_value_guard,
+    set_tooltip,
+)
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.services.analysis_manifests import write_analysis_manifest
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
@@ -1046,6 +1052,7 @@ class AlmaKinematicsWidget(QWidget):
             )
         self.preview_placeholder.setText(placeholder_text)
         self.preview_stack.setCurrentWidget(self.preview_placeholder)
+        self.preview_button.setIcon(interface_icon("eye", theme.TEXT))
         self._update_run_state()
 
     def _generate_stickplot_preview(self) -> None:
@@ -1091,6 +1098,9 @@ class AlmaKinematicsWidget(QWidget):
         self._preview_invalidated_while_running = False
         self.progress.setValue(0)
         self.progress.set_active(True)
+        self.preview_button.setIcon(interface_icon("eye", theme.TEXT))
+        animate_button_emphasis(self.preview_button, True)
+        animate_button_emphasis(self.run_button, False)
         self.log.clear()
         preview_inputs = self._preview_inputs()
         preview_names = ", ".join(path.name for _label, path in preview_inputs)
@@ -1136,6 +1146,8 @@ class AlmaKinematicsWidget(QWidget):
         self._preview_svg_data = plot_tuple
         self._preview_source_name = source_name
         self.progress.setValue(100)
+        self.preview_button.setIcon(interface_icon("check", theme.STATUS_READY))
+        animate_button_emphasis(self.preview_button, False)
         self.status_label.setText("Stick-plot preview ready. Review it, then run gait analysis.")
         self._append_log(f"Stick-plot preview generated from {source_name}.")
 
@@ -1164,6 +1176,8 @@ class AlmaKinematicsWidget(QWidget):
         self.preview_stack.setCurrentWidget(self.preview_placeholder)
         self.status_label.setText("Stick-plot preview failed.")
         self.progress.set_active(False)
+        self.preview_button.setIcon(interface_icon("eye", theme.TEXT))
+        animate_button_emphasis(self.preview_button, False)
         self._append_log(message)
         QMessageBox.critical(self, "Stick-plot preview failed", message)
 
@@ -1195,6 +1209,9 @@ class AlmaKinematicsWidget(QWidget):
             return
         self.progress.setValue(0)
         self.progress.set_active(True)
+        self.run_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
+        animate_button_emphasis(self.preview_button, False)
+        animate_button_emphasis(self.run_button, True)
         self.log.clear()
         self.status_label.setText("Running ALMA gait analysis...")
         self.run_button.setEnabled(False)
@@ -1354,9 +1371,12 @@ class AlmaKinematicsWidget(QWidget):
         self.status_label.setText(message)
         self.progress.set_active(False)
         self.progress.setValue(100 if success else self.progress.value())
+        animate_button_emphasis(self.run_button, False)
         if success:
+            self.run_button.setIcon(interface_icon("check", theme.PRIMARY_TEXT))
             QMessageBox.information(self, "ALMA gait analysis complete", message)
         else:
+            self.run_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
             QMessageBox.critical(self, "ALMA gait analysis failed", message)
 
     def _worker_finished(self) -> None:
@@ -1401,6 +1421,20 @@ class AlmaKinematicsWidget(QWidget):
             """
             )
         )
+        icon_specs = (
+            (self.add_file_button, "plus", theme.TEXT),
+            (self.add_folder_button, "folder", theme.TEXT),
+            (self.clear_files_button, "clear", theme.STATUS_ERROR),
+            (self.output_folder_button, "folder", theme.TEXT),
+            (self.load_fps_button, "upload", theme.TEXT),
+            (self.import_calibration_map_button, "upload", theme.TEXT),
+            (self.export_manifest_button, "download", theme.TEXT),
+            (self.preview_button, "eye", theme.TEXT),
+            (self.run_button, "play", theme.PRIMARY_TEXT),
+        )
+        for button, icon_name, color in icon_specs:
+            button.setIcon(interface_icon(icon_name, color))
+            button.setIconSize(QSize(16, 16))
 
 
 class GaitAnalysisWidget(QWidget):

@@ -5,7 +5,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QProcess, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
@@ -19,7 +19,12 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.gui import theme
-from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
+from dlc_gait_assembly.gui.shared.icons import interface_icon
+from dlc_gait_assembly.gui.shared.interaction import (
+    add_shortcut,
+    animate_button_emphasis,
+    set_tooltip,
+)
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.services.imports import (
     deeplabcut_environment_file,
@@ -395,6 +400,10 @@ class DeepLabCutWidget(QWidget):
         if exit_status == QProcess.NormalExit and exit_code == 0:
             self._set_progress_done("Command complete")
             if completed_command == DEEPLABCUT_LAUNCH_COMMAND:
+                self.launch_button.setIcon(interface_icon("check", theme.PRIMARY_TEXT))
+            elif completed_command == DEEPLABCUT_INSTALL_COMMAND:
+                self.install_button.setIcon(interface_icon("check", theme.STATUS_READY))
+            if completed_command == DEEPLABCUT_LAUNCH_COMMAND:
                 organized = organize_manual_deeplabcut_outputs(self._manual_outputs)
                 moved_count = len(organized.analyzed_files) + len(organized.labeled_videos)
                 if moved_count:
@@ -403,6 +412,8 @@ class DeepLabCutWidget(QWidget):
                     )
         else:
             self._set_progress_error("Command stopped")
+            self.launch_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
+            self.install_button.setIcon(interface_icon("download", theme.TEXT))
         self._terminal.append_prompt(self._cwd)
         if completed_command in {DEEPLABCUT_INSTALL_COMMAND, DEEPLABCUT_CHECK_COMMAND}:
             QTimer.singleShot(0, self._check_deeplabcut_available)
@@ -417,6 +428,14 @@ class DeepLabCutWidget(QWidget):
         self.progress.setRange(0, 0)
         self.progress.setFormat(text)
         self.progress.set_active(True)
+        if self._running_command == DEEPLABCUT_LAUNCH_COMMAND:
+            self.launch_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
+            animate_button_emphasis(self.launch_button, True)
+            animate_button_emphasis(self.install_button, False)
+        elif self._running_command == DEEPLABCUT_INSTALL_COMMAND:
+            self.install_button.setIcon(interface_icon("download", theme.TEXT))
+            animate_button_emphasis(self.install_button, True)
+            animate_button_emphasis(self.launch_button, False)
 
     def _set_progress_idle(self) -> None:
         if self._is_process_running() or self._probe_process is not None:
@@ -431,12 +450,16 @@ class DeepLabCutWidget(QWidget):
         self.progress.setValue(100)
         self.progress.setFormat(text)
         self.progress.set_active(False)
+        animate_button_emphasis(self.launch_button, False)
+        animate_button_emphasis(self.install_button, False)
 
     def _set_progress_error(self, text: str) -> None:
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat(text)
         self.progress.set_active(False)
+        animate_button_emphasis(self.launch_button, False)
+        animate_button_emphasis(self.install_button, False)
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -501,6 +524,18 @@ class DeepLabCutWidget(QWidget):
             """
             )
         )
+        icon_specs = (
+            (self.launch_button, "play", theme.PRIMARY_TEXT),
+            (self.outputs_button, "folder", theme.TEXT),
+            (self.install_button, "download", theme.TEXT),
+            (self.install_docs_button, "external", theme.TEXT),
+            (self.user_docs_button, "external", theme.TEXT),
+            (self.github_button, "external", theme.TEXT),
+            (self.paper_button, "external", theme.TEXT),
+        )
+        for button, icon_name, color in icon_specs:
+            button.setIcon(interface_icon(icon_name, color))
+            button.setIconSize(QSize(16, 16))
 
 
 class TerminalPane(QPlainTextEdit):

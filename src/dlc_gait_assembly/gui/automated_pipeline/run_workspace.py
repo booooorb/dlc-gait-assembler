@@ -153,17 +153,23 @@ class RunWorkspaceMixin:
         self.automation_console.ensureCursorVisible()
 
     def _set_pipeline_log_state(self, text: str, state: str) -> None:
-        self.pipeline_log_state.setText(text)
+        self.pipeline_log_state.setText(f"●  {text}")
         self.pipeline_log_state.setProperty("logState", state)
         self.pipeline_log_state.style().unpolish(self.pipeline_log_state)
         self.pipeline_log_state.style().polish(self.pipeline_log_state)
+
+    def _set_run_readiness(self, text: str, state: str) -> None:
+        self.run_readiness_label.setText(f"●  {text}")
+        self.run_readiness_label.setProperty("readinessState", state)
+        self.run_readiness_label.style().unpolish(self.run_readiness_label)
+        self.run_readiness_label.style().polish(self.run_readiness_label)
 
     def _toggle_pipeline_run(self) -> None:
         if self._pipeline_worker is not None and self._pipeline_worker.isRunning():
             self._pipeline_worker.request_cancel()
             self.run_pipeline_button.setText("Stopping")
             self.run_pipeline_button.setEnabled(False)
-            self.run_readiness_label.setText("Stopping after current operation")
+            self._set_run_readiness("Stopping after current operation", "running")
             self._append_console("[Pipeline] Stop requested; waiting for the current operation.")
             return
         if self._pipeline_real_complete:
@@ -174,7 +180,7 @@ class RunWorkspaceMixin:
             self.run_pipeline_button.setText("Run pipeline")
             self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
             self.run_pipeline_button.setEnabled(True)
-            self.run_readiness_label.setText("Ready")
+            self._set_run_readiness("Ready", "ready")
             return
 
         profile = self._profiles.get(self._current_profile_id or "")
@@ -203,7 +209,7 @@ class RunWorkspaceMixin:
             "Stop after the currently running external operation finishes."
         )
         self.run_pipeline_button.setEnabled(True)
-        self.run_readiness_label.setText("Running")
+        self._set_run_readiness("Running", "running")
         self._append_console(
             f'[Pipeline] Running profile "{profile.name}" on {len(self._video_paths)} video(s).'
         )
@@ -247,7 +253,7 @@ class RunWorkspaceMixin:
         )
         self.pipeline_current_stage_label.setText(activity)
         self.pipeline_current_stage_label.setToolTip("")
-        self.run_readiness_label.setText(label)
+        self._set_run_readiness(label, "running")
 
     def _pipeline_stage_progressed(
         self,
@@ -282,7 +288,9 @@ class RunWorkspaceMixin:
         self.pipeline_stage_status_labels[stage_index].setText("Skipped")
         if stage_index in PIPELINE_REVIEW_GATES:
             self.pipeline_stage_review_labels[stage_index].setText("Not included")
-        self._set_pipeline_stage_progress(stage_index, 0, False, "primary")
+        self._set_pipeline_stage_progress(
+            stage_index, 0, False, "primary", indicator_state="skipped"
+        )
         self._append_console(f"[Skipped] {reason}.")
 
     def _pipeline_review_requested(self, stage_index: int, artifacts: object) -> None:
@@ -297,7 +305,7 @@ class RunWorkspaceMixin:
         self.run_pipeline_button.setText("Back to videos")
         self.run_pipeline_button.setToolTip("Return to the video queue.")
         self.run_pipeline_button.setEnabled(True)
-        self.run_readiness_label.setText("Complete")
+        self._set_run_readiness("Complete", "complete")
         output_folder = getattr(result, "output_folder", None)
         if output_folder is not None:
             self._pipeline_output_folder_ready(output_folder)
@@ -320,11 +328,13 @@ class RunWorkspaceMixin:
             card.style().unpolish(card)
             card.style().polish(card)
             self.pipeline_stage_status_labels[stage_index].setText("Failed")
-            self._set_pipeline_stage_progress(stage_index, 100, False, "error")
+            self._set_pipeline_stage_progress(
+                stage_index, 100, False, "error", indicator_state="error"
+            )
         self.run_pipeline_button.setText("Back to videos")
         self.run_pipeline_button.setToolTip("Return to the queue, correct the profile, and run again.")
         self.run_pipeline_button.setEnabled(True)
-        self.run_readiness_label.setText("Failed")
+        self._set_run_readiness("Failed", "error")
         self._append_console(f"[Failed] {message}")
 
     def _pipeline_run_cancelled(self) -> None:
@@ -337,7 +347,7 @@ class RunWorkspaceMixin:
         self.run_pipeline_button.setText("Run pipeline")
         self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
         self.run_pipeline_button.setEnabled(True)
-        self.run_readiness_label.setText("Stopped")
+        self._set_run_readiness("Stopped", "neutral")
         self._append_console("[Pipeline] Stopped.")
 
     def _pipeline_worker_finished(self, worker: AutomatedPipelineWorker) -> None:
@@ -352,7 +362,7 @@ class RunWorkspaceMixin:
             self.set_pipeline_running(False)
             self.run_pipeline_button.setText("Run pipeline")
             self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
-            self.run_readiness_label.setText("Preview only")
+            self._set_run_readiness("Preview only", "neutral")
             return
         if self._pipeline_demo_blocked_stage is not None:
             self._resume_pipeline_demo()
@@ -367,7 +377,7 @@ class RunWorkspaceMixin:
             self.set_pipeline_running(False)
             self.run_pipeline_button.setText("Run pipeline")
             self.run_pipeline_button.setToolTip(RUN_PREVIEW_TOOLTIP)
-            self.run_readiness_label.setText("Stopped")
+            self._set_run_readiness("Stopped", "neutral")
             self._append_console("[Preview] Stopped. No processing was performed.")
             return
 
@@ -382,7 +392,7 @@ class RunWorkspaceMixin:
         self.set_pipeline_running(True)
         self.run_pipeline_button.setText("Stop preview")
         self.run_pipeline_button.setToolTip(STOP_PREVIEW_TOOLTIP)
-        self.run_readiness_label.setText("Playing preview")
+        self._set_run_readiness("Playing preview", "running")
         self._append_console("[Preview] Pipeline UI preview started; no files will be changed.")
         self._begin_pipeline_demo_stage(0)
 
@@ -452,7 +462,7 @@ class RunWorkspaceMixin:
             self.run_pipeline_button.setToolTip(
                 "Return to the queued videos after the completed walkthrough. No files were changed."
             )
-            self.run_readiness_label.setText("Complete")
+            self._set_run_readiness("Complete", "complete")
             self._append_console("[Preview complete] No processing was performed.")
             return
         self._begin_pipeline_demo_stage(next_stage)
@@ -462,6 +472,7 @@ class RunWorkspaceMixin:
         was_running = self._pipeline_running
         self._pipeline_running = running
         if running:
+            self._set_run_readiness("Running", "running")
             self._set_pipeline_overview_compact(True)
             self._stop_hover_preview()
             self.automation_input_stack.setCurrentWidget(self.pipeline_status_panel)
@@ -480,10 +491,12 @@ class RunWorkspaceMixin:
                 )
         else:
             self._pipeline_skipped_stages.clear()
+            self._emphasize_pipeline_stage(None)
             self._set_pipeline_overview_compact(False)
             self.automation_input_stack.setCurrentWidget(self.video_panel)
             self.pipeline_progress_bar.set_active(False)
             self._set_pipeline_log_state("Ready", "ready")
+            self._set_run_readiness("Ready", "ready")
 
     def set_pipeline_stage(
         self,
@@ -516,19 +529,27 @@ class RunWorkspaceMixin:
         ):
             if index < stage_index and index in self._pipeline_skipped_stages:
                 state, text = "skipped", "Skipped"
-                self._set_pipeline_stage_progress(index, 0, False, "primary")
+                self._set_pipeline_stage_progress(
+                    index, 0, False, "primary", indicator_state="skipped"
+                )
             elif index < stage_index:
                 state, text = "complete", "Complete"
-                self._set_pipeline_stage_progress(index, 100, False, "ready")
+                self._set_pipeline_stage_progress(
+                    index, 100, False, "ready", indicator_state="complete"
+                )
             elif index == stage_index:
                 text = active_status
                 if stage_progress is not None:
                     text = f"{active_status} {stage_progress:g}%"
                 state = "active"
-                self._set_pipeline_stage_progress(index, stage_progress, True, "running")
+                self._set_pipeline_stage_progress(
+                    index, stage_progress, True, "running", indicator_state="active"
+                )
             else:
                 state, text = "pending", "Waiting"
-                self._set_pipeline_stage_progress(index, 0, False, "primary")
+                self._set_pipeline_stage_progress(
+                    index, 0, False, "primary", indicator_state="pending"
+                )
             card.setProperty("pipelineState", state)
             label.setText(text)
             if index in PIPELINE_REVIEW_GATES:
@@ -540,6 +561,8 @@ class RunWorkspaceMixin:
                     )
             card.style().unpolish(card)
             card.style().polish(card)
+
+        self._emphasize_pipeline_stage(stage_index)
 
         if processed_videos is not None or total_videos is not None:
             processed = max(0, processed_videos or 0)
@@ -602,9 +625,11 @@ class RunWorkspaceMixin:
                 0 if skipped else 100,
                 False,
                 "primary" if skipped else "ready",
+                indicator_state="skipped" if skipped else "complete",
             )
             card.style().unpolish(card)
             card.style().polish(card)
+        self._emphasize_pipeline_stage(None)
         self.pipeline_progress_bar.set_accent_role("ready")
         self.pipeline_progress_bar.setRange(0, 100)
         self.pipeline_progress_bar.setValue(100)
@@ -618,6 +643,8 @@ class RunWorkspaceMixin:
         value: float | None,
         active: bool,
         accent_role: str,
+        *,
+        indicator_state: str | None = None,
     ) -> None:
         if not 0 <= stage_index < len(self.pipeline_stage_progress_bars):
             return
@@ -628,7 +655,65 @@ class RunWorkspaceMixin:
         else:
             bar.setRange(0, 100)
             bar.setValue(round(max(0.0, min(100.0, value))))
+        indicator_text = {
+            "complete": "✓",
+            "skipped": "–",
+            "error": "!",
+        }.get(indicator_state, str(stage_index + 1))
+        bar.set_center_text(indicator_text)
         bar.set_active(active)
+
+    def _emphasize_pipeline_stage(self, active_stage: int | None) -> None:
+        """Animate a single stage forward without restarting on progress ticks."""
+        if (
+            self._pipeline_stage_emphasis_initialized
+            and active_stage == self._pipeline_emphasized_stage
+        ):
+            return
+        self._pipeline_stage_emphasis_initialized = True
+        self._pipeline_emphasized_stage = active_stage
+        self._pipeline_stage_emphasis_timer.stop()
+        self._pipeline_stage_emphasis_elapsed = 0
+        self._pipeline_stage_emphasis_starts = [
+            (card.height(), indicator.width())
+            for card, indicator in zip(
+                self.pipeline_stage_cards,
+                self.pipeline_stage_progress_bars,
+                strict=True,
+            )
+        ]
+        self._pipeline_stage_emphasis_targets = [
+            (138, 50) if index == active_stage else (120, 40)
+            for index in range(len(self.pipeline_stage_cards))
+        ]
+        if active_stage is None:
+            self._pipeline_stage_emphasis_targets = [
+                (128, 44) for _card in self.pipeline_stage_cards
+            ]
+        self._pipeline_stage_emphasis_timer.start()
+
+    def _advance_pipeline_stage_emphasis(self) -> None:
+        duration_ms = 240
+        self._pipeline_stage_emphasis_elapsed = min(
+            duration_ms,
+            self._pipeline_stage_emphasis_elapsed
+            + self._pipeline_stage_emphasis_timer.interval(),
+        )
+        progress = self._pipeline_stage_emphasis_elapsed / duration_ms
+        eased = 1.0 - (1.0 - progress) ** 3
+        for card, indicator, start, target in zip(
+            self.pipeline_stage_cards,
+            self.pipeline_stage_progress_bars,
+            self._pipeline_stage_emphasis_starts,
+            self._pipeline_stage_emphasis_targets,
+            strict=True,
+        ):
+            card_height = round(start[0] + (target[0] - start[0]) * eased)
+            indicator_size = round(start[1] + (target[1] - start[1]) * eased)
+            card.setFixedHeight(card_height)
+            indicator.setFixedSize(indicator_size, indicator_size)
+        if self._pipeline_stage_emphasis_elapsed >= duration_ms:
+            self._pipeline_stage_emphasis_timer.stop()
 
     def _start_hover_preview(self, item: QListWidgetItem) -> None:
         self._release_hover_capture()

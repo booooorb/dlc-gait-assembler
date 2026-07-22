@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -29,7 +29,12 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.formatting import format_milliseconds
-from dlc_gait_assembly.gui.shared.interaction import add_shortcut, set_tooltip
+from dlc_gait_assembly.gui.shared.icons import interface_icon
+from dlc_gait_assembly.gui.shared.interaction import (
+    add_shortcut,
+    animate_button_emphasis,
+    set_tooltip,
+)
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
 from dlc_gait_assembly.gui.video_editor.preview import RegionPreviewView
 from dlc_gait_assembly.gui.video_editor.settings_panel import OperationSettingsPanel
@@ -90,6 +95,7 @@ class VideoEditorWidget(QWidget):
         self._install_shortcuts()
         self._connect_signals()
         self._apply_style()
+        self._emphasize_operation_tool("crop")
         self._update_process_state()
 
     def can_close(self, parent=None) -> bool:
@@ -279,6 +285,18 @@ class VideoEditorWidget(QWidget):
             self.crop_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_3))
             self.enhancements_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_2))
             self.trim_tool_button.setStyleSheet(_tool_button_style(theme.TOOL_1))
+            icon_specs = (
+                (self.add_videos_button, "plus", theme.TEXT),
+                (self.add_folder_button, "folder", theme.TEXT),
+                (self.remove_videos_button, "trash", theme.STATUS_ERROR),
+                (self.clear_videos_button, "clear", theme.STATUS_ERROR),
+                (self.import_video_manifest_button, "upload", theme.TEXT),
+                (self.export_video_manifest_button, "download", theme.TEXT),
+                (self.process_button, "play", theme.PRIMARY_TEXT),
+            )
+            for button, icon_name, color in icon_specs:
+                button.setIcon(interface_icon(icon_name, color))
+                button.setIconSize(QSize(16, 16))
         self.setStyleSheet(
             theme.workspace_stylesheet(
                 "VideoEditorWidget",
@@ -659,7 +677,21 @@ class VideoEditorWidget(QWidget):
         self.preview.set_mode(name)
         self.settings_panel.set_active_tool(name)
         self.timeline.set_trim_editing_enabled(name == "trim")
+        self._emphasize_operation_tool(name)
         self._refresh_trim_context()
+
+    def _emphasize_operation_tool(self, active_name: str) -> None:
+        for name, button in (
+            ("crop", self.crop_tool_button),
+            ("enhancements", self.enhancements_tool_button),
+            ("trim", self.trim_tool_button),
+        ):
+            animate_button_emphasis(
+                button,
+                name == active_name,
+                resting_height=30,
+                emphasized_height=40,
+            )
 
     def _activate_tool_button(self, button: QToolButton, name: str) -> None:
         button.setChecked(True)
@@ -781,6 +813,8 @@ class VideoEditorWidget(QWidget):
         self.progress.setValue(0)
         self.progress.setFormat("%v / %m")
         self.progress.set_active(True)
+        self.process_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
+        animate_button_emphasis(self.process_button, True)
         self._processing_errors = []
         self._processing_failures = []
         self._processing_outputs = []
@@ -812,6 +846,7 @@ class VideoEditorWidget(QWidget):
     def _on_processing_completed(self, session_dir: str) -> None:
         self.progress.setFormat("Done")
         self.progress.set_active(False)
+        animate_button_emphasis(self.process_button, False)
         self._set_processing_enabled(True)
         if self._processing_thread is not None:
             self._processing_thread.deleteLater()
@@ -839,12 +874,14 @@ class VideoEditorWidget(QWidget):
             self._processing_errors.append(f"Documentation: {documentation_error}")
 
         if self._processing_errors:
+            self.process_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
             QMessageBox.warning(
                 self,
                 "Processing finished with errors",
                 f"Output folder:\n{session_dir}\n\nFailed files:\n" + "\n".join(self._processing_errors[:8]),
             )
         else:
+            self.process_button.setIcon(interface_icon("check", theme.PRIMARY_TEXT))
             QMessageBox.information(self, "Processing complete", f"Output folder:\n{session_dir}")
 
     def _video_paths(self) -> list[Path]:
