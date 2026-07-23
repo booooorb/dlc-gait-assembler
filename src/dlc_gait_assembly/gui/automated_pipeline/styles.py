@@ -89,26 +89,23 @@ QLabel#RunStatusLabel {
     font-weight: 700;
 }
 QLabel#ProfileStatusLabel, QLabel#RunReadinessBadge {
-    background: {theme.SURFACE};
-    border: 1px solid {theme.BORDER};
-    border-radius: 3px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
     color: {theme.CONNECTOR};
     font-size: 11px;
     font-weight: 650;
-    padding: 4px 8px;
+    padding: 2px 0;
 }
 QLabel#RunReadinessBadge[readinessState="ready"],
 QLabel#RunReadinessBadge[readinessState="complete"] {
-    border-color: {theme.STATUS_READY};
     color: {theme.STATUS_READY};
 }
 QLabel#RunReadinessBadge[readinessState="running"],
 QLabel#RunReadinessBadge[readinessState="review"] {
-    border-color: {theme.STATUS_RUNNING};
     color: {theme.STATUS_RUNNING};
 }
 QLabel#RunReadinessBadge[readinessState="error"] {
-    border-color: {theme.STATUS_ERROR};
     color: {theme.STATUS_ERROR};
 }
 QFrame#PipelineStatusPanel {
@@ -279,27 +276,24 @@ QPlainTextEdit#AutomationConsole {
     selection-color: {theme.TEXT};
 }
 QLabel#PipelineLogState {
-    background: {theme.PANEL};
-    border: 1px solid {theme.BORDER};
-    border-radius: 3px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
     color: {theme.CONNECTOR};
     font-size: 11px;
     font-weight: 650;
-    padding: 3px 7px;
+    padding: 2px 0;
 }
 QLabel#PipelineLogState[logState="running"],
 QLabel#PipelineLogState[logState="review"] {
-    border-color: {theme.STATUS_RUNNING};
     color: {theme.STATUS_RUNNING};
 }
 QLabel#PipelineLogState[logState="paused"],
 QLabel#PipelineLogState[logState="error"] {
-    border-color: {theme.STATUS_ERROR};
     color: {theme.STATUS_ERROR};
 }
 QLabel#PipelineLogState[logState="ready"],
 QLabel#PipelineLogState[logState="complete"] {
-    border-color: {theme.STATUS_READY};
     color: {theme.STATUS_READY};
 }
 QPushButton#RunPipelineButton {

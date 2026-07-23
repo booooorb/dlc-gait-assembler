@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QEasingCurve,
     QPointF,
-    QPropertyAnimation,
     QRectF,
     QSize,
     Qt,
@@ -34,6 +32,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -51,8 +50,9 @@ from dlc_gait_assembly.gui.shared.icons import interface_icon
 from dlc_gait_assembly.gui.shared.widgets import CurrentPageStackedWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
-WORKFLOW_ROW_HEIGHT = 78
+WORKFLOW_ROW_HEIGHT = 64
 APP_TOOLBAR_HEIGHT = 64
+MANUAL_TOOLBAR_HEIGHT = 52
 MAIN_MENU_LOGO_HEIGHT = 24
 MAIN_MENU_LOGO_MAX_WIDTH = 104
 BRAND_LOGO_HEIGHT = 34
@@ -69,12 +69,12 @@ MINIMUM_WINDOW_SIZE = QSize(1100, 640)
 DEFAULT_WINDOW_SIZE = QSize(1440, 900)
 WINDOW_SCREEN_MARGIN = 64
 HEADER_STAGE_LABELS = {
-    "manual_calibration": "Calib.",
-    "video_processing": "Video",
-    "deeplabcut": "DLC",
-    "knee_correction": "Knee",
-    "gait_parameter_analysis": "Gait",
-    "pca_random_forest": "PCA/RF",
+    "manual_calibration": "Calibration",
+    "video_processing": "Video processing",
+    "deeplabcut": "DeepLabCut",
+    "knee_correction": "Knee correction",
+    "gait_parameter_analysis": "Gait analysis",
+    "pca_random_forest": "PCA + random forest",
 }
 
 
@@ -180,12 +180,15 @@ class MainWindow(QMainWindow):
         self.resize(self._screen_aware_initial_size())
         self._active_tool: QWidget | None = None
         self._active_tool_id: str | None = None
+        self._home_menu_active = True
         self._automation_menu_active = False
         self._automated_workspace_page = "run"
         self._tool_widgets: dict[str, QWidget] = {}
         self._stack = CurrentPageStackedWidget()
         self._main_menu = MainMenuWidget(TOOL_SPECS)
         self._main_menu.tool_requested.connect(self._open_tool)
+        self._main_menu.automated_requested.connect(self._show_automated_pipeline)
+        self._main_menu.manual_requested.connect(self._show_main_menu)
         self._main_menu.pipeline_tabs.currentChanged.connect(self._pipeline_tab_changed)
         self._main_menu.automated_profiles.workspace_changed.connect(
             self._automated_workspace_changed
@@ -194,7 +197,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._main_menu)
         self._build_shell(initial_theme_mode)
         if initial_tool_id is None:
-            self._show_automated_pipeline()
+            self._show_home_menu()
         else:
             self._open_tool(initial_tool_id)
 
@@ -250,8 +253,8 @@ class MainWindow(QMainWindow):
         home_button.setAccessibleName("DLC Gait Assembler home")
         home_button.setCursor(Qt.PointingHandCursor)
         home_button.setFixedSize(BRAND_LOGO_MAX_WIDTH + 8, 44)
-        home_button.setToolTip("Open the automated pipeline")
-        home_button.clicked.connect(self._show_automated_pipeline)
+        home_button.setToolTip("Open the main menu")
+        home_button.clicked.connect(self._show_home_menu)
         self._home_button = home_button
         primary_layout.addWidget(home_button)
 
@@ -267,10 +270,10 @@ class MainWindow(QMainWindow):
         navigation_layout.setContentsMargins(0, 0, 0, 0)
         navigation_layout.setSpacing(4)
 
-        self._automation_run_button = QPushButton("Run")
+        self._automation_run_button = QPushButton("Automated")
         self._automation_run_button.setObjectName("TopAutomationButton")
-        self._automation_run_button.setProperty("activeNavigation", True)
-        self._automation_run_button.setProperty("navigationRole", "run")
+        self._automation_run_button.setProperty("activeNavigation", False)
+        self._automation_run_button.setProperty("navigationRole", "automated")
         self._automation_run_button.setCursor(Qt.PointingHandCursor)
         self._automation_run_button.setToolTip(
             "Open the automation run screen to select a saved profile, queue source "
@@ -301,7 +304,7 @@ class MainWindow(QMainWindow):
         manual_tools_button.setObjectName("ManualPipelineButton")
         manual_tools_button.setText("Manual")
         manual_tools_button.setProperty("navigationRole", "manual")
-        manual_tools_button.setToolTip("Open the manual pipeline overview.")
+        manual_tools_button.setToolTip("Open the manual pipeline and its stages.")
         manual_tools_button.setCursor(Qt.PointingHandCursor)
         manual_tools_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         manual_tools_button.clicked.connect(lambda _checked=False: self._show_main_menu())
@@ -310,10 +313,13 @@ class MainWindow(QMainWindow):
 
         manual_stage_frame = QFrame()
         manual_stage_frame.setObjectName("ManualStageExpansion")
-        manual_stage_frame.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        manual_stage_frame.setFixedHeight(MANUAL_TOOLBAR_HEIGHT)
         manual_stage_layout = QHBoxLayout(manual_stage_frame)
-        manual_stage_layout.setContentsMargins(8, 0, 0, 0)
-        manual_stage_layout.setSpacing(1)
+        manual_stage_layout.setContentsMargins(20, 6, 20, 6)
+        manual_stage_layout.setSpacing(6)
+        manual_stage_title = QLabel("Manual pipeline")
+        manual_stage_title.setObjectName("ManualStageTitle")
+        manual_stage_layout.addWidget(manual_stage_title)
         self._manual_stage_buttons: dict[str, QPushButton] = {}
         for spec in TOOL_SPECS:
             button = QPushButton(HEADER_STAGE_LABELS[spec.id])
@@ -328,20 +334,10 @@ class MainWindow(QMainWindow):
                     lambda _checked=False, tool_id=spec.id: self._open_tool(tool_id)
                 )
             self._manual_stage_buttons[spec.id] = button
-            manual_stage_layout.addWidget(button)
-        manual_stage_frame.setMaximumWidth(0)
+            manual_stage_layout.addWidget(button, 1)
         manual_stage_frame.hide()
         self._manual_stage_frame = manual_stage_frame
         self._manual_stage_expanded = False
-        primary_layout.addWidget(manual_stage_frame, 100)
-
-        manual_stage_animation = QPropertyAnimation(
-            manual_stage_frame, b"maximumWidth", self
-        )
-        manual_stage_animation.setDuration(180)
-        manual_stage_animation.setEasingCurve(QEasingCurve.OutCubic)
-        manual_stage_animation.finished.connect(self._manual_stage_animation_finished)
-        self._manual_stage_animation = manual_stage_animation
 
         primary_layout.addStretch(1)
 
@@ -369,6 +365,7 @@ class MainWindow(QMainWindow):
         primary_layout.addWidget(partner_marks)
         self._partner_marks = partner_marks
         toolbar_layout.addWidget(primary_row, 0)
+        toolbar_layout.addWidget(manual_stage_frame, 0)
 
         shell_layout.addWidget(toolbar)
         shell_layout.addWidget(self._stack, 1)
@@ -406,6 +403,9 @@ class MainWindow(QMainWindow):
                 }
                 QPushButton#HomeNavigationButton:hover {
                     background: {theme.PANEL};
+                }
+                QPushButton#HomeNavigationButton[activeNavigation="true"] {
+                    background: NAV_HOME_FILL;
                 }
                 QFrame#ToolbarDivider {
                     background: {theme.BORDER};
@@ -447,7 +447,7 @@ class MainWindow(QMainWindow):
                     background: {theme.PANEL};
                     color: {theme.TEXT};
                 }
-                QPushButton#TopAutomationButton[navigationRole="run"][activeNavigation="true"] {
+                QPushButton#TopAutomationButton[navigationRole="automated"][activeNavigation="true"] {
                     background: NAV_RUN_FILL;
                     border-bottom-color: {theme.TOOL_1};
                     color: {theme.TEXT};
@@ -466,23 +466,31 @@ class MainWindow(QMainWindow):
                     font-weight: 700;
                 }
                 QFrame#ManualStageExpansion {
-                    background: transparent;
+                    background: {theme.PANEL};
                     border: 0;
-                    border-left: 1px solid {theme.BORDER};
+                    border-top: 1px solid {theme.BORDER};
+                    border-bottom: 1px solid {theme.BORDER};
+                }
+                QLabel#ManualStageTitle {
+                    color: {theme.TEXT};
+                    font-size: 12px;
+                    font-weight: 700;
+                    padding-right: 8px;
                 }
                 QPushButton#ManualStageButton {
-                    background: transparent;
-                    border: 0;
-                    border-bottom: 2px solid transparent;
+                    background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER};
+                    border-bottom: 2px solid {theme.BORDER};
                     border-radius: 4px;
-                    color: {theme.CONNECTOR};
-                    font-size: 11px;
-                    min-height: 34px;
-                    max-height: 34px;
-                    padding: 0 5px;
+                    color: {theme.TEXT};
+                    font-size: 12px;
+                    min-height: 36px;
+                    max-height: 36px;
+                    padding: 0 10px;
                 }
                 QPushButton#ManualStageButton:hover {
-                    background: {theme.PANEL};
+                    background: {theme.SOFT};
+                    border-color: {theme.TOOL_3};
                     color: {theme.TEXT};
                 }
                 QPushButton#ManualStageButton[activeStage="true"] {
@@ -517,6 +525,9 @@ class MainWindow(QMainWindow):
             )
         stylesheet = (
             stylesheet.replace(
+                "NAV_HOME_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.9)
+            )
+            .replace(
                 "NAV_RUN_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.84)
             )
             .replace(
@@ -593,31 +604,17 @@ class MainWindow(QMainWindow):
 
     def _set_manual_pipeline_expanded(self, expanded: bool) -> None:
         expanded = bool(expanded)
-        self._manual_tools_button.setText("Manual  ‹" if expanded else "Manual  ›")
+        self._manual_tools_button.setText("Manual")
         if self._manual_stage_expanded == expanded:
             return
 
         self._manual_stage_expanded = expanded
-        self._manual_stage_animation.stop()
-        frame = self._manual_stage_frame
-        target_width = min(340, frame.layout().sizeHint().width())
-        current_width = frame.width() if frame.isVisible() else 0
         if expanded:
-            frame.show()
-
-        if not self.isVisible():
-            frame.setMaximumWidth(target_width if expanded else 0)
-            self._manual_stage_animation_finished()
-            return
-
-        self._manual_stage_animation.setStartValue(current_width)
-        self._manual_stage_animation.setEndValue(target_width if expanded else 0)
-        self._manual_stage_animation.start()
-
-    def _manual_stage_animation_finished(self) -> None:
-        if not self._manual_stage_expanded:
-            self._manual_stage_frame.setMaximumWidth(0)
+            self._manual_stage_frame.show()
+            self._toolbar.setFixedHeight(APP_TOOLBAR_HEIGHT + MANUAL_TOOLBAR_HEIGHT)
+        else:
             self._manual_stage_frame.hide()
+            self._toolbar.setFixedHeight(APP_TOOLBAR_HEIGHT)
 
     @staticmethod
     def _screen_aware_initial_size() -> QSize:
@@ -639,16 +636,31 @@ class MainWindow(QMainWindow):
             ),
         )
 
+    def _show_home_menu(self) -> None:
+        if not self._can_leave_active_tool():
+            return
+
+        self._active_tool = None
+        self._active_tool_id = None
+        self._home_menu_active = True
+        self._automation_menu_active = False
+        self._set_manual_pipeline_expanded(False)
+        self._main_menu.show_home()
+        self.setWindowTitle("DLC Gait Assembler")
+        self._refresh_stage_navigation()
+        self._show_widget(self._main_menu)
+
     def _show_main_menu(self) -> None:
         if not self._can_leave_active_tool():
             return
 
         self._active_tool = None
         self._active_tool_id = None
+        self._home_menu_active = False
         self._automation_menu_active = False
         self._set_manual_pipeline_expanded(True)
-        self._main_menu.pipeline_tabs.setCurrentIndex(0)
-        self.setWindowTitle("DLC Gait Assembler")
+        self._main_menu.show_manual()
+        self.setWindowTitle("DLC Gait Assembler - Manual pipeline")
         self._refresh_stage_navigation()
         self._show_widget(self._main_menu)
 
@@ -657,10 +669,11 @@ class MainWindow(QMainWindow):
             return
         self._active_tool = None
         self._active_tool_id = None
+        self._home_menu_active = False
         self._automation_menu_active = True
         self._automated_workspace_page = "run"
         self._set_manual_pipeline_expanded(False)
-        self._main_menu.pipeline_tabs.setCurrentIndex(1)
+        self._main_menu.show_automated()
         self._main_menu.automated_profiles._show_automation_menu()
         self.setWindowTitle("DLC Gait Assembler - Automated pipeline")
         self._refresh_stage_navigation()
@@ -671,10 +684,11 @@ class MainWindow(QMainWindow):
             return
         self._active_tool = None
         self._active_tool_id = None
+        self._home_menu_active = False
         self._automation_menu_active = True
         self._automated_workspace_page = "profiles"
         self._set_manual_pipeline_expanded(False)
-        self._main_menu.pipeline_tabs.setCurrentIndex(1)
+        self._main_menu.show_automated()
         self._main_menu.automated_profiles._show_profile_configuration()
         self.setWindowTitle("DLC Gait Assembler - Manage automated profiles")
         self._refresh_stage_navigation()
@@ -694,13 +708,14 @@ class MainWindow(QMainWindow):
     def _pipeline_tab_changed(self, index: int) -> None:
         if self._stack.currentWidget() is not self._main_menu:
             return
+        self._home_menu_active = False
         self._automation_menu_active = index == 1
         if not self._automation_menu_active:
             self._active_tool_id = None
         self.setWindowTitle(
             "DLC Gait Assembler - Automated pipeline"
             if self._automation_menu_active
-            else "DLC Gait Assembler"
+            else "DLC Gait Assembler - Manual pipeline"
         )
         self._refresh_stage_navigation()
 
@@ -720,6 +735,7 @@ class MainWindow(QMainWindow):
 
         self._active_tool = tool
         self._active_tool_id = tool_id
+        self._home_menu_active = False
         self._automation_menu_active = False
         self._set_manual_pipeline_expanded(True)
         self.setWindowTitle(f"DLC Gait Assembler - {spec.label}")
@@ -727,6 +743,7 @@ class MainWindow(QMainWindow):
         self._show_widget(tool)
 
     def _refresh_stage_navigation(self) -> None:
+        self._home_button.setProperty("activeNavigation", self._home_menu_active)
         self._automation_run_button.setProperty(
             "activeNavigation",
             self._automation_menu_active and self._automated_workspace_page == "run",
@@ -735,7 +752,7 @@ class MainWindow(QMainWindow):
             "activeNavigation",
             self._automation_menu_active and self._automated_workspace_page == "profiles",
         )
-        manual_active = not self._automation_menu_active
+        manual_active = not self._home_menu_active and not self._automation_menu_active
         self._manual_tools_button.setProperty("activeManual", manual_active)
         for stage_id, stage_button in self._manual_stage_buttons.items():
             stage_button.setProperty("activeStage", stage_id == self._active_tool_id)
@@ -743,6 +760,7 @@ class MainWindow(QMainWindow):
             stage_button.style().polish(stage_button)
             stage_button.update()
         for button in (
+            self._home_button,
             self._automation_run_button,
             self._automation_profiles_button,
             self._manual_tools_button,
@@ -772,11 +790,14 @@ class MainWindow(QMainWindow):
         self._tool_widgets.clear()
         self._active_tool = None
         self._active_tool_id = None
+        self._home_menu_active = True
         self._automation_menu_active = False
 
 
 class MainMenuWidget(QWidget):
     tool_requested = Signal(str)
+    automated_requested = Signal()
+    manual_requested = Signal()
 
     def __init__(self, tools: list[ToolSpec]):
         super().__init__()
@@ -799,9 +820,72 @@ class MainMenuWidget(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
 
+        view_stack = QStackedWidget()
+        view_stack.setObjectName("MainMenuViewStack")
+
+        home_page = QWidget()
+        home_page.setObjectName("PipelineHomePage")
+        home_layout = QVBoxLayout(home_page)
+        home_layout.setContentsMargins(24, 24, 24, 24)
+        home_layout.setSpacing(12)
+        home_layout.addStretch(1)
+
+        home_eyebrow = QLabel("PIPELINE WORKSPACE")
+        home_eyebrow.setObjectName("HomeEyebrow")
+        home_layout.addWidget(home_eyebrow)
+        home_title = QLabel("Choose how you want to work")
+        home_title.setObjectName("HomeTitle")
+        home_layout.addWidget(home_title)
+        home_description = QLabel(
+            "Run the complete workflow automatically, or open the manual pipeline "
+            "to work through each tool stage by stage."
+        )
+        home_description.setObjectName("HomeDescription")
+        home_description.setWordWrap(True)
+        home_layout.addWidget(home_description)
+
+        choices = QHBoxLayout()
+        choices.setSpacing(18)
+        automated_card, automated_button = self._pipeline_choice_card(
+            role="automated",
+            eyebrow="AUTOMATED PIPELINE",
+            title="Run a complete workflow",
+            description=(
+                "Select a saved profile, add videos, and monitor every processing "
+                "stage from one workspace."
+            ),
+            action="Open automated pipeline",
+        )
+        automated_button.clicked.connect(self.automated_requested.emit)
+        choices.addWidget(automated_card, 1)
+        manual_card, manual_button = self._pipeline_choice_card(
+            role="manual",
+            eyebrow="MANUAL PIPELINE",
+            title="Work stage by stage",
+            description=(
+                "Open calibration, video processing, DeepLabCut, correction, gait, "
+                "and analysis tools individually."
+            ),
+            action="Open manual pipeline",
+        )
+        manual_button.clicked.connect(self.manual_requested.emit)
+        choices.addWidget(manual_card, 1)
+        home_layout.addLayout(choices)
+        home_layout.addStretch(2)
+        self.automated_choice_button = automated_button
+        self.manual_choice_button = manual_button
+        self.home_page = home_page
+        view_stack.addWidget(home_page)
+
+        workspace_page = QWidget()
+        workspace_page.setObjectName("PipelineWorkspacePage")
+        workspace_layout = QVBoxLayout(workspace_page)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(16)
+
         section_title = QLabel("Manual pipeline")
         section_title.setObjectName("WorkflowTitle")
-        content_layout.addWidget(section_title)
+        workspace_layout.addWidget(section_title)
         self.section_title = section_title
 
         pipeline_tabs = QTabWidget()
@@ -828,7 +912,12 @@ class MainMenuWidget(QWidget):
 
         self.pipeline_tabs = pipeline_tabs
         pipeline_tabs.currentChanged.connect(self._update_pipeline_heading)
-        content_layout.addWidget(pipeline_tabs)
+        workspace_layout.addWidget(pipeline_tabs)
+        self.workspace_page = workspace_page
+        view_stack.addWidget(workspace_page)
+
+        self.view_stack = view_stack
+        content_layout.addWidget(view_stack)
 
         # Give the workspace a stable width based on the window, rather than its
         # current page's size hint. Pipeline previews must not make this centered
@@ -841,6 +930,53 @@ class MainMenuWidget(QWidget):
         content_row.addStretch(1)
         root.addLayout(content_row, 1)
         self._content = content
+
+    @staticmethod
+    def _pipeline_choice_card(
+        *,
+        role: str,
+        eyebrow: str,
+        title: str,
+        description: str,
+        action: str,
+    ) -> tuple[QFrame, QPushButton]:
+        card = QFrame()
+        card.setObjectName("PipelineChoiceCard")
+        card.setProperty("pipelineRole", role)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(10)
+
+        type_label = QLabel(eyebrow)
+        type_label.setObjectName("PipelineChoiceType")
+        type_label.setProperty("pipelineRole", role)
+        layout.addWidget(type_label)
+        title_label = QLabel(title)
+        title_label.setObjectName("PipelineChoiceTitle")
+        layout.addWidget(title_label)
+        description_label = QLabel(description)
+        description_label.setObjectName("PipelineChoiceDescription")
+        description_label.setWordWrap(True)
+        layout.addWidget(description_label)
+        layout.addStretch(1)
+        button = QPushButton(action)
+        button.setObjectName("PipelineChoiceButton")
+        button.setProperty("pipelineRole", role)
+        button.setCursor(Qt.PointingHandCursor)
+        button.setToolTip(description)
+        layout.addWidget(button)
+        return card, button
+
+    def show_home(self) -> None:
+        self.view_stack.setCurrentWidget(self.home_page)
+
+    def show_manual(self) -> None:
+        self.pipeline_tabs.setCurrentIndex(0)
+        self.view_stack.setCurrentWidget(self.workspace_page)
+
+    def show_automated(self) -> None:
+        self.pipeline_tabs.setCurrentIndex(1)
+        self.view_stack.setCurrentWidget(self.workspace_page)
 
     def _update_pipeline_heading(self, index: int) -> None:
         self.section_title.setVisible(index == 0)
@@ -896,6 +1032,79 @@ class MainMenuWidget(QWidget):
             }
             QLabel {
                 background: transparent;
+            }
+            QStackedWidget#MainMenuViewStack,
+            QWidget#PipelineHomePage,
+            QWidget#PipelineWorkspacePage {
+                background: transparent;
+                border: 0;
+            }
+            QLabel#HomeEyebrow {
+                color: {theme.TOOL_1};
+                font-size: 11px;
+                font-weight: 750;
+            }
+            QLabel#HomeTitle {
+                color: {theme.TEXT};
+                font-size: 28px;
+                font-weight: 750;
+            }
+            QLabel#HomeDescription {
+                color: {theme.CONNECTOR};
+                font-size: 14px;
+                max-width: 760px;
+                padding-bottom: 10px;
+            }
+            QFrame#PipelineChoiceCard {
+                background: {theme.SURFACE};
+                border: 2px solid {theme.BORDER};
+                border-radius: 8px;
+                min-height: 220px;
+            }
+            QFrame#PipelineChoiceCard[pipelineRole="automated"] {
+                border-color: {theme.TOOL_1};
+            }
+            QFrame#PipelineChoiceCard[pipelineRole="manual"] {
+                border-color: {theme.TOOL_3};
+            }
+            QLabel#PipelineChoiceType {
+                font-size: 11px;
+                font-weight: 750;
+            }
+            QLabel#PipelineChoiceType[pipelineRole="automated"] {
+                color: {theme.TOOL_1};
+            }
+            QLabel#PipelineChoiceType[pipelineRole="manual"] {
+                color: {theme.TOOL_3};
+            }
+            QLabel#PipelineChoiceTitle {
+                color: {theme.TEXT};
+                font-size: 20px;
+                font-weight: 700;
+            }
+            QLabel#PipelineChoiceDescription {
+                color: {theme.CONNECTOR};
+                font-size: 13px;
+            }
+            QPushButton#PipelineChoiceButton {
+                background: {theme.BACKGROUND};
+                border: 1px solid {theme.BORDER};
+                border-radius: 5px;
+                color: {theme.TEXT};
+                font-size: 13px;
+                font-weight: 700;
+                min-height: 38px;
+                padding: 0 14px;
+            }
+            QPushButton#PipelineChoiceButton[pipelineRole="automated"] {
+                border-color: {theme.TOOL_1};
+            }
+            QPushButton#PipelineChoiceButton[pipelineRole="manual"] {
+                border-color: {theme.TOOL_3};
+            }
+            QPushButton#PipelineChoiceButton:hover {
+                background: {theme.PANEL};
+                border-color: {theme.TEXT};
             }
             QFrame#WorkflowSeparator {
                 border: 0;
@@ -972,6 +1181,15 @@ class MainMenuWidget(QWidget):
             """
             )
         )
+        if hasattr(self, "automated_choice_button"):
+            self.automated_choice_button.setIcon(
+                _navigation_icon("run", theme.TOOL_1)
+            )
+            self.manual_choice_button.setIcon(
+                _navigation_icon("manual", theme.TOOL_3)
+            )
+            self.automated_choice_button.setIconSize(QSize(18, 18))
+            self.manual_choice_button.setIconSize(QSize(18, 18))
 
 
 class PartnerLogoLabel(QLabel):

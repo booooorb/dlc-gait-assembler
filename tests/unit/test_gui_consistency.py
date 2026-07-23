@@ -141,6 +141,11 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
         "Manual pipeline",
         "Automated pipeline",
     ]
+    assert menu.view_stack.currentWidget() is menu.home_page
+    assert menu.automated_choice_button.text() == "Open automated pipeline"
+    assert menu.manual_choice_button.text() == "Open manual pipeline"
+    assert not menu.automated_choice_button.icon().isNull()
+    assert not menu.manual_choice_button.icon().isNull()
     expected_stages = [spec.label for spec in TOOL_SPECS]
     manual_page = tabs.widget(0)
     automated_page = tabs.widget(1)
@@ -220,13 +225,17 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
 def test_one_bar_gives_each_primary_destination_a_visual_identity():
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
+    window.resize(1180, 700)
+    window.show()
+    app.processEvents()
     automation_buttons = window.findChildren(QPushButton, "TopAutomationButton")
 
-    assert [button.text() for button in automation_buttons] == ["Run", "Profiles"]
+    assert [button.text() for button in automation_buttons] == ["Automated", "Profiles"]
     assert window._stack.currentWidget() is window._main_menu
-    assert window._main_menu.pipeline_tabs.currentIndex() == 1
-    assert window._automation_run_button.property("activeNavigation") is True
-    assert window._automation_run_button.property("navigationRole") == "run"
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
+    assert window._home_button.property("activeNavigation") is True
+    assert window._automation_run_button.property("activeNavigation") is False
+    assert window._automation_run_button.property("navigationRole") == "automated"
     assert window._automation_profiles_button.property("navigationRole") == "profiles"
     assert window._manual_tools_button.property("navigationRole") == "manual"
     assert not window._automation_run_button.icon().isNull()
@@ -237,18 +246,21 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert window._manual_tools_button.parentWidget() is not window._primary_navigation
     assert window._manual_stage_frame.isHidden()
     window._manual_tools_button.click()
-    assert window._manual_tools_button.text() == "Manual  ‹"
+    app.processEvents()
+    assert window._manual_tools_button.text() == "Manual"
     assert not window._manual_stage_frame.isHidden()
-    assert window._manual_stage_frame.maximumWidth() > 0
+    assert window._toolbar.height() == 116
     assert [button.text() for button in window._manual_stage_buttons.values()] == [
-        "Calib.",
-        "Video",
-        "DLC",
-        "Knee",
-        "Gait",
-        "PCA/RF",
+        "Calibration",
+        "Video processing",
+        "DeepLabCut",
+        "Knee correction",
+        "Gait analysis",
+        "PCA + random forest",
     ]
+    assert all(button.width() >= 130 for button in window._manual_stage_buttons.values())
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.workspace_page
     assert window._manual_tools_button.property("activeManual") is True
 
     window._automation_profiles_button.click()
@@ -257,11 +269,16 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     )
     assert window._automation_profiles_button.property("activeNavigation") is True
     assert window._manual_stage_frame.isHidden()
+    assert window._toolbar.height() == 64
 
     window._manual_tools_button.click()
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
     assert window._manual_tools_button.property("activeManual") is True
     assert window._active_tool_id is None
+    window._home_button.click()
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
+    assert window._home_button.property("activeNavigation") is True
+    assert window._manual_stage_frame.isHidden()
     window.close()
 
 
@@ -284,6 +301,8 @@ def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path
     assert widget.run_readiness_label.text() == "●  Ready"
     assert widget.run_readiness_label.property("readinessState") == "ready"
     assert "QPushButton#RemoveButton, QPushButton#ClearButton" in widget.styleSheet()
+    assert "QLabel#PipelineLogState {\n    background: transparent;\n    border: 0;" in widget.styleSheet()
+    assert "QLabel#ProfileStatusLabel, QLabel#RunReadinessBadge {\n    background: transparent;\n    border: 0;" in widget.styleSheet()
     assert theme.STATUS_ERROR in widget.styleSheet()
     assert not widget.remove_videos_button.isEnabled()
     assert not widget.clear_videos_button.isEnabled()
@@ -313,7 +332,11 @@ def test_navigation_does_not_override_the_user_window_size():
     chosen_size = window.size()
     window._show_main_menu()
     app.processEvents()
+    assert window._toolbar.height() == 116
     assert window.minimumSizeHint().width() <= window.minimumWidth()
+    window._show_home_menu()
+    app.processEvents()
+    assert window._toolbar.height() == 64
     window._show_automated_pipeline()
     window._main_menu.automated_profiles.set_pipeline_running(True)
     app.processEvents()
@@ -329,6 +352,8 @@ def test_pipeline_geometry_stays_constant_through_stickplot_review():
     window.resize(1180, 700)
     app.processEvents()
     widget = window._main_menu.automated_profiles
+    window._show_automated_pipeline()
+    app.processEvents()
 
     initial_geometry = {
         "window": window.geometry(),
