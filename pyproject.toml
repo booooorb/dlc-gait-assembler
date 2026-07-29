@@ -8,11 +8,15 @@ version = "0.1.0"
 description = "PySide6 desktop GUI for bulk video region, flip, and enhancement processing."
 requires-python = ">=3.10"
 dependencies = [
+    "matplotlib",
     "numpy",
     "pandas",
     "PyYAML",
     "PySide6",
     "opencv-python",
+    "scikit-learn",
+    "scipy",
+    "statsmodels",
     "tables",
 ]
 
@@ -33,6 +37,15 @@ dev = [
     "ruff>=0.11",
     "scikit-learn",
     "scipy",
+    "statsmodels",
+]
+analysis = [
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "scipy",
+    "statsmodels",
 ]
 
 [project.scripts]

@@ -3,6 +3,8 @@
 from dlc_gait_assembly.services.pipeline.alma import (
     AlmaRunResult,
     AlmaSettings,
+    AlmaViewCsvSet,
+    StrokeStudyMetadata,
     default_alma_root,
     load_alma_config_defaults,
     pixels_per_cm_from_calibration_map,
@@ -29,10 +31,32 @@ from dlc_gait_assembly.services.pipeline.rustlab1 import (
     extract_rustlab1_parameters,
     generate_rustlab1_figures,
 )
+from dlc_gait_assembly.services.pipeline.stroke import (
+    ASYMMETRY_PARAMETER_NAMES,
+    CUSTOM_STROKE_PARAMETER_NAMES,
+    PRIMARY_STROKE_PARAMETER_NAMES,
+    StrokeOutputBundle,
+    generate_stroke_analysis_outputs,
+)
+from dlc_gait_assembly.services.pipeline.stroke_analysis import (
+    CohortAnalysisResult,
+    audit_and_select_features,
+    run_stroke_cohort_analysis,
+)
 
 __all__ = [
     "AlmaRunResult",
     "AlmaSettings",
+    "AlmaViewCsvSet",
+    "StrokeStudyMetadata",
+    "StrokeOutputBundle",
+    "ASYMMETRY_PARAMETER_NAMES",
+    "CUSTOM_STROKE_PARAMETER_NAMES",
+    "PRIMARY_STROKE_PARAMETER_NAMES",
+    "generate_stroke_analysis_outputs",
+    "CohortAnalysisResult",
+    "audit_and_select_features",
+    "run_stroke_cohort_analysis",
     "default_alma_root",
     "load_alma_config_defaults",
     "pixels_per_cm_from_calibration_map",

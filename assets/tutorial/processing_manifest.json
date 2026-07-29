@@ -1,0 +1,199 @@
+{
+  "counts": {
+    "completed": 10,
+    "failed": 0,
+    "outputs": 30,
+    "requested": 10
+  },
+  "files": [
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010344 - trimmed.mp4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010344 - trimmed_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010344 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010344 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010344 - trimmed_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010345 - trimmed.mp4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010345 - trimmed_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010345 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010345 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010345 - trimmed_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010346 - trimmed.mp4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010346 - trimmed_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010346 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010346 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010346 - trimmed_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010347 - trimmed.mp4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010347 - trimmed_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010347 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010347 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010347 - trimmed_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010348 - trimmed.mp4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010348 - trimmed_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010348 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010348 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010348 - trimmed_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010349 - trimmed.mp4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010349 - trimmed_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010349 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010349 - trimmed_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010349 - trimmed_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010269.MP4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010269_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010269_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010269_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010269_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010271.MP4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010271_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010271_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010271_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010271_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010275.MP4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010275_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010275_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010275_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010275_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    },
+    {
+      "error": null,
+      "input": "/Users/borb/Downloads/GX010276.MP4",
+      "output": "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010276_processed.mp4",
+      "outputs": [
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Right/GX010276_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Left/GX010276_processed.mp4",
+        "/Users/borb/Documents/dlc-gait-assembler/outputs/videos/2026-07-08_10-23-30/Bottom/GX010276_processed.mp4"
+      ],
+      "status": "completed",
+      "trim_ranges": []
+    }
+  ],
+  "format": {
+    "container": "mp4",
+    "crf": 16,
+    "preset": "slow",
+    "video_codec": "H.264"
+  },
+  "generated_at": "2026-07-08T10:37:26.598652-07:00",
+  "operations": {
+    "crop": {
+      "height": 0.31429439649933144,
+      "width": 1.0,
+      "x": 1.6423417524040777e-19,
+      "y": 0.0
+    },
+    "crop_regions": [
+      {
+        "flip_horizontal": false,
+        "flip_horizontal_video_paths": null,
+        "flip_vertical": true,
+        "name": "Right",
+        "rect": {
+          "height": 0.31429439649933144,
+          "width": 1.0,
+          "x": 1.6423417524040777e-19,
+          "y": 0.0
+        }
+      },
+      {
+        "flip_horizontal": false,
+        "flip_horizontal_video_paths": null,
+        "flip_vertical": false,
+        "name": "Left",
+        "rect": {
+          "height": 0.2875896438555973,
+          "width": 1.0,
+          "x": 8.211708762020388e-19,
+          "y": 0.3163486082411571
+        }
+      },
+      {
+        "flip_horizontal": false,
+        "flip_horizontal_video_paths": null,
+        "flip_vertical": false,
+        "name": "Bottom",
+        "rect": {
+          "height": 0.3820833839795794,
+          "width": 1.0,
+          "x": 0.0,
+          "y": 0.6080466755804059
+        }
+      }
+    ],
+    "enhancements": {
+      "black_level": 0.0,
+      "brightness": 0.0,
+      "cas": 0.06,
+      "contrast": 1.0,
+      "enabled": true,
+      "exposure": 0.18,
+      "input_black": 0.0,
+      "input_white": 1.0,
+      "output_black": 0.0,
+      "output_white": 1.0,
+      "sharpening": 0.16,
+      "tone_scale": 1.0
+    },
+    "invert_regions": [],
+    "trim": "per-video"
+  }
+}

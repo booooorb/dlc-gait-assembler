@@ -33,7 +33,7 @@ from dlc_gait_assembly.gui.gait_analysis.settings import (
     raw_label_for_standard,
 )
 from dlc_gait_assembly.gui.shared.interaction import set_tooltip
-from dlc_gait_assembly.services.pipeline.alma import AlmaViewCsvSet
+from dlc_gait_assembly.services.pipeline.alma import AlmaViewCsvSet, StrokeStudyMetadata
 
 
 class CsvPairingDialog(QDialog):
@@ -97,6 +97,16 @@ class CsvPairingDialog(QDialog):
         left_combo = self._path_combo(view_set.left_csv if view_set is not None else None)
         right_combo = self._path_combo(view_set.right_csv if view_set is not None else None)
         bottom_combo = self._path_combo(view_set.bottom_csv if view_set is not None else None)
+        metadata = view_set.metadata if view_set is not None else None
+        animal_edit = QLineEdit(metadata.animal_id if metadata is not None else "")
+        group_edit = QLineEdit(metadata.group if metadata is not None else "")
+        sex_edit = QLineEdit(metadata.sex if metadata is not None else "")
+        timepoint_edit = QLineEdit(metadata.timepoint if metadata is not None else "")
+        trial_edit = QLineEdit(metadata.trial if metadata is not None else "")
+        session_edit = QLineEdit(metadata.session_id if metadata is not None else "")
+        lesion_combo = QComboBox()
+        lesion_combo.addItems(["unknown", "left", "right"])
+        lesion_combo.setCurrentText(metadata.lesion_hemisphere if metadata is not None else "unknown")
         remove_button = QPushButton("Remove")
         row_layout.addWidget(QLabel("CSV set name"), 0, 0)
         row_layout.addWidget(name_edit, 0, 1, 1, 3)
@@ -107,12 +117,33 @@ class CsvPairingDialog(QDialog):
         row_layout.addWidget(right_combo, 1, 3)
         row_layout.addWidget(QLabel("Bottom view CSV"), 2, 0)
         row_layout.addWidget(bottom_combo, 2, 1, 1, 3)
+        row_layout.addWidget(QLabel("Animal ID"), 3, 0)
+        row_layout.addWidget(animal_edit, 3, 1)
+        row_layout.addWidget(QLabel("Session ID"), 3, 2)
+        row_layout.addWidget(session_edit, 3, 3)
+        row_layout.addWidget(QLabel("Group"), 4, 0)
+        row_layout.addWidget(group_edit, 4, 1)
+        row_layout.addWidget(QLabel("Time point"), 4, 2)
+        row_layout.addWidget(timepoint_edit, 4, 3)
+        row_layout.addWidget(QLabel("Sex"), 5, 0)
+        row_layout.addWidget(sex_edit, 5, 1)
+        row_layout.addWidget(QLabel("Trial"), 5, 2)
+        row_layout.addWidget(trial_edit, 5, 3)
+        row_layout.addWidget(QLabel("Lesion hemisphere"), 6, 0)
+        row_layout.addWidget(lesion_combo, 6, 1)
         row = {
             "frame": frame,
             "name": name_edit,
             "left": left_combo,
             "right": right_combo,
             "bottom": bottom_combo,
+            "animal_id": animal_edit,
+            "group": group_edit,
+            "sex": sex_edit,
+            "timepoint": timepoint_edit,
+            "trial": trial_edit,
+            "session_id": session_edit,
+            "lesion_hemisphere": lesion_combo,
         }
         remove_button.clicked.connect(lambda _checked=False, row=row: self._remove_row(row))
         self._rows.append(row)
@@ -167,6 +198,13 @@ class CsvPairingDialog(QDialog):
             left_combo = row["left"]
             right_combo = row["right"]
             bottom_combo = row["bottom"]
+            animal_edit = row["animal_id"]
+            group_edit = row["group"]
+            sex_edit = row["sex"]
+            timepoint_edit = row["timepoint"]
+            trial_edit = row["trial"]
+            session_edit = row["session_id"]
+            lesion_combo = row["lesion_hemisphere"]
             if not isinstance(name_edit, QLineEdit) or not isinstance(left_combo, QComboBox):
                 continue
             if not isinstance(right_combo, QComboBox) or not isinstance(bottom_combo, QComboBox):
@@ -201,6 +239,15 @@ class CsvPairingDialog(QDialog):
                     left_csv=selected["left"],
                     right_csv=selected["right"],
                     bottom_csv=selected["bottom"],
+                    metadata=StrokeStudyMetadata(
+                        animal_id=animal_edit.text().strip(),
+                        group=group_edit.text().strip(),
+                        sex=sex_edit.text().strip(),
+                        lesion_hemisphere=lesion_combo.currentText(),
+                        timepoint=timepoint_edit.text().strip(),
+                        trial=trial_edit.text().strip(),
+                        session_id=session_edit.text().strip(),
+                    ),
                 )
             )
         if not pairings:

@@ -1,0 +1,32 @@
+{
+  "analysis_settings": {
+    "analysis_type": "Spontaneous walking",
+    "calibration_map_filename": null,
+    "calibration_method": "reference",
+    "custom_bodypart_mapping": null,
+    "drag_clearance_cm": 0.1,
+    "drag_min_consecutive_frames": 4,
+    "dragging_filter": false,
+    "filter_cutoff": 6.0,
+    "frame_rate": 239.8,
+    "generate_rustlab1_parameters": false,
+    "generate_stickplot": true,
+    "input_mode": "Single side view",
+    "likelihood_threshold": 0.5,
+    "n_continuous_strides": 10,
+    "no_outlier_filter": false,
+    "pixels_per_cm": null,
+    "reference_length_cm": 1.5,
+    "reference_segment": "ankle_toe",
+    "right_to_left": false,
+    "step_height_max_cm": 2.0,
+    "step_height_min_cm": 0.0,
+    "stride_length_max_cm": 8.0,
+    "stride_length_min_cm": 0.0,
+    "treadmill_speed_cm_s": 30.0,
+    "view_bodypart_mapping": null
+  },
+  "format_version": 1,
+  "generated_at": "2026-07-16T11:49:23.227012-07:00",
+  "manifest_type": "dlc-gait-assembler.gait-analysis"
+}

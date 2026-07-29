@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
+    QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -171,6 +172,42 @@ class VideoEditorWidget(QWidget):
 
         self.settings_panel = OperationSettingsPanel(self.preview)
         left_layout.addWidget(self.settings_panel, 4)
+
+        quality_box = QGroupBox("Export quality")
+        quality_layout = QHBoxLayout(quality_box)
+        quality_layout.setContentsMargins(8, 6, 8, 6)
+        quality_layout.setSpacing(8)
+        quality_layout.addWidget(QLabel("CRF"))
+        self.crf_spin = QSpinBox()
+        self.crf_spin.setObjectName("VideoCrfSpin")
+        self.crf_spin.setRange(0, 51)
+        self.crf_spin.setValue(18)
+        self.crf_spin.setToolTip(
+            "Constant Rate Factor: lower values preserve more detail and create larger files."
+        )
+        quality_layout.addWidget(self.crf_spin)
+        quality_layout.addWidget(QLabel("Preset"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.setObjectName("VideoPresetCombo")
+        self.preset_combo.addItems(
+            [
+                "ultrafast",
+                "superfast",
+                "veryfast",
+                "faster",
+                "fast",
+                "medium",
+                "slow",
+                "slower",
+                "veryslow",
+            ]
+        )
+        self.preset_combo.setCurrentText("slow")
+        self.preset_combo.setToolTip(
+            "Encoding speed preset: slower presets take longer but generally compress better."
+        )
+        quality_layout.addWidget(self.preset_combo, 1)
+        left_layout.addWidget(quality_box)
 
         manifest_row = QHBoxLayout()
         self.import_video_manifest_button = QPushButton("Upload settings manifest")
@@ -896,6 +933,8 @@ class VideoEditorWidget(QWidget):
             invert_enabled=bool(invert_regions),
             invert_rects=invert_regions,
             enhancements=self.preview.enhancement_settings(),
+            crf=self.crf_spin.value(),
+            preset=self.preset_combo.currentText(),
         )
 
     def _trim_ranges_for_processing(self, videos: list[Path]) -> dict[str, tuple[TrimRange, ...]]:
@@ -957,6 +996,8 @@ class VideoEditorWidget(QWidget):
         self.preview.set_crop_regions(options.crop_regions)
         self.preview.set_invert_regions(options.invert_rects)
         self.preview.set_enhancements(options.enhancements)
+        self.crf_spin.setValue(options.crf)
+        self.preset_combo.setCurrentText(options.preset)
         self._apply_imported_trim_ranges(trim_ranges_by_video)
         self.settings_panel.refresh()
         self._refresh_trim_context()
@@ -1004,6 +1045,8 @@ class VideoEditorWidget(QWidget):
         self.crop_tool_button.setEnabled(enabled)
         self.enhancements_tool_button.setEnabled(enabled)
         self.trim_tool_button.setEnabled(enabled)
+        self.crf_spin.setEnabled(enabled)
+        self.preset_combo.setEnabled(enabled)
 
     def _default_output_root(self) -> Path:
         return manual_pipeline_output_folders(self._project_root).processed_videos

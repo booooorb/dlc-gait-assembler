@@ -144,8 +144,10 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     assert menu.view_stack.currentWidget() is menu.home_page
     assert menu.automated_choice_button.text() == "Open automated pipeline"
     assert menu.manual_choice_button.text() == "Open manual pipeline"
+    assert menu.tutorial_choice_button.text() == "Run tutorial"
     assert not menu.automated_choice_button.icon().isNull()
     assert not menu.manual_choice_button.icon().isNull()
+    assert not menu.tutorial_choice_button.icon().isNull()
     expected_stages = [spec.label for spec in TOOL_SPECS]
     manual_page = tabs.widget(0)
     automated_page = tabs.widget(1)
@@ -186,6 +188,7 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
     assert widget.run_readiness_label.property("readinessState") == "ready"
 
     interactive_controls = [
+        window._main_menu.tutorial_choice_button,
         window._automation_run_button,
         window._automation_profiles_button,
         widget.profile_selector,
@@ -218,6 +221,119 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
         widget.configuration_tabs.tabToolTip(index).strip()
         for index in range(widget.configuration_tabs.count())
     )
+    window.close()
+    app.processEvents()
+
+
+def test_tutorial_preloads_manual_examples_and_finishes_in_automated(monkeypatch):
+    def finish_guides_for_current_stage(window, app):
+        stage_index = window._tutorial_step_index
+        while window._tutorial_step_index == stage_index:
+            if window._tutorial_guide_steps:
+                guide = window._tutorial_guide_steps[window._tutorial_guide_index]
+                if not guide.matches():
+                    assert guide.apply_value is not None
+                    window._apply_tutorial_guide_value()
+                    app.processEvents()
+                assert guide.matches()
+            window._next_tutorial_step()
+            app.processEvents()
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(DeepLabCutWidget, "_check_deeplabcut_available", lambda self: None)
+    monkeypatch.setattr(KneeCorrectionWidget, "_maybe_generate_previews", lambda self: None)
+    window = MainWindow()
+    window.resize(1180, 700)
+    window.show()
+    app.processEvents()
+    chosen_size = window.size()
+    assets = window._tutorial_assets
+
+    window._main_menu.tutorial_choice_button.click()
+    app.processEvents()
+
+    calibration = window._tool_widgets["manual_calibration"]
+    assert window._tutorial_active
+    assert window._tutorial_step_index == 0
+    assert window._active_tool_id == "manual_calibration"
+    assert window._tutorial_bar.title_label.text() == "Calibration preview"
+    assert calibration.media_list.item(0).data(Qt.UserRole) == str(assets.preview_video.resolve())
+    assert window._toolbar.height() == 140
+
+    window._next_tutorial_step()
+    app.processEvents()
+    video_editor = window._tool_widgets["video_processing"]
+    assert window._active_tool_id == "video_processing"
+    assert video_editor.video_list.item(0).data(Qt.UserRole) == str(assets.preview_video.resolve())
+    assert assets.processed_preview_video.name in video_editor.preview_title.toolTip()
+    assert window._tutorial_spotlight.isVisible()
+    assert len(window._tutorial_guide_steps) == 9
+    window._next_tutorial_step()
+    app.processEvents()
+    assert window._tutorial_guide_index == 1
+    window._next_tutorial_step()
+    app.processEvents()
+    assert window._tutorial_step_index == 1
+    assert window._tutorial_guide_index == 1
+    assert window._tutorial_spotlight._feedback.isVisible()
+
+    finish_guides_for_current_stage(window, app)
+    deeplabcut = window._tool_widgets["deeplabcut"]
+    assert window._active_tool_id == "deeplabcut"
+    assert assets.coordinate_csv.name in deeplabcut._terminal.toPlainText()
+    assert assets.coordinate_h5.name in deeplabcut._terminal.toPlainText()
+    assert video_editor.crf_spin.value() == 16
+    assert video_editor.preset_combo.currentText() == "slow"
+
+    window._next_tutorial_step()
+    app.processEvents()
+    knee = window._tool_widgets["knee_correction"]
+    assert window._active_tool_id == "knee_correction"
+    assert len(knee._pairs) == 1
+    assert knee._pairs[0].is_paired
+    assert len(window._tutorial_guide_steps) == 9
+
+    finish_guides_for_current_stage(window, app)
+    gait = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
+    assert window._active_tool_id == "gait_parameter_analysis"
+    assert gait._selected_files == [assets.coordinate_csv.resolve()]
+    assert gait.input_mode_combo.currentText() == "Single side view"
+    assert gait.file_list.item(0).text() == assets.coordinate_csv.name
+    assert assets.analyzed_video.name in gait.file_list.item(0).toolTip()
+    assert assets.coordinate_h5.name in gait.file_list.item(0).toolTip()
+
+    window._next_tutorial_step()
+    app.processEvents()
+    assert window._tutorial_step_index == 5
+    assert window._active_tool_id == "pca_random_forest"
+    assert window._tutorial_bar.title_label.text() == "PCA and random forest"
+
+    window._next_tutorial_step()
+    app.processEvents()
+    assert window._tutorial_step_index == 6
+    profiles = window._main_menu.automated_profiles
+    assert profiles.workspace_stack.currentWidget() is profiles.configuration_page
+    assert profiles._manifest_source == assets.processing_manifest.resolve()
+    assert profiles._calibration_source == assets.calibration_map.resolve()
+    assert profiles._analysis_manifest_source == assets.gait_manifest.resolve()
+    assert profiles._knee_manifest_source == assets.knee_manifest.resolve()
+    assert profiles.include_gait_analysis_button.isChecked()
+    assert profiles.include_knee_correction_button.isChecked()
+
+    finish_guides_for_current_stage(window, app)
+    assert window._tutorial_step_index == 7
+    assert window._automation_menu_active
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.workspace_page
+    assert profiles.workspace_stack.currentWidget() is profiles.automation_page
+    assert profiles._video_paths == [assets.preview_video.resolve()]
+    assert window.size() == chosen_size
+
+    finish_guides_for_current_stage(window, app)
+    assert not window._tutorial_active
+    assert not window._tutorial_profile_draft_loaded
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
+    assert window._toolbar.height() == 64
+    assert window.size() == chosen_size
     window.close()
     app.processEvents()
 

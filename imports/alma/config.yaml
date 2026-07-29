@@ -14,7 +14,7 @@ cm_speed: ''                    # treadmill speed in cm/s (required for treadmil
 right_to_left: False            # direction of walking: "auto" (detect automatically), True (right-to-left), False (left-to-right)
 no_outlier_filter: False        # only for spontaneous walking setup (requires more testing; True to get parameters for all step cycles)
 dragging_filter: False          # only for spontaneous walking setup (requires more testing; False to get parameters also for potentially 100% dragging mice)
-kinematics_likelihood_threshold: 0.5 # minimum DLC likelihood used directly by kinematics analysis; 0 disables filtering
+kinematics_likelihood_threshold: 0.5 # legacy ALMA threshold; synchronized stroke outputs use 0.95 below
 drag_clearance_cm: 0.1          # minimum toe clearance above ground (cm) to not count as dragging
 drag_min_consecutive_frames: 4  # minimum consecutive frames of ground contact to count as dragging (reduces noise)
 # Camera-independent calibration (makes analysis robust to camera distance changes)
@@ -31,3 +31,14 @@ stride_length_max_cm: 8.0       # include strides with stride length <= this (cm
 # SOP post-ALMA integration
 # Write the selected 30 RustLab1 features, merged CSV, and 18 runway figures when multi-view markers are available.
 generate_rustlab1_parameters: True
+
+# Pilot-first synchronized stroke analysis
+stroke_analysis_enabled: True
+stroke_likelihood_threshold: 0.95
+max_interpolation_gap_frames: 5
+swing_speed_threshold_cm_s: 10.0
+minimum_synchronized_cycles: 5
+# Optional per-view calibration. Each view accepts pixels_per_cm or separate
+# x_pixels_per_cm/y_pixels_per_cm values. A manual pixels_per_cm setting above
+# remains a scalar fallback; no hard-coded pixel scale is used for stroke outputs.
+view_calibration: {}

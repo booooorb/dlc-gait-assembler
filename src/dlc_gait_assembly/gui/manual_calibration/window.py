@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import hypot, isfinite
 from pathlib import Path
 
@@ -362,10 +363,13 @@ class ManualCalibrationWidget(QWidget):
         if not filenames:
             return
 
+        self._add_media_paths(Path(filename) for filename in filenames)
+
+    def _add_media_paths(self, paths: Iterable[str | Path]) -> None:
         unsupported: list[str] = []
         first_added_row: int | None = None
-        for filename in filenames:
-            path = Path(filename).expanduser().resolve()
+        for candidate in paths:
+            path = Path(candidate).expanduser().resolve()
             if path.suffix.lower() not in IMAGE_EXTENSIONS | VIDEO_EXTENSIONS:
                 unsupported.append(path.name)
                 continue

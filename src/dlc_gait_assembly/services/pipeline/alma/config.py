@@ -63,6 +63,15 @@ def settings_from_alma_config(config: dict) -> AlmaSettings:
             config.get("generate_rustlab1_parameters", True),
             default=True,
         ),
+        stroke_analysis_enabled=_coerce_bool(
+            config.get("stroke_analysis_enabled", True),
+            default=True,
+        ),
+        stroke_likelihood_threshold=float(config.get("stroke_likelihood_threshold", 0.95)),
+        max_interpolation_gap_frames=int(config.get("max_interpolation_gap_frames", 5)),
+        swing_speed_threshold_cm_s=float(config.get("swing_speed_threshold_cm_s", 10.0)),
+        minimum_synchronized_cycles=int(config.get("minimum_synchronized_cycles", 5)),
+        view_calibration=config.get("view_calibration"),
     )
 
 

@@ -29,6 +29,14 @@ the one-time installation from another directory, provide the repository path di
 python -m pip install -e /path/to/dlc-gait-assembler
 ```
 
+## Guided tutorial
+
+Choose **Run tutorial** on the main menu for an interactive walkthrough of the manual
+and automated pipelines. The tutorial uses the included files in `assets/tutorial`,
+dims inactive controls, and points to each required Video Processing and Knee Correction
+setting from the supplied manifests. Exact values can be entered manually or applied
+with **Set for me**.
+
 ## Imports
 
 Imported runtime/configuration files live under `imports/`:

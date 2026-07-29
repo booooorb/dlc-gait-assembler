@@ -9,6 +9,7 @@ from typing import Literal
 AnalysisType = Literal["Treadmill", "Spontaneous walking"]
 CalibrationMethod = Literal["reference", "manual"]
 InputMode = Literal["Multi side view", "Single side view", "Three-view", "Single-side ALMA"]
+LesionHemisphere = Literal["left", "right", "none", "unknown"]
 ALMA_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")
 
 
@@ -39,6 +40,25 @@ class AlmaSettings:
     generate_rustlab1_parameters: bool = True
     custom_bodypart_mapping: dict[str, str] | None = None
     view_bodypart_mapping: dict[str, object] | None = None
+    stroke_analysis_enabled: bool = True
+    stroke_likelihood_threshold: float = 0.95
+    max_interpolation_gap_frames: int = 5
+    swing_speed_threshold_cm_s: float = 10.0
+    minimum_synchronized_cycles: int = 5
+    view_calibration: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class StrokeStudyMetadata:
+    """Animal/session identifiers carried into every scientific output row."""
+
+    animal_id: str = ""
+    group: str = ""
+    sex: str = ""
+    lesion_hemisphere: LesionHemisphere = "unknown"
+    timepoint: str = ""
+    trial: str = ""
+    session_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -54,6 +74,7 @@ class AlmaViewCsvSet:
     left_csv: Path
     right_csv: Path
     bottom_csv: Path
+    metadata: StrokeStudyMetadata | None = None
 
     @property
     def alma_csv(self) -> Path:

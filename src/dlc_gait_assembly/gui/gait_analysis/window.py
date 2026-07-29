@@ -330,6 +330,37 @@ class AlmaKinematicsWidget(QWidget):
         manual_layout.addWidget(self.import_calibration_map_button, 1, 0, 1, 2)
         manual_layout.addWidget(self.calibration_map_label, 2, 0, 1, 2)
         calibration_layout.addWidget(self.manual_settings_widget)
+
+        stroke_calibration_widget = QWidget()
+        stroke_calibration_layout = QGridLayout(stroke_calibration_widget)
+        stroke_calibration_layout.setContentsMargins(16, 4, 0, 0)
+        configured_bottom = (self._defaults.view_calibration or {}).get("bottom", {})
+        if isinstance(configured_bottom, (int, float)):
+            bottom_x_default = bottom_y_default = float(configured_bottom)
+        elif isinstance(configured_bottom, dict):
+            bottom_x_default = float(
+                configured_bottom.get("x_pixels_per_cm", configured_bottom.get("pixels_per_cm", 0.0))
+            )
+            bottom_y_default = float(
+                configured_bottom.get("y_pixels_per_cm", configured_bottom.get("pixels_per_cm", 0.0))
+            )
+        else:
+            bottom_x_default = bottom_y_default = 0.0
+        self.bottom_x_pixels_per_cm_spin = _double_spin(0.0, 2000.0, bottom_x_default, 3)
+        self.bottom_y_pixels_per_cm_spin = _double_spin(0.0, 2000.0, bottom_y_default, 3)
+        set_tooltip(
+            self.bottom_x_pixels_per_cm_spin,
+            "Bottom-view horizontal calibration. Set both bottom values; zero disables synchronized stroke outputs.",
+        )
+        set_tooltip(
+            self.bottom_y_pixels_per_cm_spin,
+            "Bottom-view vertical calibration. Axis-specific values account for mirror distortion.",
+        )
+        stroke_calibration_layout.addWidget(QLabel("Bottom X pixels per cm"), 0, 0)
+        stroke_calibration_layout.addWidget(self.bottom_x_pixels_per_cm_spin, 0, 1)
+        stroke_calibration_layout.addWidget(QLabel("Bottom Y pixels per cm"), 1, 0)
+        stroke_calibration_layout.addWidget(self.bottom_y_pixels_per_cm_spin, 1, 1)
+        calibration_layout.addWidget(stroke_calibration_widget)
         calibration_tab_layout.addWidget(calibration_box)
         calibration_tab_layout.addStretch(1)
 
@@ -406,6 +437,31 @@ class AlmaKinematicsWidget(QWidget):
         filter_layout.addWidget(QLabel("Likelihood min"), 4, 0)
         filter_layout.addWidget(self.likelihood_threshold_spin, 4, 1)
         filters_tab_layout.addWidget(filter_box)
+
+        stroke_filter_box = QGroupBox("Synchronized stroke-pilot QC")
+        stroke_filter_layout = QGridLayout(stroke_filter_box)
+        self.stroke_likelihood_spin = _double_spin(
+            0.0, 1.0, self._defaults.stroke_likelihood_threshold, 2
+        )
+        self.stroke_likelihood_spin.setSingleStep(0.01)
+        self.stroke_gap_spin = QSpinBox()
+        self.stroke_gap_spin.setRange(0, 60)
+        self.stroke_gap_spin.setValue(self._defaults.max_interpolation_gap_frames)
+        self.stroke_swing_speed_spin = _double_spin(
+            0.1, 100.0, self._defaults.swing_speed_threshold_cm_s, 1
+        )
+        self.stroke_min_cycles_spin = QSpinBox()
+        self.stroke_min_cycles_spin.setRange(1, 100)
+        self.stroke_min_cycles_spin.setValue(self._defaults.minimum_synchronized_cycles)
+        stroke_filter_layout.addWidget(QLabel("Primary likelihood"), 0, 0)
+        stroke_filter_layout.addWidget(self.stroke_likelihood_spin, 0, 1)
+        stroke_filter_layout.addWidget(QLabel("Maximum interpolated gap (frames)"), 1, 0)
+        stroke_filter_layout.addWidget(self.stroke_gap_spin, 1, 1)
+        stroke_filter_layout.addWidget(QLabel("Swing threshold (cm/s)"), 2, 0)
+        stroke_filter_layout.addWidget(self.stroke_swing_speed_spin, 2, 1)
+        stroke_filter_layout.addWidget(QLabel("Minimum synchronized cycles"), 3, 0)
+        stroke_filter_layout.addWidget(self.stroke_min_cycles_spin, 3, 1)
+        filters_tab_layout.addWidget(stroke_filter_box)
         filters_tab_layout.addStretch(1)
         analysis_tab_layout.addStretch(1)
 
@@ -420,6 +476,10 @@ class AlmaKinematicsWidget(QWidget):
         self.stickplot_checkbox.setChecked(True)
         self.rustlab1_checkbox = QCheckBox("Generate RustLab1 parameters, merged CSV, and figures")
         self.rustlab1_checkbox.setChecked(self._defaults.generate_rustlab1_parameters)
+        self.stroke_analysis_checkbox = QCheckBox(
+            "Generate synchronized stroke-pilot outputs (hindlimb-focused)"
+        )
+        self.stroke_analysis_checkbox.setChecked(self._defaults.stroke_analysis_enabled)
         set_tooltip(self.continuous_strides_spin, "Number of continuous strides used for ALMA outputs.")
         set_tooltip(self.stickplot_checkbox, "Generate an SVG stickplot output.")
         set_tooltip(
@@ -429,6 +489,7 @@ class AlmaKinematicsWidget(QWidget):
         output_options_layout.addWidget(QLabel("Continuous strides"), 0, 0)
         output_options_layout.addWidget(self.continuous_strides_spin, 0, 1)
         output_options_layout.addWidget(self.stickplot_checkbox, 1, 0, 1, 2)
+        output_options_layout.addWidget(self.stroke_analysis_checkbox, 2, 0, 1, 2)
         output_tab_layout.addWidget(output_options_box)
 
         rustlab_box = QGroupBox("RustLab1 multi-view")
@@ -814,6 +875,8 @@ class AlmaKinematicsWidget(QWidget):
         self._calibration_map_source = source
         self.calibration_method_combo.setCurrentText("Manual pixel-to-cm ratio")
         self.pixels_per_cm_spin.setValue(pixels_per_cm)
+        self.bottom_x_pixels_per_cm_spin.setValue(pixels_per_cm)
+        self.bottom_y_pixels_per_cm_spin.setValue(pixels_per_cm)
         self.calibration_map_label.setText(f"{path.name} | {source}: {pixels_per_cm:.3f} px/cm")
         self.status_label.setText("Calibration map imported.")
         self._append_log(f"Calibration map imported from {path}: {pixels_per_cm:.3f} px/cm ({source})")
@@ -1261,6 +1324,22 @@ class AlmaKinematicsWidget(QWidget):
             generate_rustlab1_parameters=self.rustlab1_checkbox.isChecked() and self._is_three_view_mode(),
             custom_bodypart_mapping=self._collect_bodypart_mapping(),
             view_bodypart_mapping=self._collect_view_bodypart_mapping(),
+            stroke_analysis_enabled=self.stroke_analysis_checkbox.isChecked() and self._is_three_view_mode(),
+            stroke_likelihood_threshold=self.stroke_likelihood_spin.value(),
+            max_interpolation_gap_frames=self.stroke_gap_spin.value(),
+            swing_speed_threshold_cm_s=self.stroke_swing_speed_spin.value(),
+            minimum_synchronized_cycles=self.stroke_min_cycles_spin.value(),
+            view_calibration=(
+                {
+                    "bottom": {
+                        "x_pixels_per_cm": self.bottom_x_pixels_per_cm_spin.value(),
+                        "y_pixels_per_cm": self.bottom_y_pixels_per_cm_spin.value(),
+                    }
+                }
+                if self.bottom_x_pixels_per_cm_spin.value() > 0
+                and self.bottom_y_pixels_per_cm_spin.value() > 0
+                else None
+            ),
         )
 
     def _collect_bodypart_mapping(self) -> dict[str, str] | None:

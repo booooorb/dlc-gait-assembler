@@ -12,6 +12,7 @@ from dlc_gait_assembly.services.pipeline.alma.models import (
     AlmaRunResult,
     AlmaSettings,
     AlmaViewCsvSet,
+    StrokeStudyMetadata,
 )
 from dlc_gait_assembly.services.pipeline.alma.multiview import (
     filter_low_confidence_coordinates,
@@ -29,6 +30,7 @@ from dlc_gait_assembly.services.pipeline.rustlab1 import (
     extract_rustlab1_parameters,
     generate_rustlab1_figures,
 )
+from dlc_gait_assembly.services.pipeline.stroke import generate_stroke_analysis_outputs
 
 
 def run_alma_gait_analysis(
@@ -372,8 +374,34 @@ def _run_view_csv_set(view_set: AlmaViewCsvSet, output_folder: Path, settings: A
     expanded.to_csv(expanded_path, index=False)
     output_files.append(expanded_path)
 
+    stroke_bundle = None
+    if settings.stroke_analysis_enabled:
+        try:
+            stroke_bundle = generate_stroke_analysis_outputs(
+                view_set,
+                output_folder,
+                settings,
+                left_result["parameters"],
+                right_result["parameters"],
+                view_mappings,
+                kinematics,
+                pd,
+            )
+        except ValueError as exc:
+            messages.append(f"Stroke pilot outputs skipped: {exc}")
+        else:
+            output_files.extend(stroke_bundle.output_files)
+            messages.extend(stroke_bundle.messages)
+
     combined_path = output_folder / f"{view_set.name}_parameters.csv"
-    expanded.to_csv(combined_path, index=False)
+    if stroke_bundle is None:
+        expanded.to_csv(combined_path, index=False)
+    else:
+        pd.read_csv(stroke_bundle.stride_features).to_csv(combined_path, index=False)
+        messages.append(
+            "Combined parameters use synchronized bottom-view gait cycles; "
+            "the positional legacy merge remains in the expanded-parameters CSV."
+        )
     output_files.append(combined_path)
 
     return AlmaRunResult(input_file=view_set.left_csv, output_files=tuple(output_files), messages=tuple(messages))
@@ -484,13 +512,16 @@ def _alma_input_label(item: Path | AlmaViewCsvSet) -> str:
 
 def _alma_input_to_json(item: Path | AlmaViewCsvSet) -> dict:
     if isinstance(item, AlmaViewCsvSet):
-        return {
+        payload = {
             "kind": "multiview",
             "name": item.name,
             "left_csv": str(Path(item.left_csv).expanduser().resolve()),
             "right_csv": str(Path(item.right_csv).expanduser().resolve()),
             "bottom_csv": str(Path(item.bottom_csv).expanduser().resolve()),
         }
+        if item.metadata is not None:
+            payload["metadata"] = dict(item.metadata.__dict__)
+        return payload
     return {"kind": "single", "csv_file": str(Path(item).expanduser().resolve())}
 
 
@@ -498,11 +529,13 @@ def _alma_input_from_json(payload) -> Path | AlmaViewCsvSet:
     if isinstance(payload, str):
         return Path(payload)
     if payload.get("kind") == "multiview":
+        metadata = payload.get("metadata")
         return AlmaViewCsvSet(
             name=str(payload["name"]),
             left_csv=Path(payload["left_csv"]),
             right_csv=Path(payload["right_csv"]),
             bottom_csv=Path(payload["bottom_csv"]),
+            metadata=StrokeStudyMetadata(**metadata) if isinstance(metadata, dict) else None,
         )
     return Path(payload["csv_file"])
 

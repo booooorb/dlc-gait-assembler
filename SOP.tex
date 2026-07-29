@@ -1902,6 +1902,24 @@ ALMA outputs 44 kinematic parameters:
 
 The 88 extracted ALMA hind limb parameters may not account for all relevant features in mouse gait analysis. ALMA only extracts the side-view gait parameters, missing important gait features observable from different views. To address this limitation, the existing 88 ALMA parameters are merged with 30 non-overlapping parameters from the RustLab1 Gait Analysis scripts from Weber et al. (2022), and 14 additional gait parameters created with original scripts; totalling 132 gait parameters. To prevent overfitting, it is recommended to have a moderately large number set of markerless tracking data. Smoothing and gait cycle detection must be performed on non-ALMA scripts to standardize features.
 
+\begin{tcolorbox}[output file box,title=\textbf{Stroke Pilot Implementation}]
+The application now uses the synchronized Bottom view as the authoritative
+bilateral event source. A canonical cycle begins at a left-hindpaw stance onset
+and ends immediately before the next left-hindpaw stance onset; the right
+hindpaw onset is paired inside that frame interval. The identical source-frame
+window is then applied to the Left and Middle (Right-role) side views. The
+legacy per-view ALMA files are retained, but the scientific combined table is
+not joined by row position.
+
+The pilot implements six of the 14 custom features: mean and variance of
+hindlimb base of support, left and right paw-to-midline distance, bilateral
+phase offset, and bilateral stance overlap. It also derives six signed
+contralesional-versus-ipsilesional asymmetry indices. The eight MTP/knee-height
+custom features and forelimb retraining are deferred. Consequently, this pilot
+is a hindlimb-focused longitudinal analysis rather than a complete
+forelimb-inclusive reproduction of Weber et al.
+\end{tcolorbox}
+
 \begin{tcolorbox}[
     figure callout,
     title=\textbf{Gait Parameter Extraction Pipeline}
@@ -2444,6 +2462,18 @@ Features 119--132 & Custom & Post-ALMA additional features from custom scripts \
 \end{tabularx}
 \end{tcolorbox}
 
+\noindent For the stroke pilot, the historical 132-feature specification above
+is treated as a feature catalogue rather than a nonredundant model matrix.
+Deterministic duplicates are removed before modelling, and features with
+\(\lvert\rho_{\mathrm{Spearman}}\rvert \geq 0.90\) are clustered without using
+outcome labels. The synchronized pipeline writes
+\texttt{*\_canonical\_cycles.csv}, \texttt{*\_stride\_features.csv},
+\texttt{*\_session\_summary.csv}, \texttt{*\_primary\_stroke\_panel.csv},
+\texttt{*\_feature\_dictionary.csv}, and \texttt{*\_qc\_report.json}. Every
+scientific row carries animal, session, trial, time-point, lesion-side,
+calibration, view-source, and cycle identifiers. Rejected cycles remain in the
+stride table for audit but are excluded from animal-session summaries.
+
 
 % ---------------------------------------------------------
 \section{Fallback Gait Analysis}
@@ -2460,6 +2490,17 @@ Features 119--132 & Custom & Post-ALMA additional features from custom scripts \
 \subsection{Group Organization}
 
 Before running PCA or Random Forest classification, the gait feature \texttt{.csv} files should be organized by experimental group. Each group should have its own folder containing the merged feature files for that group.
+
+\noindent In the stroke-pilot application, select the generated
+\texttt{*\_session\_summary.csv} files directly. Strides are first aggregated
+within animal-session. PCA is fitted to standardized animal-session summaries,
+and Random Forest uses stratified animal-grouped cross-validation so that all
+sessions from one animal remain in one fold. Reported feature importance is
+held-out permutation importance rather than in-sample Gini importance.
+Mixed-effects outputs use a time-by-group fixed effect, standardized walking
+speed, animal random intercepts, optional random time slopes when supported,
+baseline-to-post-injury contrasts, 95\% confidence intervals, and Holm-adjusted
+primary-outcome \(p\)-values.
 
 \begin{tcolorbox}[compact table box,title=\textbf{Recommended Group Folder Structure}]
 \begin{tabularx}{\linewidth}{

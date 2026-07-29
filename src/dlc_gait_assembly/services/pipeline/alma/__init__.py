@@ -11,6 +11,7 @@ from dlc_gait_assembly.services.pipeline.alma.models import (
     AlmaRunResult,
     AlmaSettings,
     AlmaViewCsvSet,
+    StrokeStudyMetadata,
 )
 from dlc_gait_assembly.services.pipeline.alma.multiview import (
     filter_low_confidence_coordinates,
@@ -33,6 +34,7 @@ __all__ = [
     "AlmaRunResult",
     "AlmaSettings",
     "AlmaViewCsvSet",
+    "StrokeStudyMetadata",
     "default_alma_root",
     "filter_low_confidence_coordinates",
     "hide_low_confidence_stickplot_frames",
