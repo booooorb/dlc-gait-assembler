@@ -1911,13 +1911,15 @@ window is then applied to the Left and Middle (Right-role) side views. The
 legacy per-view ALMA files are retained, but the scientific combined table is
 not joined by row position.
 
-The pilot implements six of the 14 custom features: mean and variance of
-hindlimb base of support, left and right paw-to-midline distance, bilateral
-phase offset, and bilateral stance overlap. It also derives six signed
-contralesional-versus-ipsilesional asymmetry indices. The eight MTP/knee-height
-custom features and forelimb retraining are deferred. Consequently, this pilot
-is a hindlimb-focused longitudinal analysis rather than a complete
-forelimb-inclusive reproduction of Weber et al.
+The pipeline implements all 14 custom features: mean and variance of hindlimb
+base of support, left and right paw-to-midline distance, bilateral phase offset,
+bilateral stance overlap, and the mean height and vertical excursion of each
+side-view MTP and knee marker. Height is calibrated per side view and measured
+above the cycle-local lowest marker position so that image-coordinate direction
+does not affect the result. It also derives six signed
+contralesional-versus-ipsilesional asymmetry indices. Forelimb retraining remains
+deferred, so this is a hindlimb-focused longitudinal analysis rather than a
+complete forelimb-inclusive reproduction of Weber et al.
 \end{tcolorbox}
 
 \begin{tcolorbox}[

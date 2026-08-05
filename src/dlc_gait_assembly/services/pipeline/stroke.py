@@ -15,19 +15,13 @@ from dlc_gait_assembly.services.pipeline.alma.multiview import (
     merge_multiview_rustlab1_dataframe,
 )
 from dlc_gait_assembly.services.pipeline.rustlab1.extraction import (
+    CUSTOM_SOP_PARAMETER_NAMES,
     RUSTLAB1_PARAMETER_NAMES,
     coordinate_columns,
     extract_rustlab1_parameters,
 )
 
-CUSTOM_STROKE_PARAMETER_NAMES = (
-    "mean_hindlimb_base_support",
-    "variance_hindlimb_base_support",
-    "left_hindpaw_midline_distance",
-    "right_hindpaw_midline_distance",
-    "left_right_hindlimb_phase_offset",
-    "hindlimb_stance_overlap_fraction",
-)
+CUSTOM_STROKE_PARAMETER_NAMES = CUSTOM_SOP_PARAMETER_NAMES
 
 ASYMMETRY_PARAMETER_NAMES = (
     "step_height_asymmetry",
@@ -188,7 +182,21 @@ def generate_stroke_analysis_outputs(
         if rustlab.missing_markers:
             messages.append("Missing RustLab1 markers: " + ", ".join(rustlab.missing_markers))
 
-    custom = calculate_stroke_features(cycles, trajectories, calibration, pd, np)
+    side_y_pixels_per_cm = {}
+    for side in ("left", "right"):
+        side_calibration = _view_calibration(settings, side)
+        if side_calibration is not None:
+            side_y_pixels_per_cm[side] = float(side_calibration["y_pixels_per_cm"])
+        elif rustlab.pixels_per_cm:
+            side_y_pixels_per_cm[side] = float(rustlab.pixels_per_cm)
+    custom = calculate_stroke_features(
+        cycles,
+        trajectories,
+        calibration,
+        pd,
+        np,
+        side_y_pixels_per_cm=side_y_pixels_per_cm,
+    )
     metadata_frame = _metadata_frame(metadata, cycles, pd)
     stride_features = pd.concat(
         [
@@ -418,11 +426,23 @@ def align_parameters_to_cycles(cycles, parameters, side: str, pd, np):
     return pd.DataFrame(output)
 
 
-def calculate_stroke_features(cycles, trajectories, calibration, pd, np):
-    """Calculate the six coordination/stability measures selected from the SOP."""
+def calculate_stroke_features(
+    cycles,
+    trajectories,
+    calibration,
+    pd,
+    np,
+    *,
+    side_y_pixels_per_cm=None,
+):
+    """Calculate all 14 custom gait-cycle measures specified by the SOP."""
 
     x_scale = float(calibration["x_pixels_per_cm"])
     y_scale = float(calibration["y_pixels_per_cm"])
+    side_y_pixels_per_cm = side_y_pixels_per_cm or {
+        "left": y_scale,
+        "right": y_scale,
+    }
     rows = []
     for _, cycle in cycles.iterrows():
         left_start = int(cycle["left_stance_start_frame"])
@@ -447,16 +467,28 @@ def calculate_stroke_features(cycles, trajectories, calibration, pd, np):
         )
         left_midline = _distance_to_center(left_slice, "left", x_scale, y_scale, np)
         right_midline = _distance_to_center(right_slice, "right", x_scale, y_scale, np)
-        rows.append(
-            {
-                "mean_hindlimb_base_support": _safe_mean(separation, np),
-                "variance_hindlimb_base_support": _safe_variance(separation, np),
-                "left_hindpaw_midline_distance": _safe_mean(left_midline, np),
-                "right_hindpaw_midline_distance": _safe_mean(right_midline, np),
-                "left_right_hindlimb_phase_offset": cycle["left_right_hindlimb_phase_offset"],
-                "hindlimb_stance_overlap_fraction": cycle["hindlimb_stance_overlap_fraction"],
-            }
-        )
+        cycle_start = int(cycle["stride_start (frame)"])
+        cycle_end = int(cycle["stride_end (frame)"])
+        cycle_slice = trajectories.loc[cycle_start:cycle_end]
+        row = {
+            "mean_hindlimb_base_support": _safe_mean(separation, np),
+            "variance_hindlimb_base_support": _safe_variance(separation, np),
+            "left_hindpaw_midline_distance": _safe_mean(left_midline, np),
+            "right_hindpaw_midline_distance": _safe_mean(right_midline, np),
+            "left_right_hindlimb_phase_offset": cycle["left_right_hindlimb_phase_offset"],
+            "hindlimb_stance_overlap_fraction": cycle["hindlimb_stance_overlap_fraction"],
+        }
+        for side in ("left", "right"):
+            scale = side_y_pixels_per_cm.get(side)
+            for bodypart in ("mtp", "knee"):
+                average, excursion = _cycle_height_metrics(
+                    cycle_slice.get(f"{side}_{bodypart}_y"),
+                    scale,
+                    np,
+                )
+                row[f"{side}_{bodypart}_average_height"] = average
+                row[f"{side}_{bodypart}_vertical_excursion"] = excursion
+        rows.append(row)
     return pd.DataFrame(rows, columns=CUSTOM_STROKE_PARAMETER_NAMES)
 
 
@@ -608,6 +640,17 @@ def _bottom_trajectories(merged, settings, calibration, kinematics, pd, np):
                     pd,
                 )
                 result[validity_name] = interpolated.notna()
+                if coord == "y" and bodypart in {"back-mtp", "back-knee"}:
+                    output_bodypart = bodypart.removeprefix("back-")
+                    side = "left" if prefix == "l" else "right"
+                    result[f"{side}_{output_bodypart}_y"] = _filter_with_gaps(
+                        interpolated,
+                        settings.frame_rate,
+                        settings.filter_cutoff,
+                        kinematics,
+                        pd,
+                        np,
+                    )
                 coverage[f"{marker}_{coord}"] = float(original_valid.mean())
                 interpolation_counts[f"{marker}_{coord}"] = int(
                     (~original_valid & interpolated.notna()).sum()
@@ -800,6 +843,18 @@ def _safe_variance(values, np):
     return float(np.nanvar(array, ddof=1)) if np.count_nonzero(np.isfinite(array)) > 1 else np.nan
 
 
+def _cycle_height_metrics(values, pixels_per_cm, np) -> tuple[float, float]:
+    """Return mean height above the cycle's lowest paw position and excursion."""
+    if values is None or not pixels_per_cm or float(pixels_per_cm) <= 0:
+        return np.nan, np.nan
+    array = np.asarray(values, dtype=float)
+    finite = array[np.isfinite(array)]
+    if len(finite) == 0:
+        return np.nan, np.nan
+    height = (float(np.max(finite)) - finite) / float(pixels_per_cm)
+    return float(np.mean(height)), float(np.max(height) - np.min(height))
+
+
 def _feature_metadata(column: str) -> tuple[str, str, str, str]:
     if column in PRIMARY_STROKE_PARAMETER_NAMES:
         return "stroke primary", "multi-view", _unit_for(column), "primary"
@@ -816,6 +871,10 @@ def _feature_metadata(column: str) -> tuple[str, str, str, str]:
 
 def _unit_for(column: str) -> str:
     lowered = column.lower()
+    if column in CUSTOM_STROKE_PARAMETER_NAMES and (
+        "average_height" in lowered or "vertical_excursion" in lowered
+    ):
+        return "cm"
     if "asymmetry" in lowered:
         return "unitless"
     if "fraction" in lowered or "percentage" in lowered or "phase_offset" in lowered:
@@ -847,6 +906,10 @@ def _required_markers(column: str) -> str:
         return "bottom left hindpaw; bottom right hindpaw"
     if "midline" in column:
         return "bottom hindpaw; bottom center back"
+    if column in CUSTOM_STROKE_PARAMETER_NAMES and "mtp" in column:
+        return f"{column.split('_', 1)[0]} side-view MTP"
+    if column in CUSTOM_STROKE_PARAMETER_NAMES and "knee" in column:
+        return f"{column.split('_', 1)[0]} side-view knee"
     if "asymmetry" in column:
         return "bilateral side-view counterparts"
     if column.startswith(("left__", "right__")):
@@ -864,6 +927,14 @@ def _formula(column: str) -> str:
         "right_hindpaw_midline_distance": "mean right hindpaw-to-center distance during right stance",
         "left_right_hindlimb_phase_offset": "100 * (right stance onset - left onset) / left cycle frames",
         "hindlimb_stance_overlap_fraction": "100 * bilateral stance-overlap frames / left cycle frames",
+        "left_mtp_average_height": "mean left MTP height above its cycle-local lowest position",
+        "left_mtp_vertical_excursion": "maximum - minimum left MTP height within the cycle",
+        "right_mtp_average_height": "mean right MTP height above its cycle-local lowest position",
+        "right_mtp_vertical_excursion": "maximum - minimum right MTP height within the cycle",
+        "left_knee_average_height": "mean left knee height above its cycle-local lowest position",
+        "left_knee_vertical_excursion": "maximum - minimum left knee height within the cycle",
+        "right_knee_average_height": "mean right knee height above its cycle-local lowest position",
+        "right_knee_vertical_excursion": "maximum - minimum right knee height within the cycle",
     }
     if column in ASYMMETRY_PARAMETER_NAMES:
         return "(contralesional - ipsilesional) / mean(abs(contralesional), abs(ipsilesional))"

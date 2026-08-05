@@ -106,6 +106,7 @@ class StickPlotPreviewThread(QThread):
 class AlmaAnalysisThread(QThread):
     progress_updated = Signal(int, str)
     log_message = Signal(str)
+    results_ready = Signal(object)
     analysis_completed = Signal(bool, str)
 
     def __init__(
@@ -155,6 +156,7 @@ class AlmaAnalysisThread(QThread):
                     self.log_message.emit(f"  {output}")
                 for message in result.messages:
                     self.log_message.emit(f"  {message}")
+            self.results_ready.emit(tuple(results))
             self.progress_updated.emit(100, "ALMA gait analysis complete.")
             self.analysis_completed.emit(
                 True,

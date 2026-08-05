@@ -5,9 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from dlc_gait_assembly.services.pipeline.alma import (
+    ALMA_FIGURE_FILENAMES,
     AlmaSettings,
     AlmaViewCsvSet,
     filter_low_confidence_coordinates,
+    generate_alma_representations,
     hide_low_confidence_stickplot_frames,
     merge_multiview_rustlab1_dataframe,
     pixels_per_cm_from_calibration_map,
@@ -16,8 +18,10 @@ from dlc_gait_assembly.services.pipeline.alma import (
 )
 from dlc_gait_assembly.services.pipeline.alma.runner import load_kinematics_functions
 from dlc_gait_assembly.services.pipeline.rustlab1 import (
+    CUSTOM_SOP_PARAMETER_NAMES,
     RUSTLAB1_FIGURE_FILENAMES,
     RUSTLAB1_PARAMETER_NAMES,
+    extract_custom_sop_parameters,
     extract_rustlab1_parameters,
     generate_rustlab1_figures,
 )
@@ -34,10 +38,14 @@ def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
         "d-back-left": (np.ones(frame_count), np.ones(frame_count)),
         "d-back-right": (np.ones(frame_count), np.zeros(frame_count)),
         "l-back-ankle": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
+        "l-back-mtp": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
+        "l-back-knee": (np.zeros(frame_count), np.arange(frame_count, dtype=float) * 2.0),
         "l-back-toe_tip": (np.arange(frame_count, dtype=float) + 10, np.arange(frame_count, dtype=float)),
         "l-hip": (np.r_[np.full(10, 5.0), np.full(10, 15.0)], np.arange(frame_count, dtype=float)),
         "l-iliac-crest": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
         "r-back-ankle": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
+        "r-back-mtp": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
+        "r-back-knee": (np.zeros(frame_count), np.arange(frame_count, dtype=float) * 2.0),
         "r-back-toe_tip": (np.arange(frame_count, dtype=float) + 10, np.arange(frame_count, dtype=float)),
         "r-hip": (np.r_[np.full(10, 5.0), np.full(10, 15.0)], np.arange(frame_count, dtype=float)),
         "r-iliac-crest": (np.zeros(frame_count), np.arange(frame_count, dtype=float)),
@@ -69,6 +77,13 @@ def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
     assert result.dataframe["r-back-ankle__Movement"].tolist() == [9.0, 9.0]
     assert np.isnan(result.dataframe.loc[0, "left__back__movement_per_step"])
     assert result.dataframe.loc[1, "left__back__movement_per_step"] == 1.0
+
+    custom = extract_custom_sop_parameters(raw, alma_parameters, settings, identity_kinematics)
+
+    assert custom.available_parameters == CUSTOM_SOP_PARAMETER_NAMES
+    assert custom.missing_markers == ()
+    assert custom.dataframe["left_mtp_average_height"].tolist() == [0.45, 0.45]
+    assert custom.dataframe["right_knee_vertical_excursion"].tolist() == [1.8, 1.8]
 
 
 def test_rustlab1_generates_complete_runway_figure_bundle(tmp_path):
@@ -133,6 +148,60 @@ def test_rustlab1_generates_complete_runway_figure_bundle(tmp_path):
     assert tuple(path.name for path in output_paths) == RUSTLAB1_FIGURE_FILENAMES
     assert all(path.exists() for path in output_paths)
     assert all("<svg" in path.read_text(encoding="utf-8") for path in output_paths)
+    assert plt.get_fignums() == []
+
+
+def test_alma_generates_tidy_summary_and_diagnostic_figure_bundle(tmp_path):
+    import matplotlib
+    import pandas as pd
+
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+
+    parameters = pd.DataFrame(
+        {
+            "limb (hind left / right)": ["left", "right", "left", "right"],
+            "stride_start (frame)": [0, 5, 10, 15],
+            "stride_end (frame)": [4, 9, 14, 19],
+            "cycle duration (s)": [0.10, 0.11, 0.12, 0.13],
+            "stance duration (s)": [0.06, 0.07, 0.07, 0.08],
+            "swing duration (s)": [0.04, 0.04, 0.05, 0.05],
+            "stance percentage (%)": [60.0, 63.6, 58.3, 61.5],
+            "stride length (cm)": [1.2, 1.3, 1.4, 1.5],
+            "step height (cm)": [0.4, 0.5, 0.6, 0.7],
+            "max velocity during swing (cm/s)": [20.0, 22.0, 24.0, 26.0],
+            "mean toe-to-crest distance (cm)": [2.0, 2.1, 2.2, 2.3],
+            "mtp joint extension (deg)": [100.0, 102.0, 104.0, 106.0],
+            "mtp joint flexion (deg)": [60.0, 62.0, 64.0, 66.0],
+            "mtp joint amplitude (deg)": [40.0, 40.0, 40.0, 40.0],
+            "ankle joint amplitude (deg)": [30.0, 31.0, 32.0, 33.0],
+            "knee joint amplitude (deg)": [25.0, 26.0, 27.0, 28.0],
+            "hip joint amplitude (deg)": [20.0, 21.0, 22.0, 23.0],
+            "Variability x plane 5 strides mean": [0.1, 0.2, 0.3, 0.4],
+            "drag duration (s)": [0.0, 0.01, 0.02, 0.03],
+            "drag percentage (%)": [0.0, 5.0, 10.0, 15.0],
+        }
+    )
+
+    output_paths = generate_alma_representations(
+        parameters,
+        tmp_path,
+        "mouse",
+        plt,
+        pd,
+    )
+
+    assert output_paths[0].name == "mouse_parameters_long.csv"
+    assert output_paths[1].name == "mouse_parameter_summary.csv"
+    assert tuple(path.name for path in output_paths[2:]) == ALMA_FIGURE_FILENAMES
+    assert all(path.exists() for path in output_paths)
+    assert set(pd.read_csv(output_paths[0])["parameter"]) >= {
+        "cycle duration (s)",
+        "knee joint amplitude (deg)",
+    }
+    summary = pd.read_csv(output_paths[1])
+    assert set(summary["limb"]) == {"left", "right"}
+    assert all("<svg" in path.read_text(encoding="utf-8") for path in output_paths[2:])
     assert plt.get_fignums() == []
 
 
@@ -419,6 +488,14 @@ def _assert_generated_parameters_match_real_alma(
     assert len(results) == 1
     assert actual_output in results[0].output_files
     assert actual_output.exists()
+    if settings.generate_alma_representations:
+        assert tmp_path / f"{input_csv.stem}_parameters_long.csv" in results[0].output_files
+        assert tmp_path / f"{input_csv.stem}_parameter_summary.csv" in results[0].output_files
+        assert all(
+            tmp_path / f"{input_csv.stem}_alma_figures" / filename
+            in results[0].output_files
+            for filename in ALMA_FIGURE_FILENAMES
+        )
     _assert_csv_text_equal(actual_output, expected_parameters_csv)
 
     actual = pd.read_csv(actual_output)

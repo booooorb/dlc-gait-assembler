@@ -18,6 +18,10 @@ from dlc_gait_assembly.services.pipeline.alma.multiview import (
     hide_low_confidence_stickplot_frames,
     merge_multiview_rustlab1_dataframe,
 )
+from dlc_gait_assembly.services.pipeline.alma.representations import (
+    ALMA_FIGURE_FILENAMES,
+    generate_alma_representations,
+)
 from dlc_gait_assembly.services.pipeline.alma.runner import (
     load_kinematics_functions,
     run_alma_gait_analysis,
@@ -31,12 +35,14 @@ _load_kinematics_functions = load_kinematics_functions
 
 __all__ = [
     "ALMA_BODYPARTS",
+    "ALMA_FIGURE_FILENAMES",
     "AlmaRunResult",
     "AlmaSettings",
     "AlmaViewCsvSet",
     "StrokeStudyMetadata",
     "default_alma_root",
     "filter_low_confidence_coordinates",
+    "generate_alma_representations",
     "hide_low_confidence_stickplot_frames",
     "load_alma_config_defaults",
     "load_kinematics_functions",

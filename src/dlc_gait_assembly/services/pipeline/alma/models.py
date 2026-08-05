@@ -37,6 +37,7 @@ class AlmaSettings:
     stride_length_max_cm: float = 8.0
     n_continuous_strides: int = 10
     generate_stickplot: bool = True
+    generate_alma_representations: bool = True
     generate_rustlab1_parameters: bool = True
     custom_bodypart_mapping: dict[str, str] | None = None
     view_bodypart_mapping: dict[str, object] | None = None

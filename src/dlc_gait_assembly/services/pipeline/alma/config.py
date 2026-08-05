@@ -59,6 +59,10 @@ def settings_from_alma_config(config: dict) -> AlmaSettings:
         step_height_max_cm=float(config.get("step_height_max_cm", 2.0)),
         stride_length_min_cm=float(config.get("stride_length_min_cm", 0.0)),
         stride_length_max_cm=float(config.get("stride_length_max_cm", 8.0)),
+        generate_alma_representations=_coerce_bool(
+            config.get("generate_alma_representations", True),
+            default=True,
+        ),
         generate_rustlab1_parameters=_coerce_bool(
             config.get("generate_rustlab1_parameters", True),
             default=True,

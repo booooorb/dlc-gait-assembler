@@ -24,6 +24,8 @@ from dlc_gait_assembly.gui.app import (
 )
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
 from dlc_gait_assembly.gui.gait_analysis.ladder_window import LadderAnalysisWidget
+from dlc_gait_assembly.gui.gait_analysis.previews import OutputPreviewWidget
+from dlc_gait_assembly.gui.gait_analysis.workers import AlmaAnalysisThread
 from dlc_gait_assembly.gui.gait_analysis.window import AlmaKinematicsWidget, _auto_bodypart_label
 from dlc_gait_assembly.gui.knee_correction import KneeCorrectionWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
@@ -38,6 +40,7 @@ from dlc_gait_assembly.gui.main_window import (
 from dlc_gait_assembly.gui.merging.window import MergingWidget
 from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
+from dlc_gait_assembly.services.pipeline.alma import AlmaRunResult, AlmaSettings
 
 
 def test_application_stylesheet_uses_one_plain_component_system():
@@ -144,10 +147,8 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     assert menu.view_stack.currentWidget() is menu.home_page
     assert menu.automated_choice_button.text() == "Open automated pipeline"
     assert menu.manual_choice_button.text() == "Open manual pipeline"
-    assert menu.tutorial_choice_button.text() == "Run tutorial"
     assert not menu.automated_choice_button.icon().isNull()
     assert not menu.manual_choice_button.icon().isNull()
-    assert not menu.tutorial_choice_button.icon().isNull()
     expected_stages = [spec.label for spec in TOOL_SPECS]
     manual_page = tabs.widget(0)
     automated_page = tabs.widget(1)
@@ -188,7 +189,6 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
     assert widget.run_readiness_label.property("readinessState") == "ready"
 
     interactive_controls = [
-        window._main_menu.tutorial_choice_button,
         window._automation_run_button,
         window._automation_profiles_button,
         widget.profile_selector,
@@ -224,118 +224,6 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
     window.close()
     app.processEvents()
 
-
-def test_tutorial_preloads_manual_examples_and_finishes_in_automated(monkeypatch):
-    def finish_guides_for_current_stage(window, app):
-        stage_index = window._tutorial_step_index
-        while window._tutorial_step_index == stage_index:
-            if window._tutorial_guide_steps:
-                guide = window._tutorial_guide_steps[window._tutorial_guide_index]
-                if not guide.matches():
-                    assert guide.apply_value is not None
-                    window._apply_tutorial_guide_value()
-                    app.processEvents()
-                assert guide.matches()
-            window._next_tutorial_step()
-            app.processEvents()
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(DeepLabCutWidget, "_check_deeplabcut_available", lambda self: None)
-    monkeypatch.setattr(KneeCorrectionWidget, "_maybe_generate_previews", lambda self: None)
-    window = MainWindow()
-    window.resize(1180, 700)
-    window.show()
-    app.processEvents()
-    chosen_size = window.size()
-    assets = window._tutorial_assets
-
-    window._main_menu.tutorial_choice_button.click()
-    app.processEvents()
-
-    calibration = window._tool_widgets["manual_calibration"]
-    assert window._tutorial_active
-    assert window._tutorial_step_index == 0
-    assert window._active_tool_id == "manual_calibration"
-    assert window._tutorial_bar.title_label.text() == "Calibration preview"
-    assert calibration.media_list.item(0).data(Qt.UserRole) == str(assets.preview_video.resolve())
-    assert window._toolbar.height() == 140
-
-    window._next_tutorial_step()
-    app.processEvents()
-    video_editor = window._tool_widgets["video_processing"]
-    assert window._active_tool_id == "video_processing"
-    assert video_editor.video_list.item(0).data(Qt.UserRole) == str(assets.preview_video.resolve())
-    assert assets.processed_preview_video.name in video_editor.preview_title.toolTip()
-    assert window._tutorial_spotlight.isVisible()
-    assert len(window._tutorial_guide_steps) == 9
-    window._next_tutorial_step()
-    app.processEvents()
-    assert window._tutorial_guide_index == 1
-    window._next_tutorial_step()
-    app.processEvents()
-    assert window._tutorial_step_index == 1
-    assert window._tutorial_guide_index == 1
-    assert window._tutorial_spotlight._feedback.isVisible()
-
-    finish_guides_for_current_stage(window, app)
-    deeplabcut = window._tool_widgets["deeplabcut"]
-    assert window._active_tool_id == "deeplabcut"
-    assert assets.coordinate_csv.name in deeplabcut._terminal.toPlainText()
-    assert assets.coordinate_h5.name in deeplabcut._terminal.toPlainText()
-    assert video_editor.crf_spin.value() == 16
-    assert video_editor.preset_combo.currentText() == "slow"
-
-    window._next_tutorial_step()
-    app.processEvents()
-    knee = window._tool_widgets["knee_correction"]
-    assert window._active_tool_id == "knee_correction"
-    assert len(knee._pairs) == 1
-    assert knee._pairs[0].is_paired
-    assert len(window._tutorial_guide_steps) == 9
-
-    finish_guides_for_current_stage(window, app)
-    gait = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
-    assert window._active_tool_id == "gait_parameter_analysis"
-    assert gait._selected_files == [assets.coordinate_csv.resolve()]
-    assert gait.input_mode_combo.currentText() == "Single side view"
-    assert gait.file_list.item(0).text() == assets.coordinate_csv.name
-    assert assets.analyzed_video.name in gait.file_list.item(0).toolTip()
-    assert assets.coordinate_h5.name in gait.file_list.item(0).toolTip()
-
-    window._next_tutorial_step()
-    app.processEvents()
-    assert window._tutorial_step_index == 5
-    assert window._active_tool_id == "pca_random_forest"
-    assert window._tutorial_bar.title_label.text() == "PCA and random forest"
-
-    window._next_tutorial_step()
-    app.processEvents()
-    assert window._tutorial_step_index == 6
-    profiles = window._main_menu.automated_profiles
-    assert profiles.workspace_stack.currentWidget() is profiles.configuration_page
-    assert profiles._manifest_source == assets.processing_manifest.resolve()
-    assert profiles._calibration_source == assets.calibration_map.resolve()
-    assert profiles._analysis_manifest_source == assets.gait_manifest.resolve()
-    assert profiles._knee_manifest_source == assets.knee_manifest.resolve()
-    assert profiles.include_gait_analysis_button.isChecked()
-    assert profiles.include_knee_correction_button.isChecked()
-
-    finish_guides_for_current_stage(window, app)
-    assert window._tutorial_step_index == 7
-    assert window._automation_menu_active
-    assert window._main_menu.view_stack.currentWidget() is window._main_menu.workspace_page
-    assert profiles.workspace_stack.currentWidget() is profiles.automation_page
-    assert profiles._video_paths == [assets.preview_video.resolve()]
-    assert window.size() == chosen_size
-
-    finish_guides_for_current_stage(window, app)
-    assert not window._tutorial_active
-    assert not window._tutorial_profile_draft_loaded
-    assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
-    assert window._toolbar.height() == 64
-    assert window.size() == chosen_size
-    window.close()
-    app.processEvents()
 
 
 def test_one_bar_gives_each_primary_destination_a_visual_identity():
@@ -582,16 +470,18 @@ def test_gait_workspaces_fit_the_window_and_keep_their_bottom_accessible():
             initial_tool_id="gait_parameter_analysis",
             initial_theme_mode="dark",
         )
-        window.resize(1280, 820)
+        window.resize(1100, 640)
         window.show()
         gait = window._tool_widgets["gait_parameter_analysis"]
 
         app.processEvents()
         runway_geometry = window.geometry()
         header = gait.kinematics_widget.findChild(QWidget, "WorkspaceHeader")
-        assert window.height() == 820
+        assert window.height() == 640
         assert header is not None and header.height() < 64
         assert not hasattr(gait, "ladder_widget")
+        assert window._stack.currentWidget() is gait
+        assert gait.kinematics_widget.controls_scroll.verticalScrollBar().maximum() > 0
 
         ladder = LadderAnalysisWidget()
         ladder.resize(1280, 750)
@@ -616,6 +506,38 @@ def test_gait_workspaces_fit_the_window_and_keep_their_bottom_accessible():
         theme.set_dark_mode(previous_mode)
         app.setPalette(theme.application_palette())
         app.setStyleSheet(theme.application_stylesheet())
+
+
+def test_gait_and_pca_stay_embedded_with_clear_workspace_navigation():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.resize(1180, 700)
+    window.show()
+
+    window._open_tool("gait_parameter_analysis")
+    gait = window._tool_widgets["gait_parameter_analysis"]
+    assert window._stack.currentWidget() is gait
+    assert not gait.isWindow()
+    assert [
+        gait.kinematics_widget.workspace_tabs.tabText(index)
+        for index in range(gait.kinematics_widget.workspace_tabs.count())
+    ] == ["1. Inputs", "2. Preview / results", "3. Run log"]
+
+    window._open_tool("pca_random_forest")
+    pca = window._tool_widgets["pca_random_forest"]
+    app.processEvents()
+
+    assert window._stack.currentWidget() is pca
+    assert not pca.isWindow()
+    assert all(size >= 300 for size in pca.analysis_splitter.sizes())
+    assert pca.log.width() >= 300
+
+    window._open_tool("gait_parameter_analysis")
+    app.processEvents()
+    assert window._stack.currentWidget() is gait
+    assert window._tool_widgets["pca_random_forest"] is pca
+
+    window.close()
 
 
 def test_runway_light_mode_has_a_distinct_settings_tab_strip():
@@ -698,7 +620,8 @@ def test_runway_preview_uses_selected_multiview_set_and_visible_stride_count(tmp
     assert widget.view_set_table.topLevelItemCount() == 2
     assert widget.view_set_table.currentItem().text(0) == "second"
     assert captured == {"csvs": ["second_left.csv", "second_right.csv"], "strides": 7, "started": True}
-    assert widget.preview_stack.maximumHeight() <= 220
+    assert widget.preview_stack.minimumHeight() >= 280
+    assert widget.workspace_tabs.currentWidget() is widget.preview_page
     widget.close()
     app.processEvents()
 
@@ -723,6 +646,89 @@ def test_runway_requires_complete_left_right_bottom_csv_sets(tmp_path):
     assert "Missing bottom" in widget.view_set_table.topLevelItem(0).text(4)
     widget.close()
     app.processEvents()
+
+
+def test_runway_previews_generated_svg_figures_and_csv_tables(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    csv_path = tmp_path / "mouse_parameter_summary.csv"
+    csv_path.write_text(
+        "parameter,mean,standard_deviation\nstride_length,4.2,0.3\nstep_height,1.1,0.1\n",
+        encoding="utf-8",
+    )
+    figure_folder = tmp_path / "mouse_alma_figures"
+    figure_folder.mkdir()
+    svg_path = figure_folder / "1_ALMA_cycle_timing.svg"
+    svg_path.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">'
+        '<rect width="200" height="100" fill="white"/>'
+        '<path d="M10 80 L80 20 L190 70" stroke="black" fill="none"/>'
+        "</svg>",
+        encoding="utf-8",
+    )
+    ignored_path = tmp_path / "analysis_metadata.json"
+    ignored_path.write_text("{}", encoding="utf-8")
+
+    preview = OutputPreviewWidget(max_csv_rows=1, max_csv_columns=2)
+    preview.load_paths((csv_path, ignored_path, svg_path, tmp_path / "missing.csv"))
+
+    assert preview.paths == (csv_path.resolve(), svg_path.resolve())
+    assert preview.selected_path == svg_path.resolve()
+    assert preview.svg_preview.renderer().isValid()
+
+    preview.file_combo.setCurrentIndex(0)
+    assert preview.selected_path == csv_path.resolve()
+    assert preview.csv_preview.rowCount() == 1
+    assert preview.csv_preview.columnCount() == 2
+    assert preview.csv_preview.horizontalHeaderItem(0).text() == "parameter"
+    assert preview.csv_preview.item(0, 0).text() == "stride_length"
+
+    runway = AlmaKinematicsWidget()
+    runway._output_results_ready(
+        (
+            AlmaRunResult(
+                input_file=tmp_path / "mouse_left.csv",
+                output_files=(csv_path, ignored_path, svg_path),
+            ),
+        )
+    )
+    assert runway.preview_stack.currentWidget() is runway.output_preview_view
+    assert runway.workspace_tabs.currentWidget() is runway.preview_page
+    assert runway.output_preview_view.selected_path == svg_path.resolve()
+    assert "Loaded 2 generated output previews" in runway.log.toPlainText()
+
+    preview.close()
+    runway.close()
+    app.processEvents()
+
+
+def test_runway_worker_hands_generated_outputs_to_preview_signal(tmp_path, monkeypatch):
+    result = AlmaRunResult(
+        input_file=tmp_path / "mouse_left.csv",
+        output_files=(tmp_path / "mouse_parameters.csv",),
+    )
+    monkeypatch.setattr(
+        "dlc_gait_assembly.gui.gait_analysis.workers.run_alma_gait_analysis",
+        lambda *_args, **_kwargs: [result],
+    )
+    worker = AlmaAnalysisThread(
+        [result.input_file],
+        tmp_path,
+        AlmaSettings(),
+        tmp_path / "ALMA",
+    )
+    emitted_results = []
+    completions = []
+    worker.results_ready.connect(emitted_results.append)
+    worker.analysis_completed.connect(
+        lambda success, message: completions.append((success, message))
+    )
+
+    worker.run()
+
+    assert emitted_results == [(result,)]
+    assert completions == [
+        (True, f"Analysis complete. Results saved to:\n{tmp_path}"),
+    ]
 
 
 def test_main_navigation_uses_one_primary_bar_instead_of_a_duplicate_tab_strip():

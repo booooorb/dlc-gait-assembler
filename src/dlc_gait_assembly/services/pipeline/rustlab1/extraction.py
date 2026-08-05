@@ -70,6 +70,33 @@ RUSTLAB1_FIGURE_FILENAMES = (
     "10_2_PLOT_horizontal_Angle_line.svg",
 )
 
+CUSTOM_SOP_PARAMETER_NAMES = (
+    "mean_hindlimb_base_support",
+    "variance_hindlimb_base_support",
+    "left_hindpaw_midline_distance",
+    "right_hindpaw_midline_distance",
+    "left_right_hindlimb_phase_offset",
+    "hindlimb_stance_overlap_fraction",
+    "left_mtp_average_height",
+    "left_mtp_vertical_excursion",
+    "right_mtp_average_height",
+    "right_mtp_vertical_excursion",
+    "left_knee_average_height",
+    "left_knee_vertical_excursion",
+    "right_knee_average_height",
+    "right_knee_vertical_excursion",
+)
+
+CUSTOM_SOP_MARKERS = (
+    "d-back-left",
+    "d-back-right",
+    "d-center-back",
+    "l-back-mtp",
+    "l-back-knee",
+    "r-back-mtp",
+    "r-back-knee",
+)
+
 
 @dataclass(frozen=True)
 class RustLab1Extraction:
@@ -78,6 +105,13 @@ class RustLab1Extraction:
     missing_markers: tuple[str, ...]
     pixels_per_cm: float | None
     calibration_source: str
+
+
+@dataclass(frozen=True)
+class CustomSopExtraction:
+    dataframe: object
+    available_parameters: tuple[str, ...]
+    missing_markers: tuple[str, ...]
 
 
 def extract_rustlab1_parameters(
@@ -162,6 +196,129 @@ def extract_rustlab1_parameters(
     available = tuple(name for name in RUSTLAB1_PARAMETER_NAMES if output[name].notna().any())
     missing = tuple(marker for marker in RUSTLAB1_MARKERS if marker not in present_markers)
     return RustLab1Extraction(output, available, missing, pixels_per_cm, calibration_source)
+
+
+def extract_custom_sop_parameters(
+    raw_dataframe,
+    alma_parameters,
+    settings,
+    kinematics,
+) -> CustomSopExtraction:
+    """Calculate the SOP's 14 custom measures on ALMA gait-cycle windows."""
+    import numpy as np
+
+    columns = coordinate_columns(raw_dataframe)
+    present_markers = {marker for marker, _coord in columns}
+    scalar_scale, _source = _resolve_pixels_per_cm(raw_dataframe, columns, settings)
+    bottom_x_scale = _configured_axis_scale(settings, "bottom", "x", scalar_scale)
+    bottom_y_scale = _configured_axis_scale(settings, "bottom", "y", scalar_scale)
+    side_y_scales = {
+        side: _configured_axis_scale(settings, side, "y", scalar_scale)
+        for side in ("left", "right")
+    }
+    required_series = {
+        marker: {
+            coord: filtered_series(raw_dataframe, columns, marker, coord, settings, kinematics)
+            for coord in ("x", "y")
+        }
+        for marker in CUSTOM_SOP_MARKERS
+        if (marker, "x") in columns or (marker, "y") in columns
+    }
+    left_stance = _stance_mask(
+        required_series,
+        "d-back-left",
+        bottom_x_scale,
+        bottom_y_scale,
+        settings,
+        np,
+    )
+    right_stance = _stance_mask(
+        required_series,
+        "d-back-right",
+        bottom_x_scale,
+        bottom_y_scale,
+        settings,
+        np,
+    )
+
+    cycle_keys = [
+        name
+        for name in ("limb (hind left / right)", "stride_start (frame)", "stride_end (frame)")
+        if name in alma_parameters.columns
+    ]
+    output = alma_parameters.loc[:, cycle_keys].copy().reset_index(drop=True)
+    output.insert(0, "gait_cycle", range(1, len(output) + 1))
+    for parameter in CUSTOM_SOP_PARAMETER_NAMES:
+        output[parameter] = np.nan
+
+    for row_index, parameter_row in alma_parameters.reset_index(drop=True).iterrows():
+        bounds = _cycle_bounds(parameter_row, len(raw_dataframe))
+        if bounds is None:
+            continue
+        start, end = bounds
+        cycle_slice = slice(start, end + 1)
+        duration = end - start + 1
+        left_cycle_stance = _mask_slice(left_stance, cycle_slice, duration, np)
+        right_cycle_stance = _mask_slice(right_stance, cycle_slice, duration, np)
+
+        left_x = _slice(required_series, "d-back-left", "x", cycle_slice)
+        left_y = _slice(required_series, "d-back-left", "y", cycle_slice)
+        right_x = _slice(required_series, "d-back-right", "x", cycle_slice)
+        right_y = _slice(required_series, "d-back-right", "y", cycle_slice)
+        center_x = _slice(required_series, "d-center-back", "x", cycle_slice)
+        center_y = _slice(required_series, "d-center-back", "y", cycle_slice)
+
+        if all(
+            value is not None
+            for value in (left_x, left_y, right_x, right_y, center_x, center_y)
+        ) and bottom_x_scale and bottom_y_scale:
+            bilateral = left_cycle_stance & right_cycle_stance
+            separation = np.sqrt(
+                ((left_x - right_x) / bottom_x_scale) ** 2
+                + ((left_y - right_y) / bottom_y_scale) ** 2
+            )
+            left_midline = np.sqrt(
+                ((left_x - center_x) / bottom_x_scale) ** 2
+                + ((left_y - center_y) / bottom_y_scale) ** 2
+            )
+            right_midline = np.sqrt(
+                ((right_x - center_x) / bottom_x_scale) ** 2
+                + ((right_y - center_y) / bottom_y_scale) ** 2
+            )
+            output.at[row_index, "mean_hindlimb_base_support"] = _masked_stat(
+                separation, bilateral, np.nanmean, np
+            )
+            output.at[row_index, "variance_hindlimb_base_support"] = _masked_variance(
+                separation, bilateral, np
+            )
+            output.at[row_index, "left_hindpaw_midline_distance"] = _masked_stat(
+                left_midline, left_cycle_stance, np.nanmean, np
+            )
+            output.at[row_index, "right_hindpaw_midline_distance"] = _masked_stat(
+                right_midline, right_cycle_stance, np.nanmean, np
+            )
+
+        right_onsets = np.flatnonzero(
+            right_cycle_stance & ~np.r_[False, right_cycle_stance[:-1]]
+        )
+        if len(right_onsets):
+            output.at[row_index, "left_right_hindlimb_phase_offset"] = (
+                100.0 * float(right_onsets[0]) / duration
+            )
+        output.at[row_index, "hindlimb_stance_overlap_fraction"] = (
+            100.0 * float(np.count_nonzero(left_cycle_stance & right_cycle_stance)) / duration
+        )
+
+        for side, prefix in (("left", "l"), ("right", "r")):
+            for bodypart in ("mtp", "knee"):
+                y = _slice(required_series, f"{prefix}-back-{bodypart}", "y", cycle_slice)
+                average, excursion = _height_metrics(y, side_y_scales[side], np)
+                output.at[row_index, f"{side}_{bodypart}_average_height"] = average
+                output.at[row_index, f"{side}_{bodypart}_vertical_excursion"] = excursion
+
+    available = tuple(name for name in CUSTOM_SOP_PARAMETER_NAMES if output[name].notna().any())
+    missing = tuple(marker for marker in CUSTOM_SOP_MARKERS if marker not in present_markers)
+    return CustomSopExtraction(output, available, missing)
 
 
 def coordinate_columns(dataframe) -> dict[tuple[str, str], object]:
@@ -335,3 +492,60 @@ def _safe_percentile(values, percentile, np) -> float:
         return np.nan
     return float(np.nanpercentile(values, percentile))
 
+
+def _configured_axis_scale(settings, view: str, axis: str, fallback):
+    configured = (settings.view_calibration or {}).get(view)
+    if isinstance(configured, (int, float)) and float(configured) > 0:
+        return float(configured)
+    if isinstance(configured, dict):
+        value = configured.get(f"{axis}_pixels_per_cm", configured.get("pixels_per_cm"))
+        if value and float(value) > 0:
+            return float(value)
+    return float(fallback) if fallback and float(fallback) > 0 else None
+
+
+def _stance_mask(series, marker, x_scale, y_scale, settings, np):
+    x = _slice(series, marker, "x", slice(None))
+    y = _slice(series, marker, "y", slice(None))
+    if x is None or y is None or not x_scale or not y_scale:
+        return None
+    dx = np.diff(x, prepend=np.nan) / float(x_scale)
+    dy = np.diff(y, prepend=np.nan) / float(y_scale)
+    speed = np.sqrt(dx**2 + dy**2) * float(settings.frame_rate)
+    stance = np.isfinite(speed) & (speed <= float(settings.swing_speed_threshold_cm_s))
+    if len(stance) > 1:
+        stance[0] = stance[1]
+    return stance
+
+
+def _mask_slice(mask, cycle_slice, duration: int, np):
+    if mask is None:
+        return np.zeros(duration, dtype=bool)
+    output = np.asarray(mask[cycle_slice], dtype=bool)
+    if len(output) == duration:
+        return output
+    padded = np.zeros(duration, dtype=bool)
+    padded[: min(duration, len(output))] = output[:duration]
+    return padded
+
+
+def _masked_stat(values, mask, function, np):
+    selected = np.asarray(values, dtype=float)[np.asarray(mask, dtype=bool)]
+    return _safe_stat(function, selected, np)
+
+
+def _masked_variance(values, mask, np):
+    selected = np.asarray(values, dtype=float)[np.asarray(mask, dtype=bool)]
+    selected = selected[np.isfinite(selected)]
+    return float(np.var(selected, ddof=1)) if len(selected) > 1 else np.nan
+
+
+def _height_metrics(values, pixels_per_cm, np):
+    if values is None or not pixels_per_cm or float(pixels_per_cm) <= 0:
+        return np.nan, np.nan
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if len(finite) == 0:
+        return np.nan, np.nan
+    height = (float(np.max(finite)) - finite) / float(pixels_per_cm)
+    return float(np.mean(height)), float(np.max(height) - np.min(height))

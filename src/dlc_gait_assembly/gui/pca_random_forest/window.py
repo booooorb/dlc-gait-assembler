@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -77,31 +81,58 @@ class PcaRandomForestWidget(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 24, 24, 24)
-        root.setSpacing(10)
-        title = QLabel("PCA, grouped random forest, and repeated-measures analysis")
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        header = QWidget()
+        header.setObjectName("WorkspaceHeader")
+        header.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(20, 18, 20, 14)
+        header_layout.setSpacing(5)
+        title = QLabel("PCA, random forest, and repeated-measures analysis")
         title.setObjectName("TitleLabel")
-        root.addWidget(title)
+        header_layout.addWidget(title)
         subtitle = QLabel(
             "Analyze synchronized *_session_summary.csv files. Splits are grouped by animal, "
             "and mixed-effects models use animal-level repeated measurements."
         )
         subtitle.setWordWrap(True)
         subtitle.setObjectName("MutedLabel")
-        root.addWidget(subtitle)
+        header_layout.addWidget(subtitle)
+        root.addWidget(header)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setObjectName("CohortAnalysisSplitter")
+        splitter.setChildrenCollapsible(False)
+        self.analysis_splitter = splitter
+        root.addWidget(splitter, 1)
+
+        controls = QWidget()
+        controls.setObjectName("WorkspaceSidebar")
+        controls.setMinimumWidth(390)
+        controls.setMaximumWidth(520)
+        controls_layout = QVBoxLayout(controls)
+        controls_layout.setContentsMargins(16, 16, 16, 16)
+        controls_layout.setSpacing(12)
 
         input_box = QGroupBox("Animal-session summaries")
         input_layout = QVBoxLayout(input_box)
         self.file_list = QListWidget()
-        self.file_list.setMinimumHeight(130)
+        self.file_list.setMinimumHeight(180)
         input_layout.addWidget(self.file_list)
         choose_button = QPushButton("Add session-summary CSVs")
         clear_button = QPushButton("Clear")
         choose_button.clicked.connect(self._choose_files)
         clear_button.clicked.connect(self._clear_files)
-        input_layout.addWidget(choose_button)
-        input_layout.addWidget(clear_button)
-        root.addWidget(input_box)
+        input_buttons = QHBoxLayout()
+        input_buttons.addWidget(choose_button, 1)
+        input_buttons.addWidget(clear_button)
+        input_layout.addLayout(input_buttons)
+        controls_layout.addWidget(input_box)
 
         settings_box = QGroupBox("Analysis")
         settings_layout = QGridLayout(settings_box)
@@ -119,25 +150,56 @@ class PcaRandomForestWidget(QWidget):
         settings_layout.addWidget(self.pca_checkbox, 0, 0, 1, 2)
         settings_layout.addWidget(self.random_forest_checkbox, 1, 0, 1, 2)
         settings_layout.addWidget(self.mixed_effects_checkbox, 2, 0, 1, 2)
-        settings_layout.addWidget(QLabel("Output folder"), 3, 0)
-        settings_layout.addWidget(self.output_edit, 3, 1)
-        settings_layout.addWidget(output_button, 3, 2)
-        root.addWidget(settings_box)
+        settings_layout.addWidget(QLabel("Output folder"), 3, 0, 1, 3)
+        settings_layout.addWidget(self.output_edit, 4, 0, 1, 2)
+        settings_layout.addWidget(output_button, 4, 2)
+        controls_layout.addWidget(settings_box)
 
         self.run_button = QPushButton("Run cohort analysis")
+        self.run_button.setObjectName("PrimaryButton")
         self.run_button.clicked.connect(self._run_analysis)
         set_tooltip(
             self.run_button,
             "Run redundancy control, PCA, grouped Random Forest, and repeated-measures models.",
         )
-        root.addWidget(self.run_button)
+        controls_layout.addWidget(self.run_button)
+        controls_layout.addStretch(1)
+
+        self.controls_scroll = QScrollArea()
+        self.controls_scroll.setObjectName("CohortControlsScroll")
+        self.controls_scroll.setWidgetResizable(True)
+        self.controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.controls_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.controls_scroll.setMinimumWidth(410)
+        self.controls_scroll.setMaximumWidth(540)
+        self.controls_scroll.setWidget(controls)
+        splitter.addWidget(self.controls_scroll)
+
+        results = QWidget()
+        results.setObjectName("WorkspaceCanvas")
+        results_layout = QVBoxLayout(results)
+        results_layout.setContentsMargins(18, 16, 18, 18)
+        results_layout.setSpacing(10)
+        results_title = QLabel("Analysis activity and results")
+        results_title.setObjectName("PreviewTitle")
+        results_layout.addWidget(results_title)
         self.status_label = QLabel("Add synchronized session summaries.")
         self.status_label.setObjectName("StatusLabel")
-        root.addWidget(self.status_label)
+        self.status_label.setWordWrap(True)
+        results_layout.addWidget(self.status_label)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(150)
-        root.addWidget(self.log, 1)
+        self.log.setMinimumSize(420, 280)
+        self.log.setPlaceholderText(
+            "Run messages and generated output paths will appear here."
+        )
+        results_layout.addWidget(self.log, 1)
+        splitter.addWidget(results)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([470, 760])
 
     def _choose_files(self) -> None:
         filenames, _ = QFileDialog.getOpenFileNames(
@@ -218,4 +280,16 @@ class PcaRandomForestWidget(QWidget):
             )
 
     def _apply_style(self) -> None:
-        self.setStyleSheet(theme.workspace_stylesheet("PcaRandomForestWidget"))
+        self.setStyleSheet(
+            theme.workspace_stylesheet(
+                "PcaRandomForestWidget",
+                """
+                QScrollArea#CohortControlsScroll,
+                QScrollArea#CohortControlsScroll > QWidget,
+                QScrollArea#CohortControlsScroll > QWidget > QWidget {
+                    border: 0;
+                    background: {theme.PANEL};
+                }
+                """,
+            )
+        )

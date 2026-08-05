@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
@@ -42,8 +43,9 @@ from dlc_gait_assembly.gui.gait_analysis.pairing import (
     path_name,
 )
 from dlc_gait_assembly.gui.gait_analysis.previews import (
+    OutputPreviewWidget,
     StickPlotPairPreviewWidget,
-    StickPlotPreviewDialog,
+    previewable_output_paths,
 )
 from dlc_gait_assembly.gui.gait_analysis.settings import (
     BOTTOM_VIEW_LABELS,
@@ -96,7 +98,7 @@ class AlmaKinematicsWidget(QWidget):
         self._manual_view_sets: list[AlmaViewCsvSet] | None = None
         self._worker: AlmaAnalysisThread | None = None
         self._preview_worker: StickPlotPreviewThread | None = None
-        self._large_stickplot_dialog: StickPlotPreviewDialog | None = None
+        self._output_preview_paths: tuple[Path, ...] = ()
         self._stickplot_preview_ready = False
         self._preview_invalidated_while_running = False
         self._preview_svg_data: tuple[tuple[str, bytes], ...] | None = None
@@ -151,7 +153,7 @@ class AlmaKinematicsWidget(QWidget):
 
         left_panel = QWidget()
         left_panel.setObjectName("WorkspaceSidebar")
-        left_panel.setMinimumWidth(440)
+        left_panel.setMinimumWidth(410)
         left_panel.setMaximumWidth(520)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(16, 16, 16, 16)
@@ -474,7 +476,15 @@ class AlmaKinematicsWidget(QWidget):
         self.continuous_strides_spin.setValue(self._defaults.n_continuous_strides)
         self.stickplot_checkbox = QCheckBox("Generate stickplot SVG")
         self.stickplot_checkbox.setChecked(True)
-        self.rustlab1_checkbox = QCheckBox("Generate RustLab1 parameters, merged CSV, and figures")
+        self.alma_representations_checkbox = QCheckBox(
+            "Generate ALMA summary tables and diagnostic figures"
+        )
+        self.alma_representations_checkbox.setChecked(
+            self._defaults.generate_alma_representations
+        )
+        self.rustlab1_checkbox = QCheckBox(
+            "Generate RustLab1 and custom SOP parameters, merged CSV, and figures"
+        )
         self.rustlab1_checkbox.setChecked(self._defaults.generate_rustlab1_parameters)
         self.stroke_analysis_checkbox = QCheckBox(
             "Generate synchronized stroke-pilot outputs (hindlimb-focused)"
@@ -483,13 +493,18 @@ class AlmaKinematicsWidget(QWidget):
         set_tooltip(self.continuous_strides_spin, "Number of continuous strides used for ALMA outputs.")
         set_tooltip(self.stickplot_checkbox, "Generate an SVG stickplot output.")
         set_tooltip(
+            self.alma_representations_checkbox,
+            "Write tidy and summary CSV tables plus eight ALMA timing, spatial, joint, trend, heatmap, correlation, variability, and drag figures.",
+        )
+        set_tooltip(
             self.rustlab1_checkbox,
-            "Calculate the SOP's 30 RustLab1 parameters and 18 runway SVG figures on ALMA gait cycles when multi-view labels are present.",
+            "Calculate 30 RustLab1 and 14 custom SOP parameters, merge them with ALMA cycles, and write 18 adapted runway SVG figures when multi-view labels are present.",
         )
         output_options_layout.addWidget(QLabel("Continuous strides"), 0, 0)
         output_options_layout.addWidget(self.continuous_strides_spin, 0, 1)
         output_options_layout.addWidget(self.stickplot_checkbox, 1, 0, 1, 2)
-        output_options_layout.addWidget(self.stroke_analysis_checkbox, 2, 0, 1, 2)
+        output_options_layout.addWidget(self.alma_representations_checkbox, 2, 0, 1, 2)
+        output_options_layout.addWidget(self.stroke_analysis_checkbox, 3, 0, 1, 2)
         output_tab_layout.addWidget(output_options_box)
 
         rustlab_box = QGroupBox("RustLab1 multi-view")
@@ -538,31 +553,56 @@ class AlmaKinematicsWidget(QWidget):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         right_layout.addWidget(self.progress)
-        right_layout.addWidget(file_box, 2)
+
+        self.workspace_tabs = QTabWidget()
+        self.workspace_tabs.setObjectName("RunwayWorkspaceTabs")
+        self.workspace_tabs.setDocumentMode(True)
+        self.workspace_tabs.tabBar().setExpanding(True)
+        right_layout.addWidget(self.workspace_tabs, 1)
+
+        self.inputs_page = QWidget()
+        inputs_layout = QVBoxLayout(self.inputs_page)
+        inputs_layout.setContentsMargins(8, 10, 8, 8)
+        inputs_layout.addWidget(file_box)
+        inputs_layout.addStretch(1)
+        self.workspace_tabs.addTab(self.inputs_page, "1. Inputs")
 
         self.preview_stack = QStackedWidget()
         self.preview_stack.setObjectName("StickPlotPreview")
-        self.preview_stack.setMinimumHeight(150)
-        self.preview_stack.setMaximumHeight(220)
+        self.preview_stack.setMinimumHeight(280)
         self.preview_placeholder = QLabel("Select left/right/bottom CSVs, then generate a stick-plot preview.")
         self.preview_placeholder.setAlignment(Qt.AlignCenter)
         self.preview_placeholder.setWordWrap(True)
         self.preview_placeholder.setObjectName("MutedLabel")
         self.stickplot_view = StickPlotPairPreviewWidget()
         self.stickplot_view.setObjectName("StickPlotPairPreview")
-        self.stickplot_view.setMinimumSize(320, 150)
+        self.stickplot_view.setMinimumSize(320, 260)
         self.stickplot_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        set_tooltip(self.stickplot_view, "Open a larger stick-plot preview.")
+        self.output_preview_view = OutputPreviewWidget(
+            max_csv_rows=7,
+            max_csv_columns=10,
+        )
+        self.output_preview_view.setObjectName("GaitOutputPreview")
         self.preview_stack.addWidget(self.preview_placeholder)
         self.preview_stack.addWidget(self.stickplot_view)
+        self.preview_stack.addWidget(self.output_preview_view)
         self.preview_stack.setCurrentWidget(self.preview_placeholder)
-        right_layout.addWidget(self.preview_stack, 1)
+
+        self.preview_page = QWidget()
+        preview_layout = QVBoxLayout(self.preview_page)
+        preview_layout.setContentsMargins(8, 10, 8, 8)
+        preview_layout.addWidget(self.preview_stack, 1)
+        self.workspace_tabs.addTab(self.preview_page, "2. Preview / results")
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(140)
-        self.log.setMaximumHeight(220)
-        right_layout.addWidget(self.log)
+        self.log.setMinimumHeight(280)
+        self.log.setPlaceholderText("Preview and analysis messages will appear here.")
+        self.log_page = QWidget()
+        log_layout = QVBoxLayout(self.log_page)
+        log_layout.setContentsMargins(8, 10, 8, 8)
+        log_layout.addWidget(self.log, 1)
+        self.workspace_tabs.addTab(self.log_page, "3. Run log")
 
         mapping_box = QGroupBox("Body part mapping")
         mapping_box.setMinimumHeight(220)
@@ -604,7 +644,39 @@ class AlmaKinematicsWidget(QWidget):
         mapping_tab_layout.addWidget(mapping_box)
         mapping_tab_layout.addStretch(1)
 
-        splitter.addWidget(left_panel)
+        left_layout.removeWidget(self.export_manifest_button)
+        left_layout.removeWidget(self.preview_button)
+        left_layout.removeWidget(self.run_button)
+
+        left_column = QWidget()
+        left_column.setObjectName("WorkspaceSidebar")
+        left_column.setMinimumWidth(430)
+        left_column.setMaximumWidth(540)
+        left_column_layout = QVBoxLayout(left_column)
+        left_column_layout.setContentsMargins(0, 0, 0, 0)
+        left_column_layout.setSpacing(0)
+
+        self.controls_scroll = QScrollArea()
+        self.controls_scroll.setObjectName("RunwayControlsScroll")
+        self.controls_scroll.setWidgetResizable(True)
+        self.controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.controls_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.controls_scroll.setWidget(left_panel)
+        left_column_layout.addWidget(self.controls_scroll, 1)
+
+        action_footer = QWidget()
+        action_footer.setObjectName("RunwayActionFooter")
+        action_layout = QVBoxLayout(action_footer)
+        action_layout.setContentsMargins(16, 8, 16, 16)
+        action_layout.setSpacing(8)
+        action_layout.addWidget(self.export_manifest_button)
+        action_layout.addWidget(self.preview_button)
+        action_layout.addWidget(self.run_button)
+        left_column_layout.addWidget(action_footer, 0)
+
+        splitter.addWidget(left_column)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -639,7 +711,6 @@ class AlmaKinematicsWidget(QWidget):
         self.load_fps_button.clicked.connect(self._load_frame_rate_from_video)
         self.import_calibration_map_button.clicked.connect(self._import_calibration_map)
         self.export_manifest_button.clicked.connect(self._export_analysis_manifest)
-        self.stickplot_view.double_clicked.connect(self._open_large_stickplot_preview)
         self.use_custom_mapping_checkbox.toggled.connect(self._update_mapping_enabled)
         self.reload_mapping_button.clicked.connect(self._load_bodypart_mapping_from_first_file)
         self.auto_mapping_button.clicked.connect(self._apply_auto_bodypart_mapping)
@@ -1170,11 +1241,14 @@ class AlmaKinematicsWidget(QWidget):
         self.status_label.setText(f"Generating stick-plot preview for {preview_names}...")
         self.preview_placeholder.setText(f"Generating ALMA stick plot for {preview_names}...")
         self.preview_stack.setCurrentWidget(self.preview_placeholder)
+        self.workspace_tabs.setCurrentWidget(self.preview_page)
 
         preview_settings = replace(
             settings,
             generate_stickplot=True,
+            generate_alma_representations=False,
             generate_rustlab1_parameters=False,
+            stroke_analysis_enabled=False,
         )
         self._preview_worker = StickPlotPreviewThread(
             preview_inputs,
@@ -1205,6 +1279,7 @@ class AlmaKinematicsWidget(QWidget):
             return
         self.stickplot_view.load_plots(plot_tuple)
         self.preview_stack.setCurrentWidget(self.stickplot_view)
+        self.workspace_tabs.setCurrentWidget(self.preview_page)
         self._stickplot_preview_ready = True
         self._preview_svg_data = plot_tuple
         self._preview_source_name = source_name
@@ -1213,23 +1288,6 @@ class AlmaKinematicsWidget(QWidget):
         animate_button_emphasis(self.preview_button, False)
         self.status_label.setText("Stick-plot preview ready. Review it, then run gait analysis.")
         self._append_log(f"Stick-plot preview generated from {source_name}.")
-
-    def _open_large_stickplot_preview(self) -> None:
-        if not self._preview_svg_data:
-            return
-        if self._large_stickplot_dialog is not None:
-            self._large_stickplot_dialog.raise_()
-            self._large_stickplot_dialog.activateWindow()
-            return
-
-        dialog = StickPlotPreviewDialog(self._preview_svg_data, self._preview_source_name, self)
-        self._large_stickplot_dialog = dialog
-        dialog.finished.connect(lambda _result: self._large_stickplot_dialog_closed(dialog))
-        dialog.show()
-
-    def _large_stickplot_dialog_closed(self, dialog: StickPlotPreviewDialog) -> None:
-        if self._large_stickplot_dialog is dialog:
-            self._large_stickplot_dialog = None
 
     def _stickplot_preview_failed(self, message: str) -> None:
         self._stickplot_preview_ready = False
@@ -1277,12 +1335,14 @@ class AlmaKinematicsWidget(QWidget):
         animate_button_emphasis(self.run_button, True)
         self.log.clear()
         self.status_label.setText("Running ALMA gait analysis...")
+        self.workspace_tabs.setCurrentWidget(self.log_page)
         self.run_button.setEnabled(False)
 
         analysis_inputs = self._view_sets if self._is_three_view_mode() else self._selected_files
         self._worker = AlmaAnalysisThread(analysis_inputs, output_folder, settings, self._alma_root)
         self._worker.progress_updated.connect(self._update_progress)
         self._worker.log_message.connect(self._append_log)
+        self._worker.results_ready.connect(self._output_results_ready)
         self._worker.analysis_completed.connect(self._analysis_completed)
         self._worker.finished.connect(self._worker_finished)
         self._worker.start()
@@ -1321,6 +1381,7 @@ class AlmaKinematicsWidget(QWidget):
             stride_length_max_cm=self.stride_length_max_spin.value(),
             n_continuous_strides=self.continuous_strides_spin.value(),
             generate_stickplot=self.stickplot_checkbox.isChecked(),
+            generate_alma_representations=self.alma_representations_checkbox.isChecked(),
             generate_rustlab1_parameters=self.rustlab1_checkbox.isChecked() and self._is_three_view_mode(),
             custom_bodypart_mapping=self._collect_bodypart_mapping(),
             view_bodypart_mapping=self._collect_view_bodypart_mapping(),
@@ -1447,7 +1508,10 @@ class AlmaKinematicsWidget(QWidget):
         self.log.append(text)
 
     def _analysis_completed(self, success: bool, message: str) -> None:
-        self.status_label.setText(message)
+        status_message = message
+        if success and self._output_preview_paths:
+            status_message += "\nPreview the generated figures and tables below."
+        self.status_label.setText(status_message)
         self.progress.set_active(False)
         self.progress.setValue(100 if success else self.progress.value())
         animate_button_emphasis(self.run_button, False)
@@ -1456,7 +1520,25 @@ class AlmaKinematicsWidget(QWidget):
             QMessageBox.information(self, "ALMA gait analysis complete", message)
         else:
             self.run_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
+            self.workspace_tabs.setCurrentWidget(self.log_page)
             QMessageBox.critical(self, "ALMA gait analysis failed", message)
+
+    def _output_results_ready(self, results) -> None:
+        output_files = (
+            output_file
+            for result in results
+            for output_file in getattr(result, "output_files", ())
+        )
+        self._output_preview_paths = previewable_output_paths(output_files)
+        if not self._output_preview_paths:
+            self._append_log("No SVG or CSV output previews were available.")
+            return
+        self.output_preview_view.load_paths(self._output_preview_paths)
+        self.preview_stack.setCurrentWidget(self.output_preview_view)
+        self.workspace_tabs.setCurrentWidget(self.preview_page)
+        self._append_log(
+            f"Loaded {len(self._output_preview_paths)} generated output previews."
+        )
 
     def _worker_finished(self) -> None:
         self._worker = None
@@ -1482,6 +1564,17 @@ class AlmaKinematicsWidget(QWidget):
             QTabWidget#RunwaySettingsTabs QTabBar::tab:selected {
                 background: {theme.SURFACE};
             }
+            QTabWidget#RunwayWorkspaceTabs::pane {
+                border: 1px solid {theme.BORDER};
+                background: {theme.SURFACE};
+            }
+            QTabWidget#RunwayWorkspaceTabs QTabBar::tab {
+                min-width: 120px;
+                padding: 8px 12px;
+            }
+            QTabWidget#RunwayWorkspaceTabs QTabBar::tab:selected {
+                background: {theme.SURFACE};
+            }
         """
         self.setStyleSheet(
             theme.workspace_stylesheet(
@@ -1493,9 +1586,18 @@ class AlmaKinematicsWidget(QWidget):
                 border-radius: 2px;
                 background: white;
             }
-            QSvgWidget#StickPlotSvg,
-            DoubleClickSvgWidget#StickPlotSvg {
+            QSvgWidget#StickPlotSvg {
                 background: white;
+            }
+            QScrollArea#RunwayControlsScroll,
+            QScrollArea#RunwayControlsScroll > QWidget,
+            QScrollArea#RunwayControlsScroll > QWidget > QWidget {
+                border: 0;
+                background: {theme.PANEL};
+            }
+            QWidget#RunwayActionFooter {
+                border-top: 1px solid {theme.BORDER};
+                background: {theme.PANEL};
             }
             """
             )

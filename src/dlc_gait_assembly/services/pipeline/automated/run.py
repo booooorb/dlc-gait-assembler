@@ -381,7 +381,9 @@ class AutomatedPipelineRun:
             replace(
                 settings,
                 generate_stickplot=True,
+                generate_alma_representations=False,
                 generate_rustlab1_parameters=False,
+                stroke_analysis_enabled=False,
             ),
             default_alma_root(self.project_root),
             progress_callback,

@@ -35,6 +35,10 @@ def _trajectory_with_known_events() -> pd.DataFrame:
     frame["right_y"] = 0.0
     frame["center_x"] = 1.0
     frame["center_y"] = 0.0
+    frame["left_mtp_y"] = np.tile(np.arange(10, dtype=float), 4)
+    frame["right_mtp_y"] = np.tile(np.arange(10, dtype=float), 4)
+    frame["left_knee_y"] = np.tile(np.arange(10, dtype=float) * 2.0, 4)
+    frame["right_knee_y"] = np.tile(np.arange(10, dtype=float) * 2.0, 4)
     return frame
 
 
@@ -95,6 +99,10 @@ def test_custom_stroke_features_have_known_geometry():
     assert features["variance_hindlimb_base_support"].tolist() == pytest.approx([0.0] * 3)
     assert features["left_hindpaw_midline_distance"].tolist() == pytest.approx([1.0] * 3)
     assert features["right_hindpaw_midline_distance"].tolist() == pytest.approx([2.0] * 3)
+    assert features["left_mtp_average_height"].tolist() == pytest.approx([4.5] * 3)
+    assert features["right_mtp_vertical_excursion"].tolist() == pytest.approx([9.0] * 3)
+    assert features["left_knee_average_height"].tolist() == pytest.approx([9.0] * 3)
+    assert features["right_knee_vertical_excursion"].tolist() == pytest.approx([18.0] * 3)
 
 
 def test_cycle_alignment_is_one_to_one_and_uses_frame_overlap():

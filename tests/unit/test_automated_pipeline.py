@@ -167,8 +167,11 @@ def test_automated_pipeline_hands_outputs_through_all_six_stages(tmp_path, monke
     assert len(result.analysis_outputs) == 2
     assert len(alma_calls) == 2
     assert alma_calls[0][1].generate_stickplot is True
+    assert alma_calls[0][1].generate_alma_representations is False
     assert alma_calls[0][1].generate_rustlab1_parameters is False
+    assert alma_calls[0][1].stroke_analysis_enabled is False
     assert alma_calls[1][1].generate_stickplot is False
+    assert alma_calls[1][1].generate_alma_representations is True
     assert len(run.review_artifacts(0).items) == 6
     assert len(run.review_artifacts(3).items) == 6
     assert len(run.review_artifacts(4).items) == 2
