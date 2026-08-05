@@ -117,6 +117,7 @@ class RunWorkspaceMixin:
 
     def _sync_video_actions(self) -> None:
         has_videos = bool(self._video_paths)
+        self.video_list.set_empty_action_visible(not has_videos)
         self.remove_videos_button.setEnabled(bool(self.video_list.selectedItems()))
         self.clear_videos_button.setEnabled(has_videos)
 

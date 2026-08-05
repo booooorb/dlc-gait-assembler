@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QPushButton,
     QSlider,
     QToolButton,
     QVBoxLayout,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.gui import theme
+from dlc_gait_assembly.gui.shared.icons import interface_icon
 from dlc_gait_assembly.gui.shared.svg import qt_safe_svg_bytes
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 
@@ -416,6 +418,32 @@ class VideoDropList(QListWidget):
         self.setDragDropMode(QListWidget.DropOnly)
         self.setMouseTracking(True)
         self.setProperty("dropActive", False)
+        self.add_videos_button = QPushButton("Add videos", self.viewport())
+        self.add_videos_button.setObjectName("AddVideosButton")
+        self.add_videos_button.setIcon(interface_icon("document", theme.PRIMARY_TEXT))
+        self.add_videos_button.setIconSize(QSize(16, 16))
+        self.add_videos_button.setToolTip(
+            "Add one or more source videos to the queue. Supported video files can also "
+            "be dragged into this area; adding a video does not modify it."
+        )
+        self._position_empty_action()
+
+    def set_empty_action_visible(self, visible: bool) -> None:
+        self.add_videos_button.setVisible(visible)
+        if visible:
+            self.add_videos_button.raise_()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._position_empty_action()
+
+    def _position_empty_action(self) -> None:
+        hint = self.add_videos_button.sizeHint()
+        width = max(126, hint.width())
+        height = max(38, hint.height())
+        x = max(8, (self.viewport().width() - width) // 2)
+        y = max(20, self.viewport().height() // 2 - 70)
+        self.add_videos_button.setGeometry(x, y, width, height)
 
     def leaveEvent(self, event) -> None:
         self.pointer_left.emit()
@@ -459,25 +487,7 @@ class VideoDropList(QListWidget):
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         bounds = self.viewport().rect()
-        center_x = bounds.center().x()
-        icon_center_y = bounds.center().y() - 48
-        painter.setPen(QPen(QColor(theme.BORDER), 1))
-        painter.setBrush(QColor(theme.PANEL))
-        painter.drawEllipse(center_x - 24, icon_center_y - 24, 48, 48)
-
-        icon_font = painter.font()
-        icon_font.setPointSizeF(max(20.0, icon_font.pointSizeF()))
-        icon_font.setBold(True)
-        painter.setFont(icon_font)
-        painter.setPen(QColor(theme.TOOL_1))
-        painter.drawText(
-            center_x - 24,
-            icon_center_y - 24,
-            48,
-            48,
-            Qt.AlignCenter,
-            "+",
-        )
+        action_bottom = self.add_videos_button.geometry().bottom()
 
         title_font = painter.font()
         title_font.setPointSizeF(14.0)
@@ -485,7 +495,7 @@ class VideoDropList(QListWidget):
         painter.setFont(title_font)
         painter.setPen(QColor(theme.TEXT))
         painter.drawText(
-            bounds.adjusted(24, icon_center_y + 36, -24, -24),
+            bounds.adjusted(24, action_bottom + 16, -24, -24),
             Qt.AlignHCenter | Qt.AlignTop,
             "Drop videos here",
         )
@@ -496,9 +506,9 @@ class VideoDropList(QListWidget):
         painter.setFont(helper_font)
         painter.setPen(QColor(theme.CONNECTOR))
         painter.drawText(
-            bounds.adjusted(44, icon_center_y + 62, -44, -20),
+            bounds.adjusted(44, action_bottom + 43, -44, -20),
             Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
-            "or choose Add videos",
+            "or drag files anywhere into this area",
         )
 
     def _set_drop_active(self, active: bool) -> None:

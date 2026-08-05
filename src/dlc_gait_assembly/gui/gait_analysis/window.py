@@ -1568,12 +1568,27 @@ class AlmaKinematicsWidget(QWidget):
                 border: 1px solid {theme.BORDER};
                 background: {theme.SURFACE};
             }
+            QTabWidget#RunwayWorkspaceTabs QTabBar {
+                background: {theme.PANEL};
+                border-bottom: 1px solid {theme.BORDER};
+            }
             QTabWidget#RunwayWorkspaceTabs QTabBar::tab {
+                background: {theme.PANEL};
+                color: {theme.CONNECTOR};
+                border: 0;
+                border-bottom: 3px solid transparent;
                 min-width: 120px;
                 padding: 8px 12px;
             }
+            QTabWidget#RunwayWorkspaceTabs QTabBar::tab:hover {
+                background: {theme.SOFT};
+                color: {theme.TEXT};
+            }
             QTabWidget#RunwayWorkspaceTabs QTabBar::tab:selected {
                 background: {theme.SURFACE};
+                color: {theme.TEXT};
+                border-bottom-color: {theme.TOOL_1};
+                font-weight: 700;
             }
         """
         self.setStyleSheet(

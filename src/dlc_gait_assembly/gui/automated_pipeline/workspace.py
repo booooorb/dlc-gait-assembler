@@ -166,13 +166,6 @@ class AutomatedPipelineProfilesWidget(
             "stages enabled when the profile was created."
         )
         selector_row.addWidget(self.profile_selector, 1)
-        self.duplicate_profile_button = QPushButton("Duplicate")
-        self.duplicate_profile_button.setObjectName("SmallProfileButton")
-        self.duplicate_profile_button.setToolTip(
-            "Copy the selected profile under a new name. The original profile and all "
-            "of its saved input files remain unchanged."
-        )
-        selector_row.addWidget(self.duplicate_profile_button)
         self.open_profile_configuration_button = QPushButton("Manage profiles")
         self.open_profile_configuration_button.setObjectName("OpenProfileConfigurationButton")
         self.open_profile_configuration_button.setToolTip(
@@ -211,13 +204,6 @@ class AutomatedPipelineProfilesWidget(
         self.video_count_label.setObjectName("VideoCountLabel")
         video_toolbar.addWidget(self.video_count_label)
         video_toolbar.addStretch(1)
-        self.upload_videos_button = QPushButton("Add videos")
-        self.upload_videos_button.setObjectName("AddVideosButton")
-        self.upload_videos_button.setToolTip(
-            "Add one or more source videos to the queue. Supported video files can also "
-            "be dragged into the list below; adding a video does not modify it."
-        )
-        video_toolbar.addWidget(self.upload_videos_button)
         self.remove_videos_button = QPushButton("Remove")
         self.remove_videos_button.setObjectName("RemoveButton")
         self.remove_videos_button.setEnabled(False)
@@ -235,6 +221,7 @@ class AutomatedPipelineProfilesWidget(
         video_layout.addLayout(video_toolbar)
         self.video_list = VideoDropList()
         self.video_list.setObjectName("AutomationVideoDropList")
+        self.upload_videos_button = self.video_list.add_videos_button
         self.video_list.setAccessibleDescription(
             "Drop source videos here or choose Add videos. Hover over a queued video to "
             "play a preview, or double-click to open the expanded preview."
@@ -378,6 +365,13 @@ class AutomatedPipelineProfilesWidget(
             "Load an existing profile into the form for inspection or editing."
         )
         management_layout.addWidget(self.configuration_profile_selector, 1)
+        self.duplicate_profile_button = QPushButton("Duplicate profile")
+        self.duplicate_profile_button.setObjectName("SmallProfileButton")
+        self.duplicate_profile_button.setToolTip(
+            "Copy the selected profile under a new name. The original profile and all "
+            "of its saved input files remain unchanged."
+        )
+        management_layout.addWidget(self.duplicate_profile_button)
         management_layout.addWidget(self._field_label("Name"))
         self.profile_name = QLineEdit()
         self.profile_name.setObjectName("ProfileNameInput")
@@ -827,7 +821,6 @@ class AutomatedPipelineProfilesWidget(
     def _apply_style(self) -> None:
         self.setStyleSheet(automated_pipeline_stylesheet())
         icon_specs = (
-            (self.upload_videos_button, "plus", theme.PRIMARY_TEXT),
             (self.remove_videos_button, "trash", theme.STATUS_ERROR),
             (self.clear_videos_button, "clear", theme.STATUS_ERROR),
             (self.open_profile_configuration_button, "stack", theme.PRIMARY_TEXT),

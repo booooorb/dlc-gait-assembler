@@ -272,9 +272,11 @@ def test_automation_menu_collects_supported_videos_without_running_pipeline(tmp_
     for path in (first_video, second_video, unsupported):
         path.write_bytes(b"fixture")
 
+    assert widget.upload_videos_button.isVisibleTo(widget.video_list)
     widget._add_video_paths([first_video, second_video, unsupported, first_video])
 
     assert widget.video_list.count() == 2
+    assert widget.upload_videos_button.isHidden()
     assert widget.video_count_label.text() == "2 videos"
     assert widget.video_hover_card.isHidden()
     assert widget.run_pipeline_button.isEnabled()
@@ -282,6 +284,8 @@ def test_automation_menu_collects_supported_videos_without_running_pipeline(tmp_
     widget.video_list.item(0).setSelected(True)
     widget._remove_selected_videos()
     assert widget.video_list.count() == 1
+    widget._clear_videos()
+    assert widget.upload_videos_button.isVisibleTo(widget.video_list)
     widget.close()
     app.processEvents()
 

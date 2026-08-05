@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QAbstractAnimation, QPoint, QSettings, Qt
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QTabWidget, QWidget
@@ -249,25 +249,101 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert window._active_tool_id is None
     assert window._manual_tools_button.parentWidget() is not window._primary_navigation
     assert window._manual_stage_frame.isHidden()
-    window._manual_tools_button.click()
+    assert window._primary_navigation_highlight.isHidden()
+
+    def highlight_target(button):
+        top_left = button.mapTo(window._primary_row, QPoint(0, 0))
+        return button.rect().translated(top_left)
+
+    window._automation_run_button.click()
     app.processEvents()
+    assert window._primary_navigation_highlight.isVisible()
+    assert window._primary_navigation_highlight.geometry() == highlight_target(
+        window._automation_run_button
+    )
+    assert window._primary_navigation_highlight.property("navigationRole") == "automated"
+
+    window._automation_profiles_button.click()
+    assert (
+        window._primary_navigation_animation.state()
+        == QAbstractAnimation.State.Running
+    )
+    QTest.qWait(280)
+    assert window._primary_navigation_highlight.geometry() == highlight_target(
+        window._automation_profiles_button
+    )
+    assert window._primary_navigation_highlight.property("navigationRole") == "profiles"
+
+    manual_x_before_expansion = window._manual_tools_button.mapTo(
+        window._primary_row, QPoint(0, 0)
+    ).x()
+    window._manual_tools_button.click()
+    assert (
+        window._primary_navigation_animation.state()
+        == QAbstractAnimation.State.Running
+    )
+    assert (
+        window._manual_stage_animation.state()
+        == QAbstractAnimation.State.Running
+    )
+    initial_stage_width = window._manual_stage_frame.width()
+    QTest.qWait(90)
+    assert window._manual_stage_frame.width() > initial_stage_width
+    QTest.qWait(190)
+    assert window._primary_navigation_highlight.geometry() == highlight_target(
+        window._manual_tools_button
+    )
+    assert window._primary_navigation_highlight.property("navigationRole") == "manual"
     assert window._manual_tools_button.text() == "Manual"
+    manual_x_after_expansion = window._manual_tools_button.mapTo(
+        window._primary_row, QPoint(0, 0)
+    ).x()
+    assert abs(manual_x_after_expansion - manual_x_before_expansion) <= 1
     assert not window._manual_stage_frame.isHidden()
-    assert window._toolbar.height() == 116
+    assert window._toolbar.height() == 64
+    assert window._manual_stage_frame.parentWidget() is window._primary_row
+    manual_right = window._manual_tools_button.mapTo(
+        window._shell, window._manual_tools_button.rect().topRight()
+    ).x()
+    stage_left = window._manual_stage_frame.mapTo(
+        window._shell, window._manual_stage_frame.rect().topLeft()
+    ).x()
+    assert stage_left >= manual_right
+    assert window._manual_stage_frame.y() < window._toolbar.height()
     assert [button.text() for button in window._manual_stage_buttons.values()] == [
         "Calibration",
-        "Video processing",
+        "Video\nprocessing",
         "DeepLabCut",
-        "Knee correction",
-        "Gait analysis",
-        "PCA + random forest",
+        "Knee\ncorrection",
+        "Gait\nanalysis",
+        "PCA + random\nforest",
     ]
-    assert all(button.width() >= 130 for button in window._manual_stage_buttons.values())
+    assert [
+        label.text()
+        for label in window._manual_stage_frame.findChildren(
+            QLabel, "ManualStageSeparator"
+        )
+    ] == [">", ">", ">", ">", ">"]
+    stage_buttons = list(window._manual_stage_buttons.values())
+    assert len({button.y() for button in stage_buttons}) == 1
+    assert all(button.width() >= 28 for button in stage_buttons)
+    assert window._manual_stage_frame.width() <= 420
+    assert [button.x() for button in stage_buttons] == sorted(
+        button.x() for button in stage_buttons
+    )
+    assert window._manual_stage_animation.duration() == 260
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.workspace_page
     assert window._manual_tools_button.property("activeManual") is True
 
+    window._manual_stage_buttons["manual_calibration"].click()
+    QTest.qWait(300)
+    assert not window._manual_stage_frame.isHidden()
+    assert window._active_tool_id == "manual_calibration"
+    assert window._toolbar.height() == 64
+
     window._automation_profiles_button.click()
+    QTest.qWait(300)
     assert window._main_menu.automated_profiles.workspace_stack.currentWidget() is (
         window._main_menu.automated_profiles.configuration_page
     )
@@ -280,6 +356,7 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert window._manual_tools_button.property("activeManual") is True
     assert window._active_tool_id is None
     window._home_button.click()
+    QTest.qWait(300)
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
     assert window._home_button.property("activeNavigation") is True
     assert window._manual_stage_frame.isHidden()
@@ -297,6 +374,12 @@ def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path
     assert widget.run_status_bar.objectName() == "RunStatusBar"
     assert widget.upload_videos_button.text() == "Add videos"
     assert not widget.upload_videos_button.icon().isNull()
+    assert widget.upload_videos_button.parent() is widget.video_list.viewport()
+    assert widget.upload_videos_button.isVisibleTo(widget.video_list)
+    assert (
+        widget.duplicate_profile_button.parentWidget().objectName()
+        == "ProfileManagementPanel"
+    )
     assert not widget.remove_videos_button.icon().isNull()
     assert not widget.clear_videos_button.icon().isNull()
     assert not widget.open_profile_configuration_button.icon().isNull()
@@ -336,7 +419,8 @@ def test_navigation_does_not_override_the_user_window_size():
     chosen_size = window.size()
     window._show_main_menu()
     app.processEvents()
-    assert window._toolbar.height() == 116
+    assert window._toolbar.height() == 64
+    assert window._manual_stage_frame.isVisible()
     assert window.minimumSizeHint().width() <= window.minimumWidth()
     window._show_home_menu()
     app.processEvents()
@@ -558,6 +642,31 @@ def test_runway_light_mode_has_a_distinct_settings_tab_strip():
         assert "QTabWidget#RunwaySettingsTabs QTabBar::tab" in stylesheet
         assert f"background: {theme.PANEL};" in stylesheet
         assert f"background: {theme.SURFACE};" in stylesheet
+    finally:
+        if runway is not None:
+            runway.close()
+        theme.set_dark_mode(previous_mode)
+        app.setPalette(theme.application_palette())
+        app.setStyleSheet(theme.application_stylesheet())
+
+
+def test_gait_workspace_tabs_use_explicit_dark_mode_contrast():
+    app = QApplication.instance() or QApplication([])
+    previous_mode = theme.IS_DARK
+    runway = None
+    try:
+        theme.set_dark_mode(True)
+        app.setPalette(theme.application_palette())
+        app.setStyleSheet(theme.application_stylesheet())
+        runway = AlmaKinematicsWidget()
+        stylesheet = runway.styleSheet()
+
+        assert "QTabWidget#RunwayWorkspaceTabs QTabBar::tab" in stylesheet
+        assert f"background: {theme.PANEL};" in stylesheet
+        assert f"color: {theme.CONNECTOR};" in stylesheet
+        assert f"background: {theme.SURFACE};" in stylesheet
+        assert f"color: {theme.TEXT};" in stylesheet
+        assert f"border-bottom-color: {theme.TOOL_1};" in stylesheet
     finally:
         if runway is not None:
             runway.close()
