@@ -12,7 +12,15 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QAbstractAnimation, QPoint, QSettings, Qt
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QTabWidget, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QTabWidget,
+    QWidget,
+)
 
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.app import (
@@ -300,6 +308,7 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     ).x()
     assert abs(manual_x_after_expansion - manual_x_before_expansion) <= 1
     assert not window._manual_stage_frame.isHidden()
+    assert window._partner_marks.isHidden()
     assert window._toolbar.height() == 64
     assert window._manual_stage_frame.parentWidget() is window._primary_row
     manual_right = window._manual_tools_button.mapTo(
@@ -327,7 +336,7 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     stage_buttons = list(window._manual_stage_buttons.values())
     assert len({button.y() for button in stage_buttons}) == 1
     assert all(button.width() >= 28 for button in stage_buttons)
-    assert window._manual_stage_frame.width() <= 420
+    assert window._manual_stage_frame.width() <= 500
     assert [button.x() for button in stage_buttons] == sorted(
         button.x() for button in stage_buttons
     )
@@ -335,6 +344,12 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.workspace_page
     assert window._manual_tools_button.property("activeManual") is True
+    workflow_cards = window._main_menu.workspace_page.findChildren(
+        QFrame, "WorkflowStep"
+    )
+    assert len(workflow_cards) == 6
+    assert len({card.x() for card in workflow_cards}) == 3
+    assert len({card.y() for card in workflow_cards}) == 2
 
     window._manual_stage_buttons["manual_calibration"].click()
     QTest.qWait(300)
@@ -349,6 +364,7 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     )
     assert window._automation_profiles_button.property("activeNavigation") is True
     assert window._manual_stage_frame.isHidden()
+    assert window._partner_marks.isVisible()
     assert window._toolbar.height() == 64
 
     window._manual_tools_button.click()

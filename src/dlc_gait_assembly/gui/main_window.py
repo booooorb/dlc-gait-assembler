@@ -29,6 +29,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -557,10 +558,11 @@ class MainWindow(QMainWindow):
                 QPushButton#ManualStageButton {
                     background: transparent;
                     border: 0;
+                    border-bottom: 2px solid transparent;
                     border-radius: 0;
                     color: {theme.CONNECTOR};
-                    font-size: 9px;
-                    font-weight: 650;
+                    font-size: 10px;
+                    font-weight: 600;
                     min-height: 40px;
                     max-height: 40px;
                     padding: 0 1px;
@@ -568,18 +570,20 @@ class MainWindow(QMainWindow):
                 QPushButton#ManualStageButton:hover {
                     background: transparent;
                     color: {theme.TEXT};
+                    border-bottom-color: {theme.BORDER};
                 }
                 QPushButton#ManualStageButton[activeStage="true"] {
                     background: transparent;
                     color: {theme.TOOL_3};
+                    border-bottom-color: {theme.TOOL_3};
                     font-weight: 700;
                 }
                 QLabel#ManualStageSeparator {
                     background: transparent;
                     border: 0;
-                    color: {theme.TOOL_3};
-                    font-size: 14px;
-                    font-weight: 700;
+                    color: {theme.BORDER};
+                    font-size: 13px;
+                    font-weight: 600;
                     padding: 0 1px;
                 }
                 QToolButton#SettingsButton {
@@ -696,6 +700,8 @@ class MainWindow(QMainWindow):
         animation = self._manual_stage_animation
         animation.stop()
         if expanded:
+            self._partner_marks.hide()
+            self._primary_layout.activate()
             target = self._manual_stage_target_geometry()
             start = QRect(target.x(), target.y(), 0, target.height())
             self._manual_stage_frame.setGeometry(start)
@@ -719,7 +725,7 @@ class MainWindow(QMainWindow):
         settings_left = self._settings_button.mapTo(
             self._primary_row, self._settings_button.rect().topLeft()
         ).x()
-        width = min(420, max(0, settings_left - x - 12))
+        width = min(500, max(0, settings_left - x - 12))
         height = 50
         return QRect(x, (APP_TOOLBAR_HEIGHT - height) // 2, width, height)
 
@@ -736,6 +742,7 @@ class MainWindow(QMainWindow):
                 self._snap_primary_navigation_highlight()
             return
         self._manual_stage_frame.hide()
+        self._partner_marks.show()
 
     def _manual_navigation_clicked(self) -> None:
         manual_active = not self._home_menu_active and not self._automation_menu_active
@@ -1015,8 +1022,8 @@ class MainMenuWidget(QWidget):
         home_page = QWidget()
         home_page.setObjectName("PipelineHomePage")
         home_layout = QVBoxLayout(home_page)
-        home_layout.setContentsMargins(24, 24, 24, 24)
-        home_layout.setSpacing(12)
+        home_layout.setContentsMargins(40, 36, 40, 36)
+        home_layout.setSpacing(10)
         home_layout.addStretch(1)
 
         home_eyebrow = QLabel("PIPELINE WORKSPACE")
@@ -1061,7 +1068,7 @@ class MainMenuWidget(QWidget):
         choices.addWidget(manual_card, 1)
         home_layout.addLayout(choices)
 
-        home_layout.addStretch(2)
+        home_layout.addStretch(1)
         self.automated_choice_button = automated_button
         self.manual_choice_button = manual_button
         self.home_page = home_page
@@ -1071,7 +1078,7 @@ class MainMenuWidget(QWidget):
         workspace_page.setObjectName("PipelineWorkspacePage")
         workspace_layout = QVBoxLayout(workspace_page)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
-        workspace_layout.setSpacing(16)
+        workspace_layout.setSpacing(10)
 
         section_title = QLabel("Manual pipeline")
         section_title.setObjectName("WorkflowTitle")
@@ -1088,7 +1095,7 @@ class MainMenuWidget(QWidget):
         manual_page = QWidget()
         manual_page.setObjectName("ManualPipelinePage")
         manual_layout = QVBoxLayout(manual_page)
-        manual_layout.setContentsMargins(0, 8, 0, 0)
+        manual_layout.setContentsMargins(0, 4, 0, 0)
         manual_layout.addWidget(self._workflow_list(self._tools, connect_tools=True))
         pipeline_tabs.addTab(manual_page, "Manual pipeline")
 
@@ -1134,8 +1141,8 @@ class MainMenuWidget(QWidget):
         card.setObjectName("PipelineChoiceCard")
         card.setProperty("pipelineRole", role)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(8)
 
         type_label = QLabel(eyebrow)
         type_label.setObjectName("PipelineChoiceType")
@@ -1176,20 +1183,18 @@ class MainMenuWidget(QWidget):
     def _workflow_list(self, tools: list[ToolSpec], connect_tools: bool) -> QFrame:
         workflow_list = QFrame()
         workflow_list.setObjectName("WorkflowList")
-        list_layout = QVBoxLayout(workflow_list)
+        workflow_list.setFixedHeight(274)
+        list_layout = QGridLayout(workflow_list)
         list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.setSpacing(0)
+        list_layout.setHorizontalSpacing(10)
+        list_layout.setVerticalSpacing(10)
 
         for index, spec in enumerate(tools):
             step = WorkflowStep(index + 1, spec)
             if connect_tools and spec.enabled:
                 step.clicked.connect(self.tool_requested.emit)
-            list_layout.addWidget(step)
-            if index < len(tools) - 1:
-                separator = QFrame()
-                separator.setObjectName("WorkflowSeparator")
-                separator.setFrameShape(QFrame.HLine)
-                list_layout.addWidget(separator)
+            list_layout.addWidget(step, index // 3, index % 3)
+            list_layout.setColumnStretch(index % 3, 1)
         return workflow_list
 
     def _apply_style(self) -> None:
@@ -1236,20 +1241,22 @@ class MainMenuWidget(QWidget):
             }
             QLabel#HomeTitle {
                 color: {theme.TEXT};
-                font-size: 28px;
+                font-size: 25px;
                 font-weight: 750;
             }
             QLabel#HomeDescription {
                 color: {theme.CONNECTOR};
-                font-size: 14px;
-                max-width: 760px;
-                padding-bottom: 10px;
+                font-size: 13px;
+                max-width: 700px;
+                padding-bottom: 6px;
             }
             QFrame#PipelineChoiceCard {
                 background: {theme.SURFACE};
-                border: 2px solid {theme.BORDER};
-                border-radius: 8px;
-                min-height: 220px;
+                border: 1px solid {theme.BORDER};
+                border-top: 3px solid {theme.BORDER};
+                border-radius: 6px;
+                min-height: 160px;
+                max-height: 180px;
             }
             QFrame#PipelineChoiceCard[pipelineRole="automated"] {
                 border-color: {theme.TOOL_1};
@@ -1269,7 +1276,7 @@ class MainMenuWidget(QWidget):
             }
             QLabel#PipelineChoiceTitle {
                 color: {theme.TEXT};
-                font-size: 20px;
+                font-size: 18px;
                 font-weight: 700;
             }
             QLabel#PipelineChoiceDescription {
@@ -1311,35 +1318,40 @@ class MainMenuWidget(QWidget):
                 background: transparent;
             }
             QFrame#WorkflowList {
-                background: {theme.SURFACE};
-                border: 0;
-                border-top: 1px solid {theme.BORDER};
-                border-bottom: 1px solid {theme.BORDER};
-                border-radius: 0;
-            }
-            QFrame#WorkflowStep {
                 background: transparent;
                 border: 0;
             }
+            QFrame#WorkflowStep {
+                background: {theme.SURFACE};
+                border: 1px solid {theme.BORDER};
+                border-radius: 6px;
+            }
             QFrame#WorkflowStep[enabledStep="true"]:hover {
                 background: {theme.PANEL};
+                border-color: {theme.TOOL_3};
             }
             QFrame#WorkflowStep[enabledStep="false"] {
                 background: {theme.BACKGROUND};
             }
             QLabel#StepIndex {
-                color: {theme.CONNECTOR};
-                font-size: 13px;
-                font-weight: 600;
-                min-width: 28px;
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+                border-radius: 12px;
+                color: {theme.TOOL_3};
+                font-size: 11px;
+                font-weight: 750;
+                min-width: 24px;
+                max-width: 24px;
+                min-height: 24px;
+                max-height: 24px;
             }
             QLabel#StepIndex[enabledStep="false"] {
                 color: {theme.BORDER};
             }
             QLabel#StepTitle {
                 color: {theme.TEXT};
-                font-size: 15px;
-                font-weight: 600;
+                font-size: 14px;
+                font-weight: 700;
             }
             QLabel#StepTitle[enabledStep="false"] {
                 color: {theme.CONNECTOR};
@@ -1352,17 +1364,16 @@ class MainMenuWidget(QWidget):
                 color: {theme.BORDER};
             }
             QPushButton#OpenToolButton {
-                background: {theme.SURFACE};
-                border: 1px solid {theme.BORDER};
-                border-radius: 3px;
-                color: {theme.TEXT};
-                min-width: 60px;
-                padding: 6px 12px;
+                background: transparent;
+                border: 0;
+                color: {theme.TOOL_3};
+                font-weight: 700;
+                min-width: 54px;
+                padding: 4px 0;
             }
             QPushButton#OpenToolButton:hover {
-                background: {theme.PRIMARY};
-                border-color: {theme.PRIMARY};
-                color: {theme.PRIMARY_TEXT};
+                background: transparent;
+                color: {theme.TEXT};
             }
             QPushButton#OpenToolButton:disabled {
                 background: {theme.BACKGROUND};
@@ -1475,7 +1486,7 @@ class WorkflowStep(QFrame):
         self.setObjectName("WorkflowStep")
         self.setProperty("enabledStep", spec.enabled)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setFixedHeight(WORKFLOW_ROW_HEIGHT)
+        self.setFixedHeight(132)
         if spec.enabled:
             self.setCursor(Qt.PointingHandCursor)
             if spec.description:
@@ -1485,44 +1496,41 @@ class WorkflowStep(QFrame):
         self._build_ui(index, spec)
 
     def _build_ui(self, index: int, spec: ToolSpec) -> None:
-        root = QHBoxLayout(self)
-        root.setContentsMargins(16, 12, 16, 12)
-        root.setSpacing(16)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 12)
+        root.setSpacing(8)
+
+        heading = QHBoxLayout()
+        heading.setSpacing(10)
 
         number = QLabel(str(index))
         number.setObjectName("StepIndex")
         number.setProperty("enabledStep", spec.enabled)
-        number.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        number.setAlignment(Qt.AlignCenter)
         number.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        root.addWidget(number)
-
-        text_block = QWidget()
-        text_block.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        text_layout = QVBoxLayout(text_block)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(4)
+        heading.addWidget(number)
 
         title = QLabel(spec.label)
         title.setObjectName("StepTitle")
         title.setProperty("enabledStep", spec.enabled)
         title.setWordWrap(True)
         title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        text_layout.addWidget(title)
+        heading.addWidget(title, 1)
+        root.addLayout(heading)
 
         description = QLabel(spec.description)
         description.setObjectName("StepDescription")
         description.setProperty("enabledStep", spec.enabled)
         description.setWordWrap(True)
         description.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        text_layout.addWidget(description)
-        root.addWidget(text_block, 1)
+        root.addWidget(description, 1)
 
-        open_button = QPushButton("Open" if spec.enabled else "Unavailable")
+        open_button = QPushButton("Open  →" if spec.enabled else "Unavailable")
         open_button.setObjectName("OpenToolButton")
         open_button.setEnabled(spec.enabled)
         if spec.enabled:
             open_button.clicked.connect(lambda: self.clicked.emit(spec.id))
-        root.addWidget(open_button, 0, Qt.AlignVCenter)
+        root.addWidget(open_button, 0, Qt.AlignRight)
 
     def mouseReleaseEvent(self, event) -> None:
         if self._spec.enabled and event.button() == Qt.LeftButton and self.rect().contains(event.pos()):
