@@ -58,6 +58,9 @@ def interface_icon(name: str, color: str, *, size: int = 18) -> QIcon:
         painter.drawLine(QPointF(10.8, 5.4), QPointF(14.0, 5.4))
         painter.drawLine(QPointF(6.5, 9.0), QPointF(11.5, 9.0))
         painter.drawLine(QPointF(6.5, 12.0), QPointF(11.5, 12.0))
+    elif name == "copy":
+        painter.drawRoundedRect(QRectF(5.3, 3.0, 9.5, 11.5), 1.2, 1.2)
+        painter.drawRoundedRect(QRectF(2.7, 5.5, 9.5, 10.0), 1.2, 1.2)
     elif name == "folder":
         path = QPainterPath()
         path.moveTo(2.2, 5.0)
@@ -68,6 +71,62 @@ def interface_icon(name: str, color: str, *, size: int = 18) -> QIcon:
         path.lineTo(3.4, 14.7)
         path.closeSubpath()
         painter.drawPath(path)
+    elif name == "ladder":
+        painter.drawLine(QPointF(4.0, 2.0), QPointF(4.0, 16.0))
+        painter.drawLine(QPointF(14.0, 2.0), QPointF(14.0, 16.0))
+        for y in (4.0, 7.3, 10.7, 14.0):
+            painter.drawLine(QPointF(4.0, y), QPointF(14.0, y))
+    elif name == "database":
+        painter.drawEllipse(QRectF(3.0, 2.5, 12.0, 4.5))
+        painter.drawArc(QRectF(3.0, 6.0, 12.0, 4.5), 180 * 16, 180 * 16)
+        painter.drawArc(QRectF(3.0, 10.0, 12.0, 4.5), 180 * 16, 180 * 16)
+        painter.drawLine(QPointF(3.0, 4.7), QPointF(3.0, 12.2))
+        painter.drawLine(QPointF(15.0, 4.7), QPointF(15.0, 12.2))
+    elif name == "calibration-grid":
+        painter.drawRect(QRectF(2.5, 2.5, 13.0, 13.0))
+        for row in range(3):
+            for column in range(3):
+                if (row + column) % 2 == 0:
+                    painter.fillRect(QRectF(2.5 + column * 4.33, 2.5 + row * 4.33, 4.33, 4.33), accent)
+    elif name == "film":
+        painter.drawRoundedRect(QRectF(2.0, 3.0, 14.0, 12.0), 1.0, 1.0)
+        painter.drawLine(QPointF(5.0, 3.0), QPointF(5.0, 15.0))
+        painter.drawLine(QPointF(13.0, 3.0), QPointF(13.0, 15.0))
+        for y in (5.0, 9.0, 13.0):
+            painter.drawPoint(QPointF(3.5, y))
+            painter.drawPoint(QPointF(14.5, y))
+        path = QPainterPath()
+        path.moveTo(7.2, 6.2)
+        path.lineTo(11.5, 9.0)
+        path.lineTo(7.2, 11.8)
+        path.closeSubpath()
+        painter.fillPath(path, accent)
+    elif name == "joints":
+        points = (QPointF(4.0, 14.0), QPointF(7.0, 8.5), QPointF(10.5, 3.5), QPointF(14.0, 6.5))
+        painter.drawPolyline(points)
+        painter.setBrush(accent)
+        for point in points:
+            painter.drawEllipse(point, 1.7, 1.7)
+    elif name == "knee":
+        painter.drawLine(QPointF(7.0, 2.5), QPointF(7.0, 7.0))
+        painter.drawLine(QPointF(7.0, 7.0), QPointF(11.5, 10.0))
+        painter.drawLine(QPointF(11.5, 10.0), QPointF(9.5, 15.5))
+        painter.drawEllipse(QPointF(7.0, 7.0), 2.1, 2.1)
+        painter.drawArc(QRectF(8.5, 7.0, 6.0, 6.0), 70 * 16, 150 * 16)
+    elif name == "gait":
+        painter.drawEllipse(QPointF(10.5, 3.0), 1.7, 1.7)
+        painter.drawLine(QPointF(9.5, 5.0), QPointF(7.5, 9.5))
+        painter.drawLine(QPointF(7.5, 9.5), QPointF(4.0, 14.5))
+        painter.drawLine(QPointF(7.5, 9.5), QPointF(12.5, 14.0))
+        painter.drawLine(QPointF(8.8, 6.5), QPointF(13.5, 8.5))
+    elif name == "chart":
+        painter.setBrush(accent)
+        for x, y in ((3.5, 5.0), (6.5, 10.0), (9.5, 6.5), (12.5, 4.0)):
+            painter.drawEllipse(QPointF(x, y), 1.2, 1.2)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(QPointF(9.0, 15.0), QPointF(15.5, 15.0))
+        painter.drawLine(QPointF(9.0, 15.0), QPointF(9.0, 9.0))
+        painter.drawPolyline((QPointF(10.0, 13.5), QPointF(12.0, 11.5), QPointF(13.5, 12.0), QPointF(15.2, 8.5)))
     elif name == "play":
         painter.drawEllipse(QRectF(1.9, 1.9, 14.2, 14.2))
         path = QPainterPath()
@@ -90,14 +149,16 @@ def interface_icon(name: str, color: str, *, size: int = 18) -> QIcon:
         painter.drawLine(QPointF(12.3, 8.7), QPointF(9.0, 12.0))
     elif name == "stack":
         for top, inset in ((2.4, 0.0), (6.4, 0.8), (10.4, 1.6)):
-            painter.drawRoundedRect(
-                QRectF(2.4 + inset, top, 13.2 - inset * 2, 4.2), 1.2, 1.2
-            )
+            painter.drawRoundedRect(QRectF(2.4 + inset, top, 13.2 - inset * 2, 4.2), 1.2, 1.2)
     elif name == "external":
         painter.drawRoundedRect(QRectF(2.5, 5.0, 10.5, 10.5), 1.2, 1.2)
         painter.drawLine(QPointF(8.2, 9.8), QPointF(15.0, 3.0))
         painter.drawLine(QPointF(10.2, 3.0), QPointF(15.0, 3.0))
         painter.drawLine(QPointF(15.0, 3.0), QPointF(15.0, 7.8))
+    elif name == "arrow-left":
+        painter.drawLine(QPointF(15.0, 9.0), QPointF(3.2, 9.0))
+        painter.drawLine(QPointF(3.2, 9.0), QPointF(8.0, 4.2))
+        painter.drawLine(QPointF(3.2, 9.0), QPointF(8.0, 13.8))
     elif name == "sliders":
         for y, knob_x in ((4.0, 6.0), (9.0, 12.0), (14.0, 8.5)):
             painter.drawLine(QPointF(2.5, y), QPointF(15.5, y))

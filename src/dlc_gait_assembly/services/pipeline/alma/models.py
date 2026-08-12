@@ -47,6 +47,7 @@ class AlmaSettings:
     swing_speed_threshold_cm_s: float = 10.0
     minimum_synchronized_cycles: int = 5
     view_calibration: dict[str, object] | None = None
+    enabled_parameter_names: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)

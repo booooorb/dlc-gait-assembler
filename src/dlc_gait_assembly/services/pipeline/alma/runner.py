@@ -24,16 +24,19 @@ from dlc_gait_assembly.services.pipeline.alma.multiview import (
 from dlc_gait_assembly.services.pipeline.alma.representations import (
     generate_alma_representations,
 )
+from dlc_gait_assembly.services.pipeline.gait_parameter_catalog import ALMA_PARAMETER_NAMES
 from dlc_gait_assembly.services.pipeline.runtime import (
     find_alma_python,
     temporary_directory_root,
 )
 from dlc_gait_assembly.services.pipeline.rustlab1 import (
-    CUSTOM_SOP_PARAMETER_NAMES,
-    RUSTLAB1_PARAMETER_NAMES,
     extract_custom_sop_parameters,
     extract_rustlab1_parameters,
     generate_rustlab1_figures,
+)
+from dlc_gait_assembly.services.pipeline.rustlab1.extraction import (
+    CUSTOM_SOP_PARAMETER_NAMES,
+    RUSTLAB1_PARAMETER_NAMES,
 )
 from dlc_gait_assembly.services.pipeline.stroke import generate_stroke_analysis_outputs
 
@@ -221,12 +224,12 @@ def _run_single_file(
         coords = hide_low_confidence_stickplot_frames(coords, confidence_mask)
 
     parameters_path = output_folder / f"{base_name}_parameters.csv"
-    parameters.to_csv(parameters_path, index=False)
+    _selected_alma_output(parameters, settings).to_csv(parameters_path, index=False)
     output_files.append(parameters_path)
 
     if settings.generate_alma_representations:
         representation_paths = generate_alma_representations(
-            parameters,
+            _selected_alma_output(parameters, settings),
             output_folder,
             base_name,
             plt,
@@ -247,9 +250,7 @@ def _run_single_file(
         custom_path = output_folder / f"{base_name}_custom_parameters.csv"
         custom.dataframe.to_csv(custom_path, index=False)
         output_files.append(custom_path)
-        messages.append(
-            f"Custom SOP: calculated {len(custom.available_parameters)}/14 gait parameters."
-        )
+        messages.append(f"Custom SOP: calculated {len(custom.available_parameters)}/14 gait parameters.")
         if rustlab1.dataframe is None:
             messages.append("RustLab1 output skipped: no left/right/down RustLab1 marker labels were detected.")
         else:
@@ -258,10 +259,10 @@ def _run_single_file(
             output_files.append(rustlab1_path)
 
             merged_path = output_folder / f"{base_name}_expanded_parameters.csv"
-            rustlab_features = rustlab1.dataframe.loc[:, list(RUSTLAB1_PARAMETER_NAMES)].reset_index(drop=True)
-            custom_features = custom.dataframe.loc[:, list(CUSTOM_SOP_PARAMETER_NAMES)].reset_index(drop=True)
+            rustlab_features = rustlab1.dataframe.loc[:, list(rustlab1.available_parameters)].reset_index(drop=True)
+            custom_features = custom.dataframe.loc[:, list(custom.available_parameters)].reset_index(drop=True)
             merged = pd.concat(
-                [parameters.reset_index(drop=True), rustlab_features, custom_features],
+                [_selected_alma_output(parameters, settings).reset_index(drop=True), rustlab_features, custom_features],
                 axis=1,
             )
             merged.to_csv(merged_path, index=False)
@@ -316,7 +317,9 @@ def _run_single_file(
     return AlmaRunResult(input_file=input_file, output_files=tuple(output_files), messages=tuple(messages))
 
 
-def _run_view_csv_set(view_set: AlmaViewCsvSet, output_folder: Path, settings: AlmaSettings, kinematics, pd, plt) -> AlmaRunResult:
+def _run_view_csv_set(
+    view_set: AlmaViewCsvSet, output_folder: Path, settings: AlmaSettings, kinematics, pd, plt
+) -> AlmaRunResult:
     output_files: list[Path] = []
     messages: list[str] = [
         "Multi-view CSV set: "
@@ -372,18 +375,18 @@ def _run_view_csv_set(view_set: AlmaViewCsvSet, output_folder: Path, settings: A
         custom_path = output_folder / f"{view_set.name}_custom_parameters.csv"
         custom.dataframe.to_csv(custom_path, index=False)
         output_files.append(custom_path)
-        custom_features = custom.dataframe.loc[:, list(CUSTOM_SOP_PARAMETER_NAMES)].reset_index(drop=True)
-        messages.append(
-            f"Custom SOP: calculated {len(custom.available_parameters)}/14 gait parameters."
-        )
+        custom_features = custom.dataframe.loc[:, list(custom.available_parameters)].reset_index(drop=True)
+        messages.append(f"Custom SOP: calculated {len(custom.available_parameters)}/14 gait parameters.")
         if rustlab1.dataframe is None:
             messages.append("RustLab1 output skipped: no left/right/down RustLab1 marker labels were detected.")
-            rustlab_features = pd.DataFrame(index=range(max(len(left_result["parameters"]), len(right_result["parameters"]))))
+            rustlab_features = pd.DataFrame(
+                index=range(max(len(left_result["parameters"]), len(right_result["parameters"])))
+            )
         else:
             rustlab1_path = output_folder / f"{view_set.name}_rustlab1_parameters.csv"
             rustlab1.dataframe.to_csv(rustlab1_path, index=False)
             output_files.append(rustlab1_path)
-            rustlab_features = rustlab1.dataframe.loc[:, list(RUSTLAB1_PARAMETER_NAMES)].reset_index(drop=True)
+            rustlab_features = rustlab1.dataframe.loc[:, list(rustlab1.available_parameters)].reset_index(drop=True)
             rustlab1_figure_paths = generate_rustlab1_figures(
                 rustlab1_source,
                 left_result["parameters"],
@@ -404,15 +407,17 @@ def _run_view_csv_set(view_set: AlmaViewCsvSet, output_folder: Path, settings: A
             if rustlab1.missing_markers:
                 messages.append("RustLab1 missing markers: " + ", ".join(rustlab1.missing_markers))
     else:
-        rustlab_features = pd.DataFrame(index=range(max(len(left_result["parameters"]), len(right_result["parameters"]))))
+        rustlab_features = pd.DataFrame(
+            index=range(max(len(left_result["parameters"]), len(right_result["parameters"])))
+        )
         custom_features = pd.DataFrame(
             index=range(max(len(left_result["parameters"]), len(right_result["parameters"])))
         )
 
     expanded = pd.concat(
         [
-            left_result["parameters"].reset_index(drop=True).add_prefix("left__"),
-            right_result["parameters"].reset_index(drop=True).add_prefix("right__"),
+            _selected_alma_output(left_result["parameters"], settings).reset_index(drop=True).add_prefix("left__"),
+            _selected_alma_output(right_result["parameters"], settings).reset_index(drop=True).add_prefix("right__"),
             rustlab_features,
             custom_features,
         ],
@@ -445,7 +450,10 @@ def _run_view_csv_set(view_set: AlmaViewCsvSet, output_folder: Path, settings: A
     if stroke_bundle is None:
         expanded.to_csv(combined_path, index=False)
     else:
-        pd.read_csv(stroke_bundle.stride_features).to_csv(combined_path, index=False)
+        _selected_combined_output(pd.read_csv(stroke_bundle.stride_features), settings).to_csv(
+            combined_path,
+            index=False,
+        )
         messages.append(
             "Combined parameters use synchronized bottom-view gait cycles; "
             "the positional legacy merge remains in the expanded-parameters CSV."
@@ -514,12 +522,12 @@ def _extract_side_view_parameters(
 
     output_files: list[Path] = []
     parameters_path = output_folder / f"{base_name}_parameters.csv"
-    parameters.to_csv(parameters_path, index=False)
+    _selected_alma_output(parameters, settings).to_csv(parameters_path, index=False)
     output_files.append(parameters_path)
 
     if settings.generate_alma_representations:
         representation_paths = generate_alma_representations(
-            parameters,
+            _selected_alma_output(parameters, settings),
             output_folder,
             base_name,
             plt,
@@ -602,6 +610,35 @@ def _alma_input_from_json(payload) -> Path | AlmaViewCsvSet:
 
 def _is_single_side_input_mode(input_mode: str) -> bool:
     return input_mode in {"Single side view", "Single-side ALMA"}
+
+
+def _selected_alma_output(parameters, settings: AlmaSettings):
+    selected = settings.enabled_parameter_names
+    if selected is None:
+        return parameters
+    selected_set = set(selected)
+    gait_columns = set(ALMA_PARAMETER_NAMES)
+    columns = [column for column in parameters.columns if column not in gait_columns or column in selected_set]
+    return parameters.loc[:, columns]
+
+
+def _selected_combined_output(parameters, settings: AlmaSettings):
+    selected = settings.enabled_parameter_names
+    if selected is None:
+        return parameters
+    selected_set = set(selected)
+    catalog_names = set(ALMA_PARAMETER_NAMES) | set(RUSTLAB1_PARAMETER_NAMES) | set(CUSTOM_SOP_PARAMETER_NAMES)
+
+    def is_enabled(column: str) -> bool:
+        if column in catalog_names:
+            return column in selected_set
+        if column.startswith(("left__", "right__")):
+            unprefixed = column.split("__", 1)[1]
+            if unprefixed in ALMA_PARAMETER_NAMES:
+                return unprefixed in selected_set
+        return True
+
+    return parameters.loc[:, [column for column in parameters if is_enabled(column)]]
 
 
 def _settings_to_json(settings: AlmaSettings) -> dict:

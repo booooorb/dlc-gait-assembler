@@ -42,6 +42,10 @@ from dlc_gait_assembly.gui.gait_analysis.pairing import (
     build_view_pair_rows,
     path_name,
 )
+from dlc_gait_assembly.gui.gait_analysis.parameter_reference import (
+    GaitParameterReferenceWidget,
+    GaitParameterSelectionWidget,
+)
 from dlc_gait_assembly.gui.gait_analysis.previews import (
     OutputPreviewWidget,
     StickPlotPairPreviewWidget,
@@ -144,12 +148,19 @@ class AlmaKinematicsWidget(QWidget):
         title = QLabel("Runway analysis")
         title.setObjectName("TitleLabel")
         header_layout.addWidget(title)
+        self.workspace_title = title
         header_layout.addStretch(1)
+        self.parameter_reference_button = QPushButton("Parameter reference")
+        self.parameter_reference_button.setObjectName("ParameterReferenceButton")
+        header_layout.addWidget(self.parameter_reference_button)
         root.addWidget(header, 0)
 
+        self.workspace_stack = QStackedWidget()
+        self.workspace_stack.setObjectName("GaitWorkspaceStack")
+        root.addWidget(self.workspace_stack, 1)
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
-        root.addWidget(splitter, 1)
+        self.workspace_stack.addWidget(splitter)
 
         left_panel = QWidget()
         left_panel.setObjectName("WorkspaceSidebar")
@@ -165,7 +176,9 @@ class AlmaKinematicsWidget(QWidget):
         self.add_file_button = QPushButton("Add CSVs")
         set_tooltip(self.add_file_button, "Add left, right, and bottom DeepLabCut coordinate CSVs.", "Ctrl+O")
         self.add_folder_button = QPushButton("Add folder")
-        set_tooltip(self.add_folder_button, "Add every CSV in a folder and group left/right/bottom views.", "Ctrl+Shift+O")
+        set_tooltip(
+            self.add_folder_button, "Add every CSV in a folder and group left/right/bottom views.", "Ctrl+Shift+O"
+        )
         self.clear_files_button = QPushButton("Clear")
         set_tooltip(self.clear_files_button, "Clear the selected input CSV files.", "Ctrl+L")
         button_row.addWidget(self.add_file_button)
@@ -243,13 +256,16 @@ class AlmaKinematicsWidget(QWidget):
         output_tab_layout = QVBoxLayout(output_tab)
         output_tab_layout.setContentsMargins(6, 6, 6, 6)
         output_tab_layout.setSpacing(3)
+        parameters_tab = GaitParameterSelectionWidget(self._defaults.enabled_parameter_names)
         settings_tabs.addTab(setup_tab, "Setup")
         settings_tabs.addTab(calibration_tab, "Calibration")
         settings_tabs.addTab(analysis_tab, "Analysis")
         settings_tabs.addTab(filters_tab, "Filters")
         settings_tabs.addTab(mapping_tab, "Mapping")
+        settings_tabs.addTab(parameters_tab, "Parameters")
         settings_tabs.addTab(output_tab, "Output")
         self.mapping_tab = mapping_tab
+        self.parameter_selection = parameters_tab
 
         setup_box = QGroupBox("Experimental setup")
         setup_layout = QGridLayout(setup_box)
@@ -263,7 +279,9 @@ class AlmaKinematicsWidget(QWidget):
         self.analysis_type_combo = QComboBox()
         self.analysis_type_combo.addItems(["Treadmill", "Spontaneous walking"])
         self.analysis_type_combo.setCurrentText(self._defaults.analysis_type)
-        set_tooltip(self.input_mode_combo, "Switch between one side-view CSV and paired left/right/bottom CSV analysis.")
+        set_tooltip(
+            self.input_mode_combo, "Switch between one side-view CSV and paired left/right/bottom CSV analysis."
+        )
         set_tooltip(self.analysis_type_combo, "Choose treadmill or spontaneous-walking analysis.")
         setup_layout.addWidget(QLabel("Input mode"), 0, 0)
         setup_layout.addWidget(self.input_mode_combo, 0, 1)
@@ -304,7 +322,9 @@ class AlmaKinematicsWidget(QWidget):
         reference_layout.setHorizontalSpacing(12)
         reference_layout.setVerticalSpacing(4)
         self.reference_segment_combo = QComboBox()
-        self.reference_segment_combo.addItems(["ankle_toe (1.5cm)", "hip_knee (2.5cm)", "knee_ankle (2.0cm)", "ankle_mtp (0.8cm)"])
+        self.reference_segment_combo.addItems(
+            ["ankle_toe (1.5cm)", "hip_knee (2.5cm)", "knee_ankle (2.0cm)", "ankle_mtp (0.8cm)"]
+        )
         self.reference_segment_combo.setCurrentText(reference_segment_label(self._defaults.reference_segment))
         self.reference_length_spin = _double_spin(0.1, 10.0, self._defaults.reference_length_cm, 2)
         set_tooltip(self.reference_segment_combo, "Body segment used as the reference calibration length.")
@@ -442,16 +462,12 @@ class AlmaKinematicsWidget(QWidget):
 
         stroke_filter_box = QGroupBox("Synchronized stroke-pilot QC")
         stroke_filter_layout = QGridLayout(stroke_filter_box)
-        self.stroke_likelihood_spin = _double_spin(
-            0.0, 1.0, self._defaults.stroke_likelihood_threshold, 2
-        )
+        self.stroke_likelihood_spin = _double_spin(0.0, 1.0, self._defaults.stroke_likelihood_threshold, 2)
         self.stroke_likelihood_spin.setSingleStep(0.01)
         self.stroke_gap_spin = QSpinBox()
         self.stroke_gap_spin.setRange(0, 60)
         self.stroke_gap_spin.setValue(self._defaults.max_interpolation_gap_frames)
-        self.stroke_swing_speed_spin = _double_spin(
-            0.1, 100.0, self._defaults.swing_speed_threshold_cm_s, 1
-        )
+        self.stroke_swing_speed_spin = _double_spin(0.1, 100.0, self._defaults.swing_speed_threshold_cm_s, 1)
         self.stroke_min_cycles_spin = QSpinBox()
         self.stroke_min_cycles_spin.setRange(1, 100)
         self.stroke_min_cycles_spin.setValue(self._defaults.minimum_synchronized_cycles)
@@ -476,19 +492,11 @@ class AlmaKinematicsWidget(QWidget):
         self.continuous_strides_spin.setValue(self._defaults.n_continuous_strides)
         self.stickplot_checkbox = QCheckBox("Generate stickplot SVG")
         self.stickplot_checkbox.setChecked(True)
-        self.alma_representations_checkbox = QCheckBox(
-            "Generate ALMA summary tables and diagnostic figures"
-        )
-        self.alma_representations_checkbox.setChecked(
-            self._defaults.generate_alma_representations
-        )
-        self.rustlab1_checkbox = QCheckBox(
-            "Generate RustLab1 and custom SOP parameters, merged CSV, and figures"
-        )
+        self.alma_representations_checkbox = QCheckBox("Generate ALMA summary tables and diagnostic figures")
+        self.alma_representations_checkbox.setChecked(self._defaults.generate_alma_representations)
+        self.rustlab1_checkbox = QCheckBox("Generate RustLab1 and custom SOP parameters, merged CSV, and figures")
         self.rustlab1_checkbox.setChecked(self._defaults.generate_rustlab1_parameters)
-        self.stroke_analysis_checkbox = QCheckBox(
-            "Generate synchronized stroke-pilot outputs (hindlimb-focused)"
-        )
+        self.stroke_analysis_checkbox = QCheckBox("Generate synchronized stroke-pilot outputs (hindlimb-focused)")
         self.stroke_analysis_checkbox.setChecked(self._defaults.stroke_analysis_enabled)
         set_tooltip(self.continuous_strides_spin, "Number of continuous strides used for ALMA outputs.")
         set_tooltip(self.stickplot_checkbox, "Generate an SVG stickplot output.")
@@ -660,9 +668,7 @@ class AlmaKinematicsWidget(QWidget):
         self.controls_scroll.setObjectName("RunwayControlsScroll")
         self.controls_scroll.setWidgetResizable(True)
         self.controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.controls_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.controls_scroll.setWidget(left_panel)
         left_column_layout.addWidget(self.controls_scroll, 1)
 
@@ -681,6 +687,8 @@ class AlmaKinematicsWidget(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([500, 780])
+        self.parameter_reference = GaitParameterReferenceWidget()
+        self.workspace_stack.addWidget(self.parameter_reference)
 
     def _install_interactions(self) -> None:
         self._shortcuts = [
@@ -697,6 +705,7 @@ class AlmaKinematicsWidget(QWidget):
         self._wheel_value_guard = install_wheel_value_guard(self)
 
     def _connect_signals(self) -> None:
+        self.parameter_reference_button.clicked.connect(self._toggle_parameter_reference)
         self.add_file_button.clicked.connect(self._add_file)
         self.add_folder_button.clicked.connect(self._add_folder)
         self.clear_files_button.clicked.connect(self._clear_files)
@@ -756,6 +765,17 @@ class AlmaKinematicsWidget(QWidget):
         for combo in self._bodypart_combos.values():
             combo.currentTextChanged.connect(self._invalidate_stickplot_preview)
 
+    def _toggle_parameter_reference(self) -> None:
+        showing_reference = self.workspace_stack.currentWidget() is self.parameter_reference
+        if showing_reference:
+            self.workspace_stack.setCurrentIndex(0)
+            self.workspace_title.setText("Runway analysis")
+            self.parameter_reference_button.setText("Parameter reference")
+        else:
+            self.workspace_stack.setCurrentWidget(self.parameter_reference)
+            self.workspace_title.setText("Gait parameter reference")
+            self.parameter_reference_button.setText("Back to analysis")
+
     def _add_file(self) -> None:
         filenames, _ = QFileDialog.getOpenFileNames(
             self,
@@ -767,7 +787,9 @@ class AlmaKinematicsWidget(QWidget):
             self._add_csv_paths([Path(filename) for filename in filenames])
 
     def _add_folder(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select folder containing CSV files", str(self._project_root))
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select folder containing CSV files", str(self._project_root)
+        )
         if directory:
             self._add_csv_paths(sorted(Path(directory).glob("*.csv")))
 
@@ -821,7 +843,9 @@ class AlmaKinematicsWidget(QWidget):
         if self._manual_view_sets is not None and self._view_sets:
             suffix = "" if len(self._view_sets) == 1 else "s"
             self.view_set_status_label.setText(f"Manual pairing: {len(self._view_sets)} complete CSV set{suffix}.")
-            self.rustlab_status_label.setText(f"RustLab1 ready for {len(self._view_sets)} manually paired CSV set{suffix}.")
+            self.rustlab_status_label.setText(
+                f"RustLab1 ready for {len(self._view_sets)} manually paired CSV set{suffix}."
+            )
         elif self._manual_view_sets is not None:
             self.view_set_status_label.setText("Manual pairing has no complete left/right/bottom CSV sets.")
             self.rustlab_status_label.setText("RustLab1 waiting for complete manual CSV pairs.")
@@ -830,14 +854,14 @@ class AlmaKinematicsWidget(QWidget):
             self.view_set_status_label.setText(
                 f"Ready: {len(self._view_sets)} complete left/right/bottom CSV set{suffix}."
             )
-            self.rustlab_status_label.setText(
-                f"RustLab1 ready for {len(self._view_sets)} paired CSV set{suffix}."
-            )
+            self.rustlab_status_label.setText(f"RustLab1 ready for {len(self._view_sets)} paired CSV set{suffix}.")
         elif self._view_sets:
             self.view_set_status_label.setText(
                 f"{len(self._view_sets)} complete set(s); " + " ".join(self._view_set_errors)
             )
-            self.rustlab_status_label.setText("RustLab1 ready for complete paired sets; unresolved rows will be ignored.")
+            self.rustlab_status_label.setText(
+                "RustLab1 ready for complete paired sets; unresolved rows will be ignored."
+            )
         elif self._selected_files:
             self.view_set_status_label.setText(self._multiview_requirement_message())
             self.rustlab_status_label.setText("RustLab1 waiting for complete left/right/bottom pairs.")
@@ -916,7 +940,9 @@ class AlmaKinematicsWidget(QWidget):
             return
 
         if info.fps <= 0:
-            QMessageBox.warning(self, "No frame rate detected", "The selected video did not report a usable frame rate.")
+            QMessageBox.warning(
+                self, "No frame rate detected", "The selected video did not report a usable frame rate."
+            )
             return
 
         fps = round(info.fps, 2)
@@ -984,7 +1010,9 @@ class AlmaKinematicsWidget(QWidget):
 
     def _load_bodypart_mapping_from_first_file(self) -> None:
         if not self._selected_files:
-            QMessageBox.information(self, "No input files", "Add left/right/bottom CSV files before loading body part labels.")
+            QMessageBox.information(
+                self, "No input files", "Add left/right/bottom CSV files before loading body part labels."
+            )
             return
 
         csv_path = self._selected_preview_file()
@@ -1154,9 +1182,7 @@ class AlmaKinematicsWidget(QWidget):
         preview_running = self._preview_worker is not None and self._preview_worker.isRunning()
         running = analysis_running or preview_running
         self.preview_button.setEnabled(has_files and not running)
-        self.run_button.setEnabled(
-            has_files and has_output and self._stickplot_preview_ready and not running
-        )
+        self.run_button.setEnabled(has_files and has_output and self._stickplot_preview_ready and not running)
 
     def _invalidate_stickplot_preview(self, message=None, *_args) -> None:
         if isinstance(message, str) and message:
@@ -1164,7 +1190,9 @@ class AlmaKinematicsWidget(QWidget):
         elif self._is_three_view_mode() and self._selected_files and not self._has_valid_view_sets():
             placeholder_text = self._multiview_requirement_message()
         elif self._selected_files:
-            placeholder_text = f"Settings changed. Regenerate the stick-plot preview for {self._selected_preview_file().name}."
+            placeholder_text = (
+                f"Settings changed. Regenerate the stick-plot preview for {self._selected_preview_file().name}."
+            )
         else:
             placeholder_text = (
                 "Select left/right/bottom CSVs, then generate a stick-plot preview."
@@ -1217,9 +1245,7 @@ class AlmaKinematicsWidget(QWidget):
                 self._open_label_matching_dialog()
             else:
                 self.settings_tabs.setCurrentWidget(self.mapping_tab)
-            self.mapping_status_label.setText(
-                "Missing required ALMA body parts: " + ", ".join(missing_bodyparts)
-            )
+            self.mapping_status_label.setText("Missing required ALMA body parts: " + ", ".join(missing_bodyparts))
             QMessageBox.warning(
                 self,
                 "Body part mapping incomplete",
@@ -1266,9 +1292,7 @@ class AlmaKinematicsWidget(QWidget):
     def _stickplot_preview_completed(self, plots, source_name: str) -> None:
         if self._preview_invalidated_while_running:
             self._stickplot_preview_ready = False
-            self.preview_placeholder.setText(
-                "Settings changed while the preview was running. Generate it again."
-            )
+            self.preview_placeholder.setText("Settings changed while the preview was running. Generate it again.")
             self.preview_stack.setCurrentWidget(self.preview_placeholder)
             self.status_label.setText("Stick-plot preview is out of date.")
             self._append_log("Preview discarded because its settings changed during generation.")
@@ -1326,7 +1350,9 @@ class AlmaKinematicsWidget(QWidget):
 
         settings = self._collect_settings()
         if self.use_custom_mapping_checkbox.isChecked() and not settings.custom_bodypart_mapping:
-            QMessageBox.warning(self, "No body part mapping", "Select at least one body part mapping or turn off custom mapping.")
+            QMessageBox.warning(
+                self, "No body part mapping", "Select at least one body part mapping or turn off custom mapping."
+            )
             return
         self.progress.setValue(0)
         self.progress.set_active(True)
@@ -1362,7 +1388,9 @@ class AlmaKinematicsWidget(QWidget):
             frame_rate=self.frame_rate_spin.value(),
             filter_cutoff=self.filter_cutoff_spin.value(),
             treadmill_speed_cm_s=self.treadmill_speed_spin.value(),
-            calibration_method="reference" if self.calibration_method_combo.currentText() == "Reference body segment" else "manual",
+            calibration_method="reference"
+            if self.calibration_method_combo.currentText() == "Reference body segment"
+            else "manual",
             reference_segment=self.reference_segment_combo.currentText().split(" ", 1)[0],
             reference_length_cm=self.reference_length_spin.value(),
             calibration_map_path=self._calibration_map_path,
@@ -1397,10 +1425,10 @@ class AlmaKinematicsWidget(QWidget):
                         "y_pixels_per_cm": self.bottom_y_pixels_per_cm_spin.value(),
                     }
                 }
-                if self.bottom_x_pixels_per_cm_spin.value() > 0
-                and self.bottom_y_pixels_per_cm_spin.value() > 0
+                if self.bottom_x_pixels_per_cm_spin.value() > 0 and self.bottom_y_pixels_per_cm_spin.value() > 0
                 else None
             ),
+            enabled_parameter_names=self.parameter_selection.enabled_parameter_names(),
         )
 
     def _collect_bodypart_mapping(self) -> dict[str, str] | None:
@@ -1524,11 +1552,7 @@ class AlmaKinematicsWidget(QWidget):
             QMessageBox.critical(self, "ALMA gait analysis failed", message)
 
     def _output_results_ready(self, results) -> None:
-        output_files = (
-            output_file
-            for result in results
-            for output_file in getattr(result, "output_files", ())
-        )
+        output_files = (output_file for result in results for output_file in getattr(result, "output_files", ()))
         self._output_preview_paths = previewable_output_paths(output_files)
         if not self._output_preview_paths:
             self._append_log("No SVG or CSV output previews were available.")
@@ -1536,9 +1560,7 @@ class AlmaKinematicsWidget(QWidget):
         self.output_preview_view.load_paths(self._output_preview_paths)
         self.preview_stack.setCurrentWidget(self.output_preview_view)
         self.workspace_tabs.setCurrentWidget(self.preview_page)
-        self._append_log(
-            f"Loaded {len(self._output_preview_paths)} generated output previews."
-        )
+        self._append_log(f"Loaded {len(self._output_preview_paths)} generated output previews.")
 
     def _worker_finished(self) -> None:
         self._worker = None
@@ -1614,7 +1636,54 @@ class AlmaKinematicsWidget(QWidget):
                 border-top: 1px solid {theme.BORDER};
                 background: {theme.PANEL};
             }
-            """
+            QWidget#GaitParameterReference {
+                background: {theme.BACKGROUND};
+                background-image: url({theme.BACKGROUND_TEXTURE});
+            }
+            QTreeWidget#GaitParameterTree {
+                background: {theme.SURFACE};
+                alternate-background-color: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+                border-radius: 4px;
+            }
+            QFrame#ParameterDetails {
+                background: {theme.SURFACE};
+                border: 1px solid {theme.BORDER};
+                border-radius: 5px;
+            }
+            QLabel#ParameterName {
+                color: {theme.TEXT};
+                font-size: 17px;
+                font-weight: 700;
+            }
+            QLabel#ParameterBadge {
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+                border-radius: 3px;
+                color: {theme.CONNECTOR};
+                padding: 6px 8px;
+            }
+            QLabel#ParameterDetailHeading {
+                color: {theme.TEXT};
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QLabel#ParameterDetailValue {
+                color: {theme.CONNECTOR};
+                font-size: 13px;
+            }
+            QLabel#ParameterCalculationFocus {
+                color: {theme.TEXT};
+                font-size: 18px;
+                font-weight: 650;
+                padding: 8px 0 12px 0;
+            }
+            QTreeWidget#GaitParameterSelectionTree {
+                background: {theme.SURFACE};
+                alternate-background-color: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+            }
+            """,
             )
         )
         icon_specs = (
@@ -1627,6 +1696,7 @@ class AlmaKinematicsWidget(QWidget):
             (self.export_manifest_button, "download", theme.TEXT),
             (self.preview_button, "eye", theme.TEXT),
             (self.run_button, "play", theme.PRIMARY_TEXT),
+            (self.parameter_reference_button, "document", theme.TEXT),
         )
         for button, icon_name, color in icon_specs:
             button.setIcon(interface_icon(icon_name, color))

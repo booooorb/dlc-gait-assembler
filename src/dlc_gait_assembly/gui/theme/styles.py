@@ -1,3 +1,13 @@
+from pathlib import Path
+
+
+def _background_texture_url() -> str:
+    from dlc_gait_assembly.gui import theme
+
+    filename = "carbon-dark.png" if theme.IS_DARK else "carbon-light.png"
+    return (Path(__file__).resolve().parents[4] / "assets" / "images" / "backgrounds" / filename).as_posix()
+
+
 def application_stylesheet() -> str:
     return stylesheet(
         """
@@ -32,6 +42,7 @@ def application_stylesheet() -> str:
         }
         QDialog, QMessageBox {
             background: {theme.BACKGROUND};
+            background-image: url({theme.BACKGROUND_TEXTURE});
             color: {theme.TEXT};
         }
         QPushButton, QToolButton {
@@ -232,6 +243,7 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
     base = """
         QWidget#ROOT_OBJECT {
             background: {theme.BACKGROUND};
+            background-image: url({theme.BACKGROUND_TEXTURE});
             color: {theme.TEXT};
             font-size: 13px;
         }
@@ -255,6 +267,7 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
         }
         QWidget#WorkspaceCanvas {
             background: {theme.BACKGROUND};
+            background-image: url({theme.BACKGROUND_TEXTURE});
         }
         QWidget#WorkspaceHeader {
             background: {theme.SURFACE};
@@ -291,7 +304,10 @@ def stylesheet(template: str) -> str:
     from dlc_gait_assembly.gui import theme
 
     return (
-        template.replace("{theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)}", theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35))
+        template.replace(
+            "{theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)}", theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)
+        )
+        .replace("{theme.BACKGROUND_TEXTURE}", _background_texture_url())
         .replace("{theme.BACKGROUND}", theme.BACKGROUND)
         .replace("{theme.SURFACE}", theme.SURFACE)
         .replace("{theme.PANEL}", theme.PANEL)

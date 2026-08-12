@@ -40,6 +40,7 @@ from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWid
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
 from dlc_gait_assembly.gui.main_window import (
     BRAND_LOGO_FILENAMES,
+    LADDER_TOOL_SPEC,
     MainMenuWidget,
     MainWindow,
     PartnerLogoLabel,
@@ -155,6 +156,7 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     assert menu.view_stack.currentWidget() is menu.home_page
     assert menu.automated_choice_button.text() == "Open automated pipeline"
     assert menu.manual_choice_button.text() == "Open manual pipeline"
+    assert menu.ladder_choice_button.text() == "Open ladder analysis"
     assert not menu.automated_choice_button.icon().isNull()
     assert not menu.manual_choice_button.icon().isNull()
     expected_stages = [spec.label for spec in TOOL_SPECS]
@@ -180,6 +182,82 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     automated_profiles.back_to_automation_button.click()
     assert automated_profiles.workspace_stack.currentWidget() is automated_profiles.automation_page
     menu.close()
+
+
+def test_ladder_analysis_opens_from_secondary_home_workflow_and_returns_home():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    window._main_menu.ladder_choice_button.click()
+    app.processEvents()
+
+    assert window._active_tool_id == LADDER_TOOL_SPEC.id
+    assert isinstance(window._active_tool, LadderAnalysisWidget)
+    assert not window._manual_stage_expanded
+    assert window.windowTitle() == "DLC Gait Assembler - Ladder Analysis"
+
+    window._active_tool.back_requested.emit()
+    app.processEvents()
+    assert window._stack.currentWidget() is window._main_menu
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
+    window.close()
+
+
+def test_gait_parameter_reference_documents_and_filters_exported_parameters():
+    app = QApplication.instance() or QApplication([])
+    runway = AlmaKinematicsWidget()
+
+    runway.parameter_reference_button.click()
+    app.processEvents()
+    reference = runway.parameter_reference
+
+    assert runway.workspace_stack.currentWidget() is reference
+    assert reference.parameter_tree.topLevelItemCount() == 88
+    assert reference.count_label.text() == "Showing 88 of 88 gait parameters"
+
+    reference.view_filter.setCurrentText("Single-view")
+    app.processEvents()
+    assert reference.parameter_tree.topLevelItemCount() == 44
+    assert {reference.parameter_tree.topLevelItem(index).text(3) for index in range(44)} == {"ALMA"}
+    assert all(reference.parameter_tree.topLevelItem(index).text(2) for index in range(44))
+    assert [reference.parameter_tree.topLevelItem(index).text(0) for index in range(3)] == ["1", "2", "3"]
+
+    reference.view_filter.setCurrentText("Multi-view")
+    reference.source_filter.setCurrentText("RustLab1")
+    app.processEvents()
+    assert reference.parameter_tree.topLevelItemCount() == 30
+
+    reference.search_edit.setText("angle")
+    app.processEvents()
+    assert reference.parameter_tree.topLevelItemCount() == 6
+    assert reference.calculation_label.text()
+    assert reference.views_label.text() == "Bottom view"
+
+    runway.parameter_reference_button.click()
+    app.processEvents()
+    assert runway.workspace_stack.currentIndex() == 0
+    assert runway.parameter_reference_button.text() == "Parameter reference"
+    runway.close()
+
+
+def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings():
+    app = QApplication.instance() or QApplication([])
+    runway = AlmaKinematicsWidget()
+    selection = runway.parameter_selection
+
+    assert selection.tree.topLevelItemCount() == 88
+    assert [selection.tree.topLevelItem(index).text(0) for index in range(3)] == ["1", "2", "3"]
+    assert selection.count_label.text() == "88 of 88 parameters enabled"
+
+    selection.clear_button.click()
+    app.processEvents()
+    selection.tree.topLevelItem(3).setCheckState(1, Qt.Checked)
+    app.processEvents()
+
+    selected_name = selection.tree.topLevelItem(3).text(1)
+    assert selection.count_label.text() == "1 of 88 parameters enabled"
+    assert runway._collect_settings().enabled_parameter_names == (selected_name,)
+    runway.close()
 
 
 def test_automation_menus_keep_guidance_in_control_tooltips():
@@ -226,12 +304,10 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
     ]
     assert all(control.toolTip().strip() for control in interactive_controls)
     assert all(
-        widget.configuration_tabs.tabToolTip(index).strip()
-        for index in range(widget.configuration_tabs.count())
+        widget.configuration_tabs.tabToolTip(index).strip() for index in range(widget.configuration_tabs.count())
     )
     window.close()
     app.processEvents()
-
 
 
 def test_one_bar_gives_each_primary_destination_a_visual_identity():
@@ -266,57 +342,34 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     window._automation_run_button.click()
     app.processEvents()
     assert window._primary_navigation_highlight.isVisible()
-    assert window._primary_navigation_highlight.geometry() == highlight_target(
-        window._automation_run_button
-    )
+    assert window._primary_navigation_highlight.geometry() == highlight_target(window._automation_run_button)
     assert window._primary_navigation_highlight.property("navigationRole") == "automated"
 
     window._automation_profiles_button.click()
-    assert (
-        window._primary_navigation_animation.state()
-        == QAbstractAnimation.State.Running
-    )
+    assert window._primary_navigation_animation.state() == QAbstractAnimation.State.Running
     QTest.qWait(280)
-    assert window._primary_navigation_highlight.geometry() == highlight_target(
-        window._automation_profiles_button
-    )
+    assert window._primary_navigation_highlight.geometry() == highlight_target(window._automation_profiles_button)
     assert window._primary_navigation_highlight.property("navigationRole") == "profiles"
 
-    manual_x_before_expansion = window._manual_tools_button.mapTo(
-        window._primary_row, QPoint(0, 0)
-    ).x()
+    manual_x_before_expansion = window._manual_tools_button.mapTo(window._primary_row, QPoint(0, 0)).x()
     window._manual_tools_button.click()
-    assert (
-        window._primary_navigation_animation.state()
-        == QAbstractAnimation.State.Running
-    )
-    assert (
-        window._manual_stage_animation.state()
-        == QAbstractAnimation.State.Running
-    )
+    assert window._primary_navigation_animation.state() == QAbstractAnimation.State.Running
+    assert window._manual_stage_animation.state() == QAbstractAnimation.State.Running
     initial_stage_width = window._manual_stage_frame.width()
     QTest.qWait(90)
     assert window._manual_stage_frame.width() > initial_stage_width
     QTest.qWait(190)
-    assert window._primary_navigation_highlight.geometry() == highlight_target(
-        window._manual_tools_button
-    )
+    assert window._primary_navigation_highlight.geometry() == highlight_target(window._manual_tools_button)
     assert window._primary_navigation_highlight.property("navigationRole") == "manual"
     assert window._manual_tools_button.text() == "Manual"
-    manual_x_after_expansion = window._manual_tools_button.mapTo(
-        window._primary_row, QPoint(0, 0)
-    ).x()
+    manual_x_after_expansion = window._manual_tools_button.mapTo(window._primary_row, QPoint(0, 0)).x()
     assert abs(manual_x_after_expansion - manual_x_before_expansion) <= 1
     assert not window._manual_stage_frame.isHidden()
     assert window._partner_marks.isHidden()
     assert window._toolbar.height() == 64
     assert window._manual_stage_frame.parentWidget() is window._primary_row
-    manual_right = window._manual_tools_button.mapTo(
-        window._shell, window._manual_tools_button.rect().topRight()
-    ).x()
-    stage_left = window._manual_stage_frame.mapTo(
-        window._shell, window._manual_stage_frame.rect().topLeft()
-    ).x()
+    manual_right = window._manual_tools_button.mapTo(window._shell, window._manual_tools_button.rect().topRight()).x()
+    stage_left = window._manual_stage_frame.mapTo(window._shell, window._manual_stage_frame.rect().topLeft()).x()
     assert stage_left >= manual_right
     assert window._manual_stage_frame.y() < window._toolbar.height()
     assert [button.text() for button in window._manual_stage_buttons.values()] == [
@@ -327,26 +380,23 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
         "Gait\nanalysis",
         "PCA + random\nforest",
     ]
-    assert [
-        label.text()
-        for label in window._manual_stage_frame.findChildren(
-            QLabel, "ManualStageSeparator"
-        )
-    ] == [">", ">", ">", ">", ">"]
+    assert [label.text() for label in window._manual_stage_frame.findChildren(QLabel, "ManualStageSeparator")] == [
+        ">",
+        ">",
+        ">",
+        ">",
+        ">",
+    ]
     stage_buttons = list(window._manual_stage_buttons.values())
     assert len({button.y() for button in stage_buttons}) == 1
     assert all(button.width() >= 28 for button in stage_buttons)
     assert window._manual_stage_frame.width() <= 500
-    assert [button.x() for button in stage_buttons] == sorted(
-        button.x() for button in stage_buttons
-    )
+    assert [button.x() for button in stage_buttons] == sorted(button.x() for button in stage_buttons)
     assert window._manual_stage_animation.duration() == 260
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.workspace_page
     assert window._manual_tools_button.property("activeManual") is True
-    workflow_cards = window._main_menu.workspace_page.findChildren(
-        QFrame, "WorkflowStep"
-    )
+    workflow_cards = window._main_menu.workspace_page.findChildren(QFrame, "WorkflowStep")
     assert len(workflow_cards) == 6
     assert len({card.x() for card in workflow_cards}) == 3
     assert len({card.y() for card in workflow_cards}) == 2
@@ -392,10 +442,7 @@ def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path
     assert not widget.upload_videos_button.icon().isNull()
     assert widget.upload_videos_button.parent() is widget.video_list.viewport()
     assert widget.upload_videos_button.isVisibleTo(widget.video_list)
-    assert (
-        widget.duplicate_profile_button.parentWidget().objectName()
-        == "ProfileManagementPanel"
-    )
+    assert widget.duplicate_profile_button.parentWidget().objectName() == "ProfileManagementPanel"
     assert not widget.remove_videos_button.icon().isNull()
     assert not widget.clear_videos_button.icon().isNull()
     assert not widget.open_profile_configuration_button.icon().isNull()
@@ -405,7 +452,10 @@ def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path
     assert widget.run_readiness_label.property("readinessState") == "ready"
     assert "QPushButton#RemoveButton, QPushButton#ClearButton" in widget.styleSheet()
     assert "QLabel#PipelineLogState {\n    background: transparent;\n    border: 0;" in widget.styleSheet()
-    assert "QLabel#ProfileStatusLabel, QLabel#RunReadinessBadge {\n    background: transparent;\n    border: 0;" in widget.styleSheet()
+    assert (
+        "QLabel#ProfileStatusLabel, QLabel#RunReadinessBadge {\n    background: transparent;\n    border: 0;"
+        in widget.styleSheet()
+    )
     assert theme.STATUS_ERROR in widget.styleSheet()
     assert not widget.remove_videos_button.isEnabled()
     assert not widget.clear_videos_button.isEnabled()
@@ -844,9 +894,7 @@ def test_runway_worker_hands_generated_outputs_to_preview_signal(tmp_path, monke
     emitted_results = []
     completions = []
     worker.results_ready.connect(emitted_results.append)
-    worker.analysis_completed.connect(
-        lambda success, message: completions.append((success, message))
-    )
+    worker.analysis_completed.connect(lambda success, message: completions.append((success, message)))
 
     worker.run()
 

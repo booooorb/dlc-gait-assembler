@@ -3,6 +3,7 @@ from dlc_gait_assembly.gui import theme
 AUTOMATED_PIPELINE_QSS = """
 QWidget#AutomatedPipelineProfilesWidget {
     background: {theme.BACKGROUND};
+    background-image: url({theme.BACKGROUND_TEXTURE});
     color: {theme.TEXT};
 }
 QFrame#ProfileHeader, QFrame#MainAutomationMenu,
@@ -118,6 +119,7 @@ QFrame#PipelineActivityPanel {
 }
 QStackedWidget#AutomationInputStack {
     background: {theme.BACKGROUND};
+    background-image: url({theme.BACKGROUND_TEXTURE});
     border: 0;
 }
 QFrame#PipelineStageCard {
@@ -379,14 +381,53 @@ QLabel#AssetPath:disabled {
     background: {theme.PANEL};
     color: {theme.BORDER};
 }
+QPushButton#NewProfileButton {
+    background: {theme.PRIMARY};
+    border: 1px solid {theme.PRIMARY};
+    color: {theme.PRIMARY_TEXT};
+    font-weight: 700;
+    min-height: 22px;
+    padding: 6px 11px;
+}
+QPushButton#NewProfileButton:hover {
+    background: {theme.PRIMARY_HOVER};
+    border-color: {theme.PRIMARY_HOVER};
+    color: {theme.PRIMARY_TEXT};
+}
+QPushButton#DuplicateProfileButton {
+    background: {theme.SOFT};
+    border: 1px solid {theme.TOOL_1};
+    color: {theme.TOOL_1};
+    font-weight: 650;
+    min-height: 22px;
+    padding: 6px 9px;
+}
+QPushButton#DuplicateProfileButton:hover {
+    background: {theme.SURFACE};
+    border-color: {theme.TEXT};
+    color: {theme.TEXT};
+}
+QPushButton#DuplicateProfileButton:disabled {
+    background: {theme.PANEL};
+    border-color: {theme.BORDER};
+    color: {theme.CONNECTOR};
+}
+QPushButton#DeleteProfileButton {
+    background: {theme.SURFACE};
+    border: 1px solid {theme.BORDER};
+    color: {theme.STATUS_ERROR};
+    font-weight: 650;
+    min-height: 22px;
+    padding: 6px 9px;
+}
 QPushButton#DeleteProfileButton:hover {
     border-color: {theme.STATUS_ERROR};
     color: {theme.STATUS_ERROR};
 }
-QPushButton#SmallProfileButton {
-    min-height: 16px;
-    padding: 4px 7px;
-    font-size: 11px;
+QPushButton#DeleteProfileButton:disabled {
+    background: {theme.PANEL};
+    border-color: {theme.BORDER};
+    color: {theme.CONNECTOR};
 }
 QPushButton#OpenProfileConfigurationButton {
     background: {theme.PRIMARY};
@@ -448,9 +489,15 @@ QPushButton#BackToAutomationButton {
     color: {theme.TEXT};
     font-weight: 650;
 }
+QPushButton#BackToAutomationButton:hover {
+    background: {theme.SOFT};
+    border-color: {theme.TOOL_1};
+    color: {theme.TOOL_1};
+}
 QWidget#MainAutomationPage, QWidget#ProfileConfigurationPage,
 QStackedWidget#AutomationWorkspaceStack {
     background: {theme.BACKGROUND};
+    background-image: url({theme.BACKGROUND_TEXTURE});
 }
 """
 

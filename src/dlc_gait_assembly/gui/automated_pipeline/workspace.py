@@ -334,7 +334,7 @@ class AutomatedPipelineProfilesWidget(
         configuration_toolbar.setObjectName("ProfileConfigurationToolbar")
         toolbar_layout = QHBoxLayout(configuration_toolbar)
         toolbar_layout.setContentsMargins(12, 10, 12, 10)
-        self.back_to_automation_button = QPushButton("← Back to automation")
+        self.back_to_automation_button = QPushButton("Back to automation")
         self.back_to_automation_button.setObjectName("BackToAutomationButton")
         self.back_to_automation_button.setToolTip(
             "Return to the video queue. Unsaved profile edits remain in this window until "
@@ -353,6 +353,7 @@ class AutomatedPipelineProfilesWidget(
         management_layout.setContentsMargins(12, 10, 12, 10)
         management_layout.setSpacing(8)
         self.new_profile_button = QPushButton("New profile")
+        self.new_profile_button.setObjectName("NewProfileButton")
         self.new_profile_button.setToolTip(
             "Clear the profile form so you can build a new reusable automation setup. "
             "This does not delete existing profiles."
@@ -366,7 +367,7 @@ class AutomatedPipelineProfilesWidget(
         )
         management_layout.addWidget(self.configuration_profile_selector, 1)
         self.duplicate_profile_button = QPushButton("Duplicate profile")
-        self.duplicate_profile_button.setObjectName("SmallProfileButton")
+        self.duplicate_profile_button.setObjectName("DuplicateProfileButton")
         self.duplicate_profile_button.setToolTip(
             "Copy the selected profile under a new name. The original profile and all "
             "of its saved input files remain unchanged."
@@ -824,10 +825,19 @@ class AutomatedPipelineProfilesWidget(
             (self.remove_videos_button, "trash", theme.STATUS_ERROR),
             (self.clear_videos_button, "clear", theme.STATUS_ERROR),
             (self.open_profile_configuration_button, "stack", theme.PRIMARY_TEXT),
+            (self.back_to_automation_button, "arrow-left", theme.TEXT),
+            (self.new_profile_button, "plus", theme.PRIMARY_TEXT),
+            (self.duplicate_profile_button, "copy", theme.TOOL_1),
+            (self.delete_profile_button, "trash", theme.STATUS_ERROR),
             (self.open_video_settings_button, "external", theme.PRIMARY),
             (self.open_calibration_settings_button, "external", theme.PRIMARY),
             (self.open_gait_settings_button, "external", theme.PRIMARY),
             (self.open_knee_settings_button, "external", theme.PRIMARY),
+            (self.manifest_upload_button, "upload", theme.PRIMARY_TEXT),
+            (self.calibration_upload_button, "upload", theme.PRIMARY_TEXT),
+            (self.analysis_manifest_upload_button, "upload", theme.PRIMARY_TEXT),
+            (self.knee_manifest_upload_button, "upload", theme.PRIMARY_TEXT),
+            (self.save_profile_button, "check", theme.PRIMARY_TEXT),
             (self.pipeline_change_settings_button, "sliders", theme.TEXT),
             (self.open_pipeline_output_button, "folder", theme.TEXT),
             (self.run_pipeline_button, "play", theme.PRIMARY_TEXT),

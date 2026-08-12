@@ -6,12 +6,17 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QParallelAnimationGroup,
+    QPauseAnimation,
+    QPoint,
     QPointF,
     QPropertyAnimation,
     QRect,
     QRectF,
+    QSequentialAnimationGroup,
     QSize,
     Qt,
+    QTimer,
     QUrl,
     Signal,
 )
@@ -29,6 +34,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -46,6 +53,7 @@ from PySide6.QtWidgets import (
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
 from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
+from dlc_gait_assembly.gui.gait_analysis.ladder_window import LadderAnalysisWidget
 from dlc_gait_assembly.gui.gait_analysis.window import GaitAnalysisWidget
 from dlc_gait_assembly.gui.knee_correction import KneeCorrectionWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
@@ -72,6 +80,14 @@ MANUAL_STAGE_DISPLAY_LABELS = {
     "gait_parameter_analysis": "Gait\nanalysis",
     "pca_random_forest": "PCA + random\nforest",
 }
+MANUAL_STAGE_ICONS = {
+    "manual_calibration": "calibration-grid",
+    "video_processing": "film",
+    "deeplabcut": "joints",
+    "knee_correction": "knee",
+    "gait_parameter_analysis": "gait",
+    "pca_random_forest": "chart",
+}
 PARTNER_WEBSITES = {
     "choforcelab.png": "https://www.choforcelab.ca",
     "NERVES_Logo.png": "https://nerves.bme.utah.edu",
@@ -79,6 +95,7 @@ PARTNER_WEBSITES = {
 MINIMUM_WINDOW_SIZE = QSize(1100, 640)
 DEFAULT_WINDOW_SIZE = QSize(1440, 900)
 WINDOW_SCREEN_MARGIN = 64
+MAIN_MENU_ICON_ASSET_DIR = Path(__file__).resolve().parents[3] / "assets" / "images" / "main_menu_icons"
 HEADER_STAGE_LABELS = {
     "manual_calibration": "Calibration",
     "video_processing": "Video processing",
@@ -111,9 +128,7 @@ def _navigation_icon(icon_name: str, color: str) -> QIcon:
     elif icon_name == "profiles":
         painter.setBrush(Qt.NoBrush)
         for top, inset in ((2.4, 0.0), (6.4, 0.8), (10.4, 1.6)):
-            painter.drawRoundedRect(
-                QRectF(2.4 + inset, top, 13.2 - inset * 2, 4.2), 1.2, 1.2
-            )
+            painter.drawRoundedRect(QRectF(2.4 + inset, top, 13.2 - inset * 2, 4.2), 1.2, 1.2)
     elif icon_name == "manual":
         painter.setBrush(Qt.NoBrush)
         for y, knob_x in ((4.0, 6.0), (9.0, 12.0), (14.0, 8.5)):
@@ -124,6 +139,14 @@ def _navigation_icon(icon_name: str, color: str) -> QIcon:
 
     painter.end()
     return QIcon(pixmap)
+
+
+def _menu_asset_pixmap(name: str, size: int) -> QPixmap:
+    """Load a reference-derived main-menu illustration at a crisp UI size."""
+    source = QPixmap(str(MAIN_MENU_ICON_ASSET_DIR / f"{name}.png"))
+    if source.isNull():
+        return source
+    return source.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
 @dataclass(frozen=True)
@@ -180,6 +203,14 @@ TOOL_SPECS = [
     ),
 ]
 
+LADDER_TOOL_SPEC = ToolSpec(
+    "ladder_analysis",
+    "Ladder Analysis",
+    LadderAnalysisWidget,
+    True,
+    description="Detect, review, and export ladder-rung footfall events.",
+)
+
 
 class MainWindow(QMainWindow):
     theme_mode_requested = Signal(str)
@@ -201,9 +232,7 @@ class MainWindow(QMainWindow):
         self._main_menu.automated_requested.connect(self._show_automated_pipeline)
         self._main_menu.manual_requested.connect(self._show_main_menu)
         self._main_menu.pipeline_tabs.currentChanged.connect(self._pipeline_tab_changed)
-        self._main_menu.automated_profiles.workspace_changed.connect(
-            self._automated_workspace_changed
-        )
+        self._main_menu.automated_profiles.workspace_changed.connect(self._automated_workspace_changed)
         self._main_menu.automated_profiles.manual_tool_requested.connect(self._open_tool)
         self._stack.addWidget(self._main_menu)
         self._build_shell(initial_theme_mode)
@@ -337,9 +366,7 @@ class MainWindow(QMainWindow):
         manual_tools_button.setCursor(Qt.PointingHandCursor)
         manual_tools_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         manual_tools_button.setFixedWidth(106)
-        manual_tools_button.clicked.connect(
-            lambda _checked=False: self._manual_navigation_clicked()
-        )
+        manual_tools_button.clicked.connect(lambda _checked=False: self._manual_navigation_clicked())
         self._manual_tools_button = manual_tools_button
         manual_pipeline_layout.addWidget(manual_tools_button)
 
@@ -356,9 +383,7 @@ class MainWindow(QMainWindow):
             self,
         )
         self._primary_navigation_animation.setDuration(230)
-        self._primary_navigation_animation.setEasingCurve(
-            QEasingCurve.Type.OutCubic
-        )
+        self._primary_navigation_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._primary_row = primary_row
         self._primary_layout = primary_layout
         self._primary_navigation_layout = navigation_layout
@@ -379,9 +404,7 @@ class MainWindow(QMainWindow):
             button.setCursor(Qt.PointingHandCursor)
             button.setToolTip(spec.label)
             if spec.enabled:
-                button.clicked.connect(
-                    lambda _checked=False, tool_id=spec.id: self._open_tool(tool_id)
-                )
+                button.clicked.connect(lambda _checked=False, tool_id=spec.id: self._open_tool(tool_id))
             self._manual_stage_buttons[spec.id] = button
             manual_stage_layout.addWidget(button)
             if index < len(TOOL_SPECS) - 1:
@@ -401,9 +424,7 @@ class MainWindow(QMainWindow):
         )
         self._manual_stage_animation.setDuration(260)
         self._manual_stage_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._manual_stage_animation.finished.connect(
-            self._manual_stage_animation_finished
-        )
+        self._manual_stage_animation.finished.connect(self._manual_stage_animation_finished)
 
         primary_layout.addStretch(1)
 
@@ -441,9 +462,10 @@ class MainWindow(QMainWindow):
 
     def _apply_shell_style(self) -> None:
         stylesheet = theme.stylesheet(
-                """
+            """
                 QWidget#AppShell {
                     background: {theme.BACKGROUND};
+                    background-image: url({theme.BACKGROUND_TEXTURE});
                     color: {theme.TEXT};
                 }
                 QFrame#AppToolbar {
@@ -609,20 +631,12 @@ class MainWindow(QMainWindow):
                     background: transparent;
                 }
                 """
-            )
+        )
         stylesheet = (
-            stylesheet.replace(
-                "NAV_HOME_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.9)
-            )
-            .replace(
-                "NAV_RUN_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.84)
-            )
-            .replace(
-                "NAV_PROFILES_FILL", theme.mix_hex(theme.TOOL_2, theme.SURFACE, 0.86)
-            )
-            .replace(
-                "NAV_MANUAL_FILL", theme.mix_hex(theme.TOOL_3, theme.SURFACE, 0.86)
-            )
+            stylesheet.replace("NAV_HOME_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.9))
+            .replace("NAV_RUN_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.84))
+            .replace("NAV_PROFILES_FILL", theme.mix_hex(theme.TOOL_2, theme.SURFACE, 0.86))
+            .replace("NAV_MANUAL_FILL", theme.mix_hex(theme.TOOL_3, theme.SURFACE, 0.86))
         )
         self._shell.setStyleSheet(stylesheet)
         self._apply_navigation_icons()
@@ -662,9 +676,7 @@ class MainWindow(QMainWindow):
         )
         scaled.setDevicePixelRatio(scale)
         self._home_button.setIcon(QIcon(scaled))
-        self._home_button.setIconSize(
-            QSize(round(scaled.width() / scale), round(scaled.height() / scale))
-        )
+        self._home_button.setIconSize(QSize(round(scaled.width() / scale), round(scaled.height() / scale)))
         self._brand_logo_filename = filename
 
     def _build_theme_actions(self, settings_menu: QMenu, initial_theme_mode: str) -> None:
@@ -677,9 +689,7 @@ class MainWindow(QMainWindow):
             action.setData(mode)
             action.setChecked(mode == initial_theme_mode)
             action.triggered.connect(
-                lambda checked=False, selected_mode=mode: self._request_theme_mode(
-                    selected_mode, checked
-                )
+                lambda checked=False, selected_mode=mode: self._request_theme_mode(selected_mode, checked)
             )
             theme_group.addAction(action)
             self._theme_actions[mode] = action
@@ -718,13 +728,9 @@ class MainWindow(QMainWindow):
 
     def _manual_stage_target_geometry(self) -> QRect:
         self._primary_layout.activate()
-        anchor = self._manual_tools_button.mapTo(
-            self._primary_row, self._manual_tools_button.rect().topRight()
-        )
+        anchor = self._manual_tools_button.mapTo(self._primary_row, self._manual_tools_button.rect().topRight())
         x = anchor.x() + 8
-        settings_left = self._settings_button.mapTo(
-            self._primary_row, self._settings_button.rect().topLeft()
-        ).x()
+        settings_left = self._settings_button.mapTo(self._primary_row, self._settings_button.rect().topLeft()).x()
         width = min(500, max(0, settings_left - x - 12))
         height = 50
         return QRect(x, (APP_TOOLBAR_HEIGHT - height) // 2, width, height)
@@ -745,7 +751,11 @@ class MainWindow(QMainWindow):
         self._partner_marks.show()
 
     def _manual_navigation_clicked(self) -> None:
-        manual_active = not self._home_menu_active and not self._automation_menu_active
+        manual_active = (
+            not self._home_menu_active
+            and not self._automation_menu_active
+            and self._active_tool_id != LADDER_TOOL_SPEC.id
+        )
         if manual_active and self._manual_stage_expanded:
             self._set_manual_pipeline_expanded(False)
             return
@@ -862,6 +872,8 @@ class MainWindow(QMainWindow):
         tool = self._tool_widgets.get(tool_id)
         if tool is None:
             tool = spec.widget_factory()
+            if isinstance(tool, LadderAnalysisWidget):
+                tool.back_requested.connect(self._show_home_menu)
             self._tool_widgets[tool_id] = tool
             self._stack.addWidget(tool)
 
@@ -869,7 +881,7 @@ class MainWindow(QMainWindow):
         self._active_tool_id = tool_id
         self._home_menu_active = False
         self._automation_menu_active = False
-        self._set_manual_pipeline_expanded(True)
+        self._set_manual_pipeline_expanded(tool_id != LADDER_TOOL_SPEC.id)
         self.setWindowTitle(f"DLC Gait Assembler - {spec.label}")
         self._refresh_stage_navigation()
         self._show_widget(tool)
@@ -936,9 +948,7 @@ class MainWindow(QMainWindow):
             return
         self._primary_navigation_animation.stop()
         self._style_primary_navigation_highlight(role)
-        self._primary_navigation_highlight.setGeometry(
-            self._primary_navigation_target_geometry(target_button)
-        )
+        self._primary_navigation_highlight.setGeometry(self._primary_navigation_target_geometry(target_button))
         self._primary_navigation_highlight.show()
         self._primary_navigation_highlight.lower()
 
@@ -961,12 +971,12 @@ class MainWindow(QMainWindow):
             if self._automated_workspace_page == "profiles":
                 return self._automation_profiles_button, "profiles"
             return self._automation_run_button, "automated"
-        if not self._home_menu_active:
+        if not self._home_menu_active and self._active_tool_id != LADDER_TOOL_SPEC.id:
             return self._manual_tools_button, "manual"
         return None, ""
 
     def _tool_spec(self, tool_id: str) -> ToolSpec:
-        for spec in TOOL_SPECS:
+        for spec in (*TOOL_SPECS, LADDER_TOOL_SPEC):
             if spec.id == tool_id:
                 return spec
         raise ValueError(f"Unknown tool: {tool_id}")
@@ -1000,6 +1010,8 @@ class MainMenuWidget(QWidget):
         self.setObjectName("MainMenuWidget")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._tools = tools
+        self._entrance_has_run = False
+        self._entrance_animation: QParallelAnimationGroup | None = None
         self._build_ui()
         self._apply_style()
 
@@ -1010,7 +1022,7 @@ class MainMenuWidget(QWidget):
 
         content = QWidget()
         content.setObjectName("MenuContent")
-        content.setMaximumWidth(1280)
+        content.setMaximumWidth(1540)
         content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
@@ -1022,51 +1034,58 @@ class MainMenuWidget(QWidget):
         home_page = QWidget()
         home_page.setObjectName("PipelineHomePage")
         home_layout = QVBoxLayout(home_page)
-        home_layout.setContentsMargins(40, 36, 40, 36)
-        home_layout.setSpacing(10)
+        home_layout.setContentsMargins(22, 18, 22, 18)
+        home_layout.setSpacing(6)
         home_layout.addStretch(1)
 
-        home_eyebrow = QLabel("PIPELINE WORKSPACE")
-        home_eyebrow.setObjectName("HomeEyebrow")
-        home_layout.addWidget(home_eyebrow)
-        home_title = QLabel("Choose how you want to work")
+        home_title = QLabel("Gait analysis workflow")
         home_title.setObjectName("HomeTitle")
         home_layout.addWidget(home_title)
-        home_description = QLabel(
-            "Run the complete workflow automatically, or open the manual pipeline "
-            "to work through each tool stage by stage."
-        )
-        home_description.setObjectName("HomeDescription")
-        home_description.setWordWrap(True)
-        home_layout.addWidget(home_description)
+        self._home_title = home_title
 
         choices = QHBoxLayout()
-        choices.setSpacing(18)
-        automated_card, automated_button = self._pipeline_choice_card(
-            role="automated",
-            eyebrow="AUTOMATED PIPELINE",
-            title="Run a complete workflow",
-            description=(
-                "Select a saved profile, add videos, and monitor every processing "
-                "stage from one workspace."
-            ),
-            action="Open automated pipeline",
-        )
-        automated_button.clicked.connect(self.automated_requested.emit)
-        choices.addWidget(automated_card, 1)
-        manual_card, manual_button = self._pipeline_choice_card(
-            role="manual",
-            eyebrow="MANUAL PIPELINE",
-            title="Work stage by stage",
-            description=(
-                "Open calibration, video processing, DeepLabCut, correction, gait, "
-                "and analysis tools individually."
-            ),
-            action="Open manual pipeline",
-        )
+        choices.setSpacing(10)
+        choices.setAlignment(Qt.AlignTop)
+        manual_card, manual_button = self._manual_choice_card()
         manual_button.clicked.connect(self.manual_requested.emit)
-        choices.addWidget(manual_card, 1)
+        choices.addWidget(manual_card, 9)
+
+        handoff = QFrame()
+        handoff.setObjectName("PipelineHandoff")
+        handoff_layout = QVBoxLayout(handoff)
+        handoff_layout.setContentsMargins(4, 0, 4, 0)
+        handoff_layout.setSpacing(4)
+        handoff_layout.addStretch(1)
+        handoff_icon = QLabel()
+        handoff_icon.setObjectName("PipelineHandoffIcon")
+        handoff_icon.setAlignment(Qt.AlignCenter)
+        handoff_icon.setPixmap(interface_icon("gear", theme.TOOL_1, size=34).pixmap(34, 34))
+        handoff_layout.addWidget(handoff_icon)
+        handoff_title = QLabel("Settings saved")
+        handoff_title.setObjectName("PipelineHandoffTitle")
+        handoff_title.setAlignment(Qt.AlignCenter)
+        handoff_title.setWordWrap(True)
+        handoff_layout.addWidget(handoff_title)
+        handoff_arrow = QLabel("→")
+        handoff_arrow.setObjectName("PipelineHandoffArrow")
+        handoff_arrow.setAlignment(Qt.AlignCenter)
+        handoff_layout.addWidget(handoff_arrow)
+        handoff_layout.addStretch(1)
+        choices.addWidget(handoff, 1)
+
+        automated_card, automated_button = self._automated_choice_card()
+        automated_button.clicked.connect(self.automated_requested.emit)
+        choices.addWidget(automated_card, 4)
         home_layout.addLayout(choices)
+        self._manual_choice_card_widget = manual_card
+        self._pipeline_handoff_widget = handoff
+        self._automated_choice_card_widget = automated_card
+
+        ladder_card, ladder_button = self._ladder_choice_card()
+        ladder_button.clicked.connect(lambda: self.tool_requested.emit(LADDER_TOOL_SPEC.id))
+        home_layout.addWidget(ladder_card)
+        self._ladder_choice_card_widget = ladder_card
+        self.ladder_choice_button = ladder_button
 
         home_layout.addStretch(1)
         self.automated_choice_button = automated_button
@@ -1129,40 +1148,262 @@ class MainMenuWidget(QWidget):
         self._content = content
 
     @staticmethod
-    def _pipeline_choice_card(
-        *,
-        role: str,
-        eyebrow: str,
-        title: str,
-        description: str,
-        action: str,
-    ) -> tuple[QFrame, QPushButton]:
-        card = QFrame()
-        card.setObjectName("PipelineChoiceCard")
-        card.setProperty("pipelineRole", role)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(8)
-
-        type_label = QLabel(eyebrow)
-        type_label.setObjectName("PipelineChoiceType")
-        type_label.setProperty("pipelineRole", role)
-        layout.addWidget(type_label)
+    def _choice_header(role: str, icon_name: str, title: str) -> QHBoxLayout:
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        graphic = QLabel()
+        graphic.setObjectName("PipelineChoiceGraphic")
+        graphic.setProperty("pipelineRole", role)
+        graphic.setProperty("iconName", icon_name)
+        graphic.setAlignment(Qt.AlignCenter)
+        graphic.setFixedSize(48, 48)
+        header.addWidget(graphic)
+        copy = QVBoxLayout()
+        copy.setSpacing(1)
         title_label = QLabel(title)
         title_label.setObjectName("PipelineChoiceTitle")
-        layout.addWidget(title_label)
-        description_label = QLabel(description)
-        description_label.setObjectName("PipelineChoiceDescription")
-        description_label.setWordWrap(True)
-        layout.addWidget(description_label)
+        copy.addWidget(title_label)
+        header.addLayout(copy, 1)
+        return header
+
+    def _automated_choice_card(self) -> tuple[QFrame, QPushButton]:
+        card = QFrame()
+        card.setObjectName("PipelineChoiceCard")
+        card.setProperty("pipelineRole", "automated")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        layout.addLayout(self._choice_header("automated", "play", "2. Automated runs"))
+        flow_widget = QWidget()
+        flow_widget.setObjectName("AutomatedFlow")
+        flow = QHBoxLayout(flow_widget)
+        flow.setContentsMargins(0, 0, 0, 0)
+        flow.setSpacing(4)
+        automated_steps = (
+            ("automation-database", "Manage Profiles", "Save reusable settings."),
+            ("automation-gear", "Automate Pipeline", "Process every video."),
+            ("automation-report", "Check Results", "Review consistent outputs."),
+        )
+        for index, (asset_name, title_text, description_text) in enumerate(automated_steps):
+            step = QWidget()
+            step.setFixedHeight(158)
+            step_layout = QVBoxLayout(step)
+            step_layout.setContentsMargins(0, 0, 0, 0)
+            step_layout.setSpacing(3)
+            icon = QLabel()
+            icon.setObjectName("AutomationFlowIcon")
+            icon.setPixmap(_menu_asset_pixmap(asset_name, 46))
+            icon.setAlignment(Qt.AlignCenter)
+            icon.setFixedHeight(50)
+            step_layout.addWidget(icon)
+            title = QLabel(title_text)
+            title.setObjectName("AutomationFlowTitle")
+            title.setAlignment(Qt.AlignCenter)
+            title.setWordWrap(True)
+            title.setFixedHeight(32)
+            step_layout.addWidget(title)
+            description = QLabel(description_text)
+            description.setObjectName("AutomationFlowDescription")
+            description.setAlignment(Qt.AlignCenter)
+            description.setWordWrap(True)
+            description.setFixedHeight(36)
+            step_layout.addWidget(description)
+            output_spacer = QLabel()
+            output_spacer.setObjectName("AutomationFlowSpacer")
+            output_spacer.setFixedHeight(18)
+            step_layout.addWidget(output_spacer)
+            step_layout.addStretch(1)
+            flow.addWidget(step, 1, Qt.AlignTop)
+            if index < 2:
+                connector = QLabel("→")
+                connector.setObjectName("AutomationConnector")
+                flow.addWidget(connector)
+        layout.addWidget(flow_widget)
         layout.addStretch(1)
-        button = QPushButton(action)
+        button = QPushButton("Open automated pipeline")
         button.setObjectName("PipelineChoiceButton")
-        button.setProperty("pipelineRole", role)
+        button.setProperty("pipelineRole", "automated")
         button.setCursor(Qt.PointingHandCursor)
-        button.setToolTip(description)
+        button.setToolTip("Select a profile and process a batch of videos.")
         layout.addWidget(button)
         return card, button
+
+    def _manual_choice_card(self) -> tuple[QFrame, QPushButton]:
+        card = QFrame()
+        card.setObjectName("PipelineChoiceCard")
+        card.setProperty("pipelineRole", "manual")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        layout.addLayout(self._choice_header("manual", "sliders", "1. Manual setup"))
+        stages = QHBoxLayout()
+        stages.setSpacing(5)
+        files = (".json", ".mp4", ".h5 / .csv", ".csv", ".csv", ".pkl / .png")
+        stage_names = (
+            "Calibration",
+            "Video Processing",
+            "DeepLabCut",
+            "Knee Processing",
+            "Gait Analysis",
+            "PCA / Random Forest",
+        )
+        descriptions = (
+            "Calibrate cameras and set 3D space.",
+            "Crop, filter, and prepare videos.",
+            "Track body keypoints with DLC.",
+            "Compute knee positions and angles.",
+            "Extract gait events and metrics.",
+            "Perform PCA and classification.",
+        )
+        stage_assets = (
+            "stage-calibration",
+            "stage-video",
+            "stage-deeplabcut",
+            "stage-knee",
+            "stage-gait",
+            "stage-analysis",
+        )
+        for index, _spec in enumerate(self._tools):
+            stage = QFrame()
+            stage.setObjectName("ManualMiniStage")
+            stage.setFixedHeight(158)
+            stage_layout = QVBoxLayout(stage)
+            stage_layout.setContentsMargins(0, 0, 0, 0)
+            stage_layout.setSpacing(3)
+            icon = QLabel()
+            icon.setObjectName("ManualMiniStageIcon")
+            icon.setAlignment(Qt.AlignCenter)
+            icon.setPixmap(_menu_asset_pixmap(stage_assets[index], 46))
+            icon.setFixedHeight(50)
+            stage_layout.addWidget(icon)
+            title = QLabel(f"{index + 1}. {stage_names[index]}")
+            title.setObjectName("ManualMiniStageTitle")
+            title.setAlignment(Qt.AlignCenter)
+            title.setWordWrap(True)
+            title.setFixedHeight(32)
+            stage_layout.addWidget(title)
+            description = QLabel(descriptions[index])
+            description.setObjectName("ManualMiniStageDescription")
+            description.setAlignment(Qt.AlignCenter)
+            description.setWordWrap(True)
+            description.setFixedHeight(36)
+            stage_layout.addWidget(description)
+            file_label = QLabel(files[index])
+            file_label.setObjectName("ManualMiniStageFile")
+            file_label.setAlignment(Qt.AlignCenter)
+            stage_layout.addWidget(file_label)
+            stages.addWidget(stage, 1, Qt.AlignTop)
+            if index < len(self._tools) - 1:
+                arrow = QLabel("→")
+                arrow.setObjectName("ManualFlowArrow")
+                arrow.setAlignment(Qt.AlignCenter)
+                stages.addWidget(arrow)
+        layout.addLayout(stages)
+        layout.addStretch(1)
+        button = QPushButton("Open manual pipeline")
+        button.setObjectName("PipelineChoiceButton")
+        button.setProperty("pipelineRole", "manual")
+        button.setCursor(Qt.PointingHandCursor)
+        layout.addWidget(button)
+        return card, button
+
+    def _ladder_choice_card(self) -> tuple[QFrame, QPushButton]:
+        card = QFrame()
+        card.setObjectName("LadderChoiceCard")
+        card.setProperty("pipelineRole", "ladder")
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(14)
+
+        graphic = QLabel()
+        graphic.setObjectName("PipelineChoiceGraphic")
+        graphic.setProperty("pipelineRole", "ladder")
+        graphic.setProperty("iconName", "ladder")
+        graphic.setAlignment(Qt.AlignCenter)
+        graphic.setFixedSize(48, 48)
+        layout.addWidget(graphic)
+
+        copy = QVBoxLayout()
+        copy.setSpacing(3)
+        title = QLabel("Ladder analysis")
+        title.setObjectName("PipelineChoiceTitle")
+        copy.addWidget(title)
+        description = QLabel("Detect paw placements, review slips or falls, and export ladder-rung events.")
+        description.setObjectName("LadderChoiceDescription")
+        copy.addWidget(description)
+        layout.addLayout(copy, 1)
+
+        button = QPushButton("Open ladder analysis")
+        button.setObjectName("PipelineChoiceButton")
+        button.setProperty("pipelineRole", "ladder")
+        button.setCursor(Qt.PointingHandCursor)
+        button.setMinimumWidth(210)
+        layout.addWidget(button)
+        return card, button
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._entrance_has_run:
+            QTimer.singleShot(0, self._start_home_entrance)
+
+    def _start_home_entrance(self) -> None:
+        if self._entrance_has_run or not self.isVisible():
+            return
+        self._entrance_has_run = True
+        group = QParallelAnimationGroup(self)
+        targets = (
+            (self._home_title, 0, False),
+            (self._manual_choice_card_widget, 70, True),
+            (self._pipeline_handoff_widget, 160, False),
+            (self._automated_choice_card_widget, 240, True),
+            (self._ladder_choice_card_widget, 320, True),
+        )
+        for widget, delay, add_depth in targets:
+            end_position = widget.pos()
+            start_position = end_position + QPoint(0, 14)
+            widget.move(start_position)
+            effect = QGraphicsOpacityEffect(widget)
+            effect.setOpacity(0.0)
+            widget.setGraphicsEffect(effect)
+            sequence = QSequentialAnimationGroup(group)
+            if delay:
+                sequence.addAnimation(QPauseAnimation(delay, sequence))
+            reveal = QParallelAnimationGroup(sequence)
+            opacity_animation = QPropertyAnimation(effect, b"opacity", reveal)
+            opacity_animation.setDuration(300)
+            opacity_animation.setStartValue(0.0)
+            opacity_animation.setEndValue(1.0)
+            opacity_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            reveal.addAnimation(opacity_animation)
+            rise_animation = QPropertyAnimation(widget, b"pos", reveal)
+            rise_animation.setDuration(340)
+            rise_animation.setStartValue(start_position)
+            rise_animation.setEndValue(end_position)
+            rise_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            reveal.addAnimation(rise_animation)
+            reveal.finished.connect(
+                lambda target=widget, depth=add_depth, final=end_position: self._finish_entrance_target(
+                    target, depth, final
+                )
+            )
+            sequence.addAnimation(reveal)
+            group.addAnimation(sequence)
+        self._entrance_animation = group
+        group.start()
+
+    def _finish_entrance_target(self, widget: QWidget, add_depth: bool, final_position: QPoint) -> None:
+        widget.move(final_position)
+        widget.setGraphicsEffect(None)
+        if add_depth:
+            self._apply_card_depth(widget)
+
+    @staticmethod
+    def _apply_card_depth(widget: QWidget) -> None:
+        shadow = QGraphicsDropShadowEffect(widget)
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 5)
+        shadow.setColor(QColor(0, 0, 0, 120 if theme.IS_DARK else 48))
+        widget.setGraphicsEffect(shadow)
 
     def show_home(self) -> None:
         self.view_stack.setCurrentWidget(self.home_page)
@@ -1183,7 +1424,7 @@ class MainMenuWidget(QWidget):
     def _workflow_list(self, tools: list[ToolSpec], connect_tools: bool) -> QFrame:
         workflow_list = QFrame()
         workflow_list.setObjectName("WorkflowList")
-        workflow_list.setFixedHeight(274)
+        workflow_list.setFixedHeight(224)
         list_layout = QGridLayout(workflow_list)
         list_layout.setContentsMargins(0, 0, 0, 0)
         list_layout.setHorizontalSpacing(10)
@@ -1206,6 +1447,7 @@ class MainMenuWidget(QWidget):
             }
             QTabWidget#PipelineTabs::pane {
                 background: {theme.BACKGROUND};
+                background-image: url({theme.BACKGROUND_TEXTURE});
                 border: 0;
                 border-top: 1px solid {theme.BORDER};
             }
@@ -1222,6 +1464,7 @@ class MainMenuWidget(QWidget):
                 + """
             QWidget#MainMenuWidget {
                 background: {theme.BACKGROUND};
+                background-image: url({theme.BACKGROUND_TEXTURE});
                 color: {theme.TEXT};
                 font-size: 13px;
             }
@@ -1234,29 +1477,19 @@ class MainMenuWidget(QWidget):
                 background: transparent;
                 border: 0;
             }
-            QLabel#HomeEyebrow {
-                color: {theme.TOOL_1};
-                font-size: 11px;
-                font-weight: 750;
-            }
             QLabel#HomeTitle {
                 color: {theme.TEXT};
-                font-size: 25px;
+                font-size: 27px;
                 font-weight: 750;
-            }
-            QLabel#HomeDescription {
-                color: {theme.CONNECTOR};
-                font-size: 13px;
-                max-width: 700px;
-                padding-bottom: 6px;
+                padding-bottom: 2px;
             }
             QFrame#PipelineChoiceCard {
                 background: {theme.SURFACE};
                 border: 1px solid {theme.BORDER};
                 border-top: 3px solid {theme.BORDER};
                 border-radius: 6px;
-                min-height: 160px;
-                max-height: 180px;
+                min-height: 310px;
+                max-height: 330px;
             }
             QFrame#PipelineChoiceCard[pipelineRole="automated"] {
                 border-color: {theme.TOOL_1};
@@ -1264,15 +1497,139 @@ class MainMenuWidget(QWidget):
             QFrame#PipelineChoiceCard[pipelineRole="manual"] {
                 border-color: {theme.TOOL_3};
             }
-            QLabel#PipelineChoiceType {
-                font-size: 11px;
-                font-weight: 750;
+            QFrame#LadderChoiceCard {
+                background: {theme.SURFACE};
+                border: 1px solid {theme.TOOL_2};
+                border-left: 4px solid {theme.TOOL_2};
+                border-radius: 6px;
+                min-height: 78px;
+                max-height: 88px;
             }
-            QLabel#PipelineChoiceType[pipelineRole="automated"] {
+            QLabel#PipelineChoiceGraphic {
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+                border-radius: 10px;
+            }
+            QLabel#AutomationFlowIcon {
+                background: transparent;
+                border: 0;
+                min-height: 50px;
+            }
+            QLabel#AutomationFlowTitle {
+                color: {theme.TEXT};
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QLabel#AutomationFlowDescription {
+                color: {theme.CONNECTOR};
+                font-size: 9px;
+            }
+            QLabel#AutomationConnector {
+                color: {theme.TOOL_1};
+                font-weight: 700;
+            }
+            QLabel#AutomatedFlowTitle {
+                border-top: 1px solid {theme.BORDER};
+                color: {theme.TOOL_1};
+                font-size: 13px;
+                font-weight: 700;
+                padding-top: 7px;
+            }
+            QWidget#AutomatedFlow {
+                min-height: 158px;
+                max-height: 164px;
+            }
+            QLabel#ManualFlowTitle {
+                border-top: 1px solid {theme.BORDER};
+                color: {theme.TOOL_3};
+                font-size: 13px;
+                font-weight: 700;
+                padding-top: 7px;
+            }
+            QFrame#ManualMiniStage {
+                background: transparent;
+                border: 0;
+                min-width: 70px;
+                min-height: 158px;
+                max-height: 164px;
+            }
+            QLabel#ManualMiniStageIcon {
+                min-height: 50px;
+                max-height: 50px;
+            }
+            QLabel#ManualMiniStageTitle {
+                color: {theme.TEXT};
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QLabel#ManualMiniStageDescription {
+                color: {theme.CONNECTOR};
+                font-size: 9px;
+            }
+            QLabel#ManualMiniStageFile {
+                background: {theme.SOFT};
+                border-radius: 3px;
+                color: {theme.TOOL_3};
+                font-size: 9px;
+                font-weight: 650;
+                padding: 2px 3px;
+            }
+            QLabel#ManualFlowArrow {
+                color: {theme.TOOL_3};
+                font-size: 15px;
+                font-weight: 700;
+            }
+            QFrame#PipelineBenefits {
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+                border-radius: 5px;
+            }
+            QLabel#BenefitCheck {
+                border: 1px solid {theme.BORDER};
+                border-radius: 7px;
+                color: {theme.CONNECTOR};
+                font-size: 9px;
+                font-weight: 700;
+                min-width: 14px;
+                max-width: 14px;
+                min-height: 14px;
+                max-height: 14px;
+            }
+            QLabel#BenefitCheck[pipelineRole="automated"] {
                 color: {theme.TOOL_1};
             }
-            QLabel#PipelineChoiceType[pipelineRole="manual"] {
+            QLabel#BenefitCheck[pipelineRole="manual"] {
                 color: {theme.TOOL_3};
+            }
+            QLabel#BenefitText {
+                color: {theme.TEXT};
+                font-size: 10px;
+            }
+            QFrame#PipelineHandoff {
+                background: transparent;
+                border: 0;
+                min-width: 86px;
+                max-width: 110px;
+            }
+            QLabel#PipelineHandoffIcon {
+                background: transparent;
+                border: 0;
+                min-height: 46px;
+                max-height: 46px;
+            }
+            QLabel#PipelineHandoffTitle {
+                color: {theme.TEXT};
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QLabel#PipelineHandoffDetail {
+                color: {theme.CONNECTOR};
+                font-size: 9px;
+            }
+            QLabel#PipelineHandoffArrow {
+                color: {theme.TOOL_1};
+                font-size: 22px;
+                font-weight: 700;
             }
             QLabel#PipelineChoiceTitle {
                 color: {theme.TEXT};
@@ -1282,6 +1639,10 @@ class MainMenuWidget(QWidget):
             QLabel#PipelineChoiceDescription {
                 color: {theme.CONNECTOR};
                 font-size: 13px;
+            }
+            QLabel#LadderChoiceDescription {
+                color: {theme.CONNECTOR};
+                font-size: 12px;
             }
             QPushButton#PipelineChoiceButton {
                 background: {theme.BACKGROUND};
@@ -1298,6 +1659,9 @@ class MainMenuWidget(QWidget):
             }
             QPushButton#PipelineChoiceButton[pipelineRole="manual"] {
                 border-color: {theme.TOOL_3};
+            }
+            QPushButton#PipelineChoiceButton[pipelineRole="ladder"] {
+                border-color: {theme.TOOL_2};
             }
             QPushButton#PipelineChoiceButton:hover {
                 background: {theme.PANEL};
@@ -1345,6 +1709,15 @@ class MainMenuWidget(QWidget):
                 min-height: 24px;
                 max-height: 24px;
             }
+            QLabel#StepGraphic {
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+                border-radius: 9px;
+                min-width: 40px;
+                max-width: 40px;
+                min-height: 40px;
+                max-height: 40px;
+            }
             QLabel#StepIndex[enabledStep="false"] {
                 color: {theme.BORDER};
             }
@@ -1355,13 +1728,6 @@ class MainMenuWidget(QWidget):
             }
             QLabel#StepTitle[enabledStep="false"] {
                 color: {theme.CONNECTOR};
-            }
-            QLabel#StepDescription {
-                color: {theme.CONNECTOR};
-                font-size: 12px;
-            }
-            QLabel#StepDescription[enabledStep="false"] {
-                color: {theme.BORDER};
             }
             QPushButton#OpenToolButton {
                 background: transparent;
@@ -1383,14 +1749,25 @@ class MainMenuWidget(QWidget):
             )
         )
         if hasattr(self, "automated_choice_button"):
-            self.automated_choice_button.setIcon(
-                _navigation_icon("run", theme.TOOL_1)
-            )
-            self.manual_choice_button.setIcon(
-                _navigation_icon("manual", theme.TOOL_3)
-            )
+            self.automated_choice_button.setIcon(_navigation_icon("run", theme.TOOL_1))
+            self.manual_choice_button.setIcon(_navigation_icon("manual", theme.TOOL_3))
             self.automated_choice_button.setIconSize(QSize(18, 18))
             self.manual_choice_button.setIconSize(QSize(18, 18))
+            self.ladder_choice_button.setIcon(interface_icon("ladder", theme.TOOL_2))
+            self.ladder_choice_button.setIconSize(QSize(18, 18))
+        for step in self.findChildren(WorkflowStep):
+            step.apply_theme()
+        for graphic in self.findChildren(QLabel, "PipelineChoiceGraphic"):
+            role = graphic.property("pipelineRole")
+            color = theme.TOOL_1 if role == "automated" else theme.TOOL_2 if role == "ladder" else theme.TOOL_3
+            graphic.setPixmap(interface_icon(graphic.property("iconName"), color, size=30).pixmap(30, 30))
+        if self._entrance_has_run and (
+            self._entrance_animation is None
+            or self._entrance_animation.state() != QParallelAnimationGroup.State.Running
+        ):
+            self._apply_card_depth(self._manual_choice_card_widget)
+            self._apply_card_depth(self._automated_choice_card_widget)
+            self._apply_card_depth(self._ladder_choice_card_widget)
 
 
 class PartnerLogoLabel(QLabel):
@@ -1486,7 +1863,7 @@ class WorkflowStep(QFrame):
         self.setObjectName("WorkflowStep")
         self.setProperty("enabledStep", spec.enabled)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setFixedHeight(132)
+        self.setFixedHeight(107)
         if spec.enabled:
             self.setCursor(Qt.PointingHandCursor)
             if spec.description:
@@ -1503,12 +1880,12 @@ class WorkflowStep(QFrame):
         heading = QHBoxLayout()
         heading.setSpacing(10)
 
-        number = QLabel(str(index))
-        number.setObjectName("StepIndex")
-        number.setProperty("enabledStep", spec.enabled)
-        number.setAlignment(Qt.AlignCenter)
-        number.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        heading.addWidget(number)
+        self.graphic = QLabel()
+        self.graphic.setObjectName("StepGraphic")
+        self.graphic.setAlignment(Qt.AlignCenter)
+        self.graphic.setFixedSize(40, 40)
+        self.graphic.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        heading.addWidget(self.graphic)
 
         title = QLabel(spec.label)
         title.setObjectName("StepTitle")
@@ -1518,19 +1895,19 @@ class WorkflowStep(QFrame):
         heading.addWidget(title, 1)
         root.addLayout(heading)
 
-        description = QLabel(spec.description)
-        description.setObjectName("StepDescription")
-        description.setProperty("enabledStep", spec.enabled)
-        description.setWordWrap(True)
-        description.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        root.addWidget(description, 1)
+        root.addStretch(1)
 
-        open_button = QPushButton("Open  →" if spec.enabled else "Unavailable")
+        open_button = QPushButton("Open" if spec.enabled else "Unavailable")
         open_button.setObjectName("OpenToolButton")
         open_button.setEnabled(spec.enabled)
         if spec.enabled:
             open_button.clicked.connect(lambda: self.clicked.emit(spec.id))
         root.addWidget(open_button, 0, Qt.AlignRight)
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        color = theme.TOOL_3 if self._spec.enabled else theme.BORDER
+        self.graphic.setPixmap(interface_icon(MANUAL_STAGE_ICONS[self._spec.id], color, size=26).pixmap(26, 26))
 
     def mouseReleaseEvent(self, event) -> None:
         if self._spec.enabled and event.button() == Qt.LeftButton and self.rect().contains(event.pos()):

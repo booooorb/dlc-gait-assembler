@@ -16,7 +16,11 @@ from dlc_gait_assembly.services.pipeline.alma import (
     run_alma_gait_analysis,
     settings_from_alma_config,
 )
-from dlc_gait_assembly.services.pipeline.alma.runner import load_kinematics_functions
+from dlc_gait_assembly.services.pipeline.alma.runner import (
+    _selected_alma_output,
+    _selected_combined_output,
+    load_kinematics_functions,
+)
 from dlc_gait_assembly.services.pipeline.rustlab1 import (
     CUSTOM_SOP_PARAMETER_NAMES,
     RUSTLAB1_FIGURE_FILENAMES,
@@ -56,9 +60,7 @@ def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
         coordinates[(marker, "likelihood")] = np.ones(frame_count)
 
     raw = pd.DataFrame(coordinates)
-    alma_parameters = pd.DataFrame(
-        {"stride_start (frame)": [0, 10], "stride_end (frame)": [9, 19]}
-    )
+    alma_parameters = pd.DataFrame({"stride_start (frame)": [0, 10], "stride_end (frame)": [9, 19]})
     settings = AlmaSettings(
         calibration_method="manual",
         pixels_per_cm=10.0,
@@ -84,6 +86,86 @@ def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
     assert custom.missing_markers == ()
     assert custom.dataframe["left_mtp_average_height"].tolist() == [0.45, 0.45]
     assert custom.dataframe["right_knee_vertical_excursion"].tolist() == [1.8, 1.8]
+
+
+def test_parameter_selection_limits_alma_rustlab_and_combined_outputs():
+    import pandas as pd
+
+    settings = AlmaSettings(
+        enabled_parameter_names=("stride length (cm)", "LB__avg_Angle"),
+    )
+    alma = pd.DataFrame(
+        {
+            "stride_start (frame)": [0],
+            "stride length (cm)": [1.2],
+            "cycle duration (s)": [0.1],
+        }
+    )
+    combined = pd.DataFrame(
+        {
+            "animal_id": ["mouse-1"],
+            "left__stride length (cm)": [1.2],
+            "right__cycle duration (s)": [0.1],
+            "LB__avg_Angle": [45.0],
+            "RB__avg_Angle": [40.0],
+            "cycle_valid": [True],
+        }
+    )
+
+    assert list(_selected_alma_output(alma, settings)) == [
+        "stride_start (frame)",
+        "stride length (cm)",
+    ]
+    assert list(_selected_combined_output(combined, settings)) == [
+        "animal_id",
+        "left__stride length (cm)",
+        "LB__avg_Angle",
+        "cycle_valid",
+    ]
+
+
+def test_rustlab_and_custom_extraction_skip_disabled_parameters():
+    import numpy as np
+    import pandas as pd
+
+    frame_count = 10
+    coordinates = {}
+    for marker in (
+        "d-center-back",
+        "d-back-left",
+        "d-back-right",
+        "l-back-ankle",
+        "l-back-mtp",
+        "l-back-knee",
+        "l-back-toe",
+        "l-hip",
+        "l-iliac-crest",
+        "r-back-ankle",
+        "r-back-mtp",
+        "r-back-knee",
+        "r-back-toe",
+        "r-hip",
+        "r-iliac-crest",
+    ):
+        coordinates[(marker, "x")] = np.arange(frame_count, dtype=float)
+        coordinates[(marker, "y")] = np.arange(frame_count, dtype=float)
+        coordinates[(marker, "likelihood")] = np.ones(frame_count)
+    raw = pd.DataFrame(coordinates)
+    alma_parameters = pd.DataFrame({"stride_start (frame)": [0], "stride_end (frame)": [9]})
+    settings = AlmaSettings(
+        calibration_method="manual",
+        pixels_per_cm=10.0,
+        enabled_parameter_names=("LB__avg_Angle", "left_mtp_average_height"),
+    )
+    identity_kinematics = SimpleNamespace(butterworth_filter=lambda values, _fps, _cutoff: values)
+
+    rustlab = extract_rustlab1_parameters(raw, alma_parameters, settings, identity_kinematics)
+    custom = extract_custom_sop_parameters(raw, alma_parameters, settings, identity_kinematics)
+
+    assert rustlab.available_parameters == ("LB__avg_Angle",)
+    assert "RB__avg_Angle" not in rustlab.dataframe
+    assert custom.available_parameters == ("left_mtp_average_height",)
+    assert "right_mtp_average_height" not in custom.dataframe
 
 
 def test_rustlab1_generates_complete_runway_figure_bundle(tmp_path):
@@ -406,7 +488,9 @@ def test_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_pat
     )
 
 
-def test_edge_case_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path, alma_root, alma_fixtures_dir):
+def test_edge_case_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(
+    tmp_path, alma_root, alma_fixtures_dir
+):
     _assert_generated_parameters_match_real_alma(
         tmp_path,
         alma_root=alma_root,
@@ -492,8 +576,7 @@ def _assert_generated_parameters_match_real_alma(
         assert tmp_path / f"{input_csv.stem}_parameters_long.csv" in results[0].output_files
         assert tmp_path / f"{input_csv.stem}_parameter_summary.csv" in results[0].output_files
         assert all(
-            tmp_path / f"{input_csv.stem}_alma_figures" / filename
-            in results[0].output_files
+            tmp_path / f"{input_csv.stem}_alma_figures" / filename in results[0].output_files
             for filename in ALMA_FIGURE_FILENAMES
         )
     _assert_csv_text_equal(actual_output, expected_parameters_csv)
@@ -517,11 +600,7 @@ def _assert_csv_text_equal(actual_path: Path, expected_path: Path) -> None:
     )
 
     for line_number, (actual, expected) in enumerate(zip(actual_lines, expected_lines), start=1):
-        assert actual == expected, (
-            f"CSV differs at line {line_number}\n"
-            f"actual:   {actual}\n"
-            f"expected: {expected}"
-        )
+        assert actual == expected, f"CSV differs at line {line_number}\nactual:   {actual}\nexpected: {expected}"
 
 
 def _normalized_csv_text(path: Path) -> str:
