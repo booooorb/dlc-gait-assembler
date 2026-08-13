@@ -64,13 +64,34 @@ ALMA_PARAMETER_NAMES = (
     "Variability xy plane 10 strides mean",
     "Variability xy plane 10 strides SD",
 )
+ALMA_MULTIVIEW_PARAMETER_NAMES = tuple(
+    f"{side}__{name}" for side in ("left", "right") for name in ALMA_PARAMETER_NAMES
+)
 
 
 def gait_parameter_catalog() -> tuple[GaitParameterDefinition, ...]:
     definitions = [_alma_definition(name) for name in ALMA_PARAMETER_NAMES]
+    definitions.extend(
+        _alma_multiview_definition(side, name)
+        for side in ("left", "right")
+        for name in ALMA_PARAMETER_NAMES
+    )
     definitions.extend(_rustlab1_definition(name) for name in RUSTLAB1_PARAMETER_NAMES)
     definitions.extend(_custom_definition(name) for name in CUSTOM_SOP_PARAMETER_NAMES)
     return tuple(definitions)
+
+
+def _alma_multiview_definition(side: str, name: str) -> GaitParameterDefinition:
+    base = _alma_definition(name)
+    side_label = side.title()
+    return GaitParameterDefinition(
+        f"{side}__{name}",
+        "ALMA",
+        "Multi-view",
+        f"{side_label} side view",
+        f"{side_label} {base.markers.lower()}",
+        base.calculation,
+    )
 
 
 def _alma_definition(name: str) -> GaitParameterDefinition:
@@ -202,4 +223,9 @@ def _joint_markers(joint: str) -> str:
     }.get(joint, "Adjacent joint markers")
 
 
-__all__ = ["ALMA_PARAMETER_NAMES", "GaitParameterDefinition", "gait_parameter_catalog"]
+__all__ = [
+    "ALMA_MULTIVIEW_PARAMETER_NAMES",
+    "ALMA_PARAMETER_NAMES",
+    "GaitParameterDefinition",
+    "gait_parameter_catalog",
+]

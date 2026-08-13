@@ -416,8 +416,8 @@ def _run_view_csv_set(
 
     expanded = pd.concat(
         [
-            _selected_alma_output(left_result["parameters"], settings).reset_index(drop=True).add_prefix("left__"),
-            _selected_alma_output(right_result["parameters"], settings).reset_index(drop=True).add_prefix("right__"),
+            _selected_alma_output(left_result["parameters"], settings, side="left").reset_index(drop=True).add_prefix("left__"),
+            _selected_alma_output(right_result["parameters"], settings, side="right").reset_index(drop=True).add_prefix("right__"),
             rustlab_features,
             custom_features,
         ],
@@ -612,13 +612,28 @@ def _is_single_side_input_mode(input_mode: str) -> bool:
     return input_mode in {"Single side view", "Single-side ALMA"}
 
 
-def _selected_alma_output(parameters, settings: AlmaSettings):
+def _selected_alma_output(parameters, settings: AlmaSettings, side: str | None = None):
     selected = settings.enabled_parameter_names
     if selected is None:
         return parameters
     selected_set = set(selected)
+    has_side_selection = any(name.startswith(("left__", "right__")) for name in selected_set)
     gait_columns = set(ALMA_PARAMETER_NAMES)
-    columns = [column for column in parameters.columns if column not in gait_columns or column in selected_set]
+    columns = [
+        column
+        for column in parameters.columns
+        if column not in gait_columns
+        or (
+            side is None
+            and column in selected_set
+            or side is not None
+            and (
+                f"{side}__{column}" in selected_set
+                if has_side_selection
+                else column in selected_set
+            )
+        )
+    ]
     return parameters.loc[:, columns]
 
 
@@ -627,6 +642,7 @@ def _selected_combined_output(parameters, settings: AlmaSettings):
     if selected is None:
         return parameters
     selected_set = set(selected)
+    has_side_selection = any(name.startswith(("left__", "right__")) for name in selected_set)
     catalog_names = set(ALMA_PARAMETER_NAMES) | set(RUSTLAB1_PARAMETER_NAMES) | set(CUSTOM_SOP_PARAMETER_NAMES)
 
     def is_enabled(column: str) -> bool:
@@ -635,7 +651,7 @@ def _selected_combined_output(parameters, settings: AlmaSettings):
         if column.startswith(("left__", "right__")):
             unprefixed = column.split("__", 1)[1]
             if unprefixed in ALMA_PARAMETER_NAMES:
-                return unprefixed in selected_set
+                return column in selected_set if has_side_selection else unprefixed in selected_set
         return True
 
     return parameters.loc[:, [column for column in parameters if is_enabled(column)]]

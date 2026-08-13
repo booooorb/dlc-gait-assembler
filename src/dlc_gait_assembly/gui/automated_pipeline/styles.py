@@ -359,6 +359,7 @@ QTabWidget#ProfileConfigurationTabs QTabBar::tab {
 QTabWidget#ProfileConfigurationTabs QTabBar::tab:selected {
     background: {theme.SURFACE};
     color: {theme.TEXT};
+    border-bottom-color: transparent;
     font-weight: 650;
 }
 QScrollArea#ProfileModelsScroll {

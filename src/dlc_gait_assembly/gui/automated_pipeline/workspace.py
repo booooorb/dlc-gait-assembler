@@ -48,6 +48,7 @@ from dlc_gait_assembly.gui.automated_pipeline.styles import automated_pipeline_s
 from dlc_gait_assembly.gui.automated_pipeline.worker import AutomatedPipelineWorker
 from dlc_gait_assembly.gui.shared.icons import interface_icon
 from dlc_gait_assembly.gui.shared.progress import CircularProgressIndicator, DynamicProgressBar
+from dlc_gait_assembly.gui.shared.widgets import install_sliding_tab_bar
 from dlc_gait_assembly.services.automated_profiles import (
     AutomatedPipelineProfile,
     AutomatedProfileStore,
@@ -396,6 +397,7 @@ class AutomatedPipelineProfilesWidget(
         configuration_layout.addWidget(management)
 
         self.configuration_tabs = QTabWidget()
+        install_sliding_tab_bar(self.configuration_tabs, theme.TOOL_2)
         self.configuration_tabs.setObjectName("ProfileConfigurationTabs")
         self.configuration_tabs.setDocumentMode(True)
         self.configuration_tabs.tabBar().setExpanding(True)
@@ -720,6 +722,7 @@ class AutomatedPipelineProfilesWidget(
         )
         self.pipeline_review_preview_stack.addWidget(self.pipeline_review_video_list)
         self.pipeline_component_tabs = QTabWidget()
+        install_sliding_tab_bar(self.pipeline_component_tabs, theme.TOOL_1)
         self.pipeline_component_tabs.setObjectName("PipelineComponentTabs")
         self.pipeline_component_tabs.setDocumentMode(True)
         self.pipeline_component_tabs.tabBar().setExpanding(True)

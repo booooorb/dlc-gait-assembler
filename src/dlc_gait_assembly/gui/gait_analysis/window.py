@@ -73,6 +73,7 @@ from dlc_gait_assembly.gui.shared.interaction import (
     set_tooltip,
 )
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
+from dlc_gait_assembly.gui.shared.widgets import SlidingTabBar, install_sliding_tab_bar
 from dlc_gait_assembly.services.analysis_manifests import write_analysis_manifest
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.pipeline.alma import (
@@ -230,7 +231,7 @@ class AlmaKinematicsWidget(QWidget):
         settings_tabs = QTabWidget()
         settings_tabs.setObjectName("RunwaySettingsTabs")
         settings_tabs.setDocumentMode(True)
-        settings_tabs.tabBar().setExpanding(True)
+        settings_tabs.tabBar().hide()
         self.settings_tabs = settings_tabs
         setup_tab = QWidget()
         setup_tab_layout = QVBoxLayout(setup_tab)
@@ -264,6 +265,32 @@ class AlmaKinematicsWidget(QWidget):
         settings_tabs.addTab(mapping_tab, "Mapping")
         settings_tabs.addTab(parameters_tab, "Parameters")
         settings_tabs.addTab(output_tab, "Output")
+        section_labels = [settings_tabs.tabText(index) for index in range(settings_tabs.count())]
+        self.settings_section_rows = (
+            SlidingTabBar(theme.TOOL_3),
+            SlidingTabBar(theme.TOOL_3),
+        )
+        for label in section_labels[:4]:
+            self.settings_section_rows[0].addTab(label)
+        for label in section_labels[4:]:
+            self.settings_section_rows[1].addTab(label)
+        self.settings_section_rows[0].currentChanged.connect(
+            lambda index: settings_tabs.setCurrentIndex(index) if index >= 0 else None
+        )
+        self.settings_section_rows[1].currentChanged.connect(
+            lambda index: settings_tabs.setCurrentIndex(index + 4) if index >= 0 else None
+        )
+
+        def sync_settings_rows(index: int) -> None:
+            first_index = index if index < 4 else -1
+            second_index = index - 4 if index >= 4 else -1
+            self.settings_section_rows[0].set_active_row(index < 4)
+            self.settings_section_rows[1].set_active_row(index >= 4)
+            self.settings_section_rows[0].setCurrentIndex(first_index)
+            self.settings_section_rows[1].setCurrentIndex(second_index)
+
+        settings_tabs.currentChanged.connect(sync_settings_rows)
+        sync_settings_rows(0)
         self.mapping_tab = mapping_tab
         self.parameter_selection = parameters_tab
 
@@ -526,6 +553,14 @@ class AlmaKinematicsWidget(QWidget):
         output_tab_layout.addWidget(rustlab_box)
         output_tab_layout.addStretch(1)
 
+        settings_navigation = QVBoxLayout()
+        settings_navigation.setSpacing(2)
+        for row in self.settings_section_rows:
+            row.setObjectName("RunwaySettingsSectionRow")
+            row.setExpanding(True)
+            row.setDrawBase(False)
+            settings_navigation.addWidget(row)
+        left_layout.addLayout(settings_navigation)
         left_layout.addWidget(settings_tabs, 1)
 
         self.export_manifest_button = QPushButton("Export analysis manifest")
@@ -563,6 +598,7 @@ class AlmaKinematicsWidget(QWidget):
         right_layout.addWidget(self.progress)
 
         self.workspace_tabs = QTabWidget()
+        install_sliding_tab_bar(self.workspace_tabs, theme.TOOL_3)
         self.workspace_tabs.setObjectName("RunwayWorkspaceTabs")
         self.workspace_tabs.setDocumentMode(True)
         self.workspace_tabs.tabBar().setExpanding(True)
@@ -663,6 +699,19 @@ class AlmaKinematicsWidget(QWidget):
         left_column_layout = QVBoxLayout(left_column)
         left_column_layout.setContentsMargins(0, 0, 0, 0)
         left_column_layout.setSpacing(0)
+
+        for layout_index in range(left_layout.count()):
+            item = left_layout.itemAt(layout_index)
+            if item.layout() is settings_navigation:
+                left_layout.takeAt(layout_index)
+                break
+        sticky_settings_navigation = QWidget()
+        sticky_settings_navigation.setObjectName("RunwayStickySettingsNavigation")
+        sticky_settings_layout = QVBoxLayout(sticky_settings_navigation)
+        sticky_settings_layout.setContentsMargins(16, 10, 16, 6)
+        sticky_settings_layout.setSpacing(0)
+        sticky_settings_layout.addLayout(settings_navigation)
+        left_column_layout.addWidget(sticky_settings_navigation, 0)
 
         self.controls_scroll = QScrollArea()
         self.controls_scroll.setObjectName("RunwayControlsScroll")
@@ -1575,6 +1624,37 @@ class AlmaKinematicsWidget(QWidget):
             QTabWidget#RunwaySettingsTabs {
                 background: {theme.PANEL};
             }
+            QTabBar#RunwaySettingsSectionRow {
+                background: {theme.PANEL};
+                border: 0;
+            }
+            QWidget#RunwayStickySettingsNavigation {
+                background: {theme.PANEL};
+                border: 0;
+                border-bottom: 1px solid {theme.BORDER};
+            }
+            QTabBar#RunwaySettingsSectionRow::tab {
+                background: {theme.PANEL};
+                border: 0;
+                color: {theme.CONNECTOR};
+                font-size: 12px;
+                min-height: 30px;
+                padding: 0 8px;
+            }
+            QTabBar#RunwaySettingsSectionRow::tab:hover {
+                background: {theme.SOFT};
+                color: {theme.TEXT};
+            }
+            QTabBar#RunwaySettingsSectionRow::tab:selected {
+                background: {theme.SURFACE};
+                color: {theme.TEXT};
+                font-weight: 700;
+            }
+            QTabBar#RunwaySettingsSectionRow[activeRow="false"]::tab:selected {
+                background: {theme.PANEL};
+                color: {theme.CONNECTOR};
+                font-weight: 400;
+            }
             QTabWidget#RunwaySettingsTabs::pane {
                 background: {theme.BACKGROUND};
                 border: 0;
@@ -1609,7 +1689,7 @@ class AlmaKinematicsWidget(QWidget):
             QTabWidget#RunwayWorkspaceTabs QTabBar::tab:selected {
                 background: {theme.SURFACE};
                 color: {theme.TEXT};
-                border-bottom-color: {theme.TOOL_1};
+                border-bottom-color: transparent;
                 font-weight: 700;
             }
         """

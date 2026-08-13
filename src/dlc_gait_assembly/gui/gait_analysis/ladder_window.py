@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from dlc_gait_assembly.gui import theme
 from dlc_gait_assembly.gui.shared.interaction import install_wheel_value_guard, set_tooltip
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
+from dlc_gait_assembly.gui.shared.widgets import install_sliding_tab_bar
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.pipeline.alma import (
     default_alma_root,
@@ -180,6 +181,7 @@ class LadderAnalysisWidget(QWidget):
         settings_box = QGroupBox("Detection settings")
         settings_box_layout = QVBoxLayout(settings_box)
         self.settings_tabs = QTabWidget()
+        install_sliding_tab_bar(self.settings_tabs, theme.TOOL_2)
         left_settings_tab = QWidget()
         settings_layout = QGridLayout(left_settings_tab)
         self.method_combo = QComboBox()
@@ -246,6 +248,7 @@ class LadderAnalysisWidget(QWidget):
         bodyparts_box = QGroupBox("Paw markers")
         bodyparts_layout = QVBoxLayout(bodyparts_box)
         self.bodyparts_tabs = QTabWidget()
+        install_sliding_tab_bar(self.bodyparts_tabs, theme.TOOL_2)
         self.bodyparts_list = QListWidget()
         self.bodyparts_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.right_bodyparts_list = QListWidget()

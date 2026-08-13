@@ -165,14 +165,14 @@ def generate_stroke_analysis_outputs(
 
     left_aligned = align_parameters_to_cycles(
         cycles,
-        _selected_alma_parameters(left_parameters, settings),
+        _selected_alma_parameters(left_parameters, settings, side="left"),
         "left",
         pd,
         np,
     )
     right_aligned = align_parameters_to_cycles(
         cycles,
-        _selected_alma_parameters(right_parameters, settings),
+        _selected_alma_parameters(right_parameters, settings, side="right"),
         "right",
         pd,
         np,
@@ -434,16 +434,31 @@ def _selected_parameter_names(settings: AlmaSettings, available: tuple[str, ...]
     if selected is None:
         return available
     selected_set = set(selected)
+    has_side_selection = any(name.startswith(("left__", "right__")) for name in selected_set)
     return tuple(name for name in available if name in selected_set)
 
 
-def _selected_alma_parameters(parameters, settings: AlmaSettings):
+def _selected_alma_parameters(parameters, settings: AlmaSettings, side: str | None = None):
     selected = settings.enabled_parameter_names
     if selected is None:
         return parameters
     selected_set = set(selected)
     gait_columns = set(ALMA_PARAMETER_NAMES)
-    columns = [column for column in parameters if column not in gait_columns or column in selected_set]
+    columns = [
+        column
+        for column in parameters
+        if column not in gait_columns
+        or (
+            side is None
+            and column in selected_set
+            or side is not None
+            and (
+                f"{side}__{column}" in selected_set
+                if has_side_selection
+                else column in selected_set
+            )
+        )
+    ]
     return parameters.loc[:, columns]
 
 

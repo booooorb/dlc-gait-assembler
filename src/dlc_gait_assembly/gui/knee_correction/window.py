@@ -31,6 +31,7 @@ from dlc_gait_assembly.gui.knee_correction.workers import KneeCorrectionThread
 from dlc_gait_assembly.gui.shared.icons import interface_icon
 from dlc_gait_assembly.gui.shared.interaction import animate_button_emphasis
 from dlc_gait_assembly.gui.shared.progress import DynamicProgressBar
+from dlc_gait_assembly.gui.shared.widgets import install_sliding_tab_bar
 from dlc_gait_assembly.services.analysis_manifests import write_knee_analysis_manifest
 from dlc_gait_assembly.services.knee_correction import (
     PAIR_EXTENSIONS,
@@ -161,6 +162,7 @@ class KneeCorrectionWidget(QWidget):
         right_column.addWidget(preview_box, 1)
 
         self.settings_tabs = QTabWidget()
+        install_sliding_tab_bar(self.settings_tabs, theme.TOOL_3)
         self.settings_tabs.setObjectName("KneeCorrectionSettingsTabs")
         self.settings_tabs.setDocumentMode(True)
         self.settings_tabs.tabBar().setExpanding(True)
