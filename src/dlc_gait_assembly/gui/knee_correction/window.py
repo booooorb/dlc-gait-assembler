@@ -943,6 +943,18 @@ class KneeCorrectionWidget(QWidget):
                     background: {theme.CANVAS};
                     border: 1px solid {theme.BORDER};
                 }
+                QGroupBox[elevatedWorkspaceSurface="true"] {
+                    background: {theme.SURFACE};
+                    border: 0;
+                    border-radius: 7px;
+                    margin-top: 12px;
+                    padding-top: 8px;
+                }
+                QGroupBox[elevatedWorkspaceSurface="true"]::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 4px;
+                }
                 """,
             )
         )

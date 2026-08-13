@@ -164,6 +164,40 @@ def _menu_asset_pixmap(name: str, size: int) -> QPixmap:
     return source.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
+class MenuIllustrationLabel(QLabel):
+    """Aspect-fit a high-resolution menu illustration without affecting layout size."""
+
+    def __init__(self, asset_name: str, accessible_name: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("WorkspaceChoiceIllustration")
+        self.setAccessibleName(accessible_name)
+        self.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFixedHeight(178)
+        self._source_pixmap = QPixmap(str(MAIN_MENU_ICON_ASSET_DIR / f"{asset_name}.png"))
+        self._rendered_size = QSize()
+        self._render_for_size(self.sizeHint())
+
+    def sizeHint(self) -> QSize:
+        return QSize(360, 178)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._render_for_size(self.contentsRect().size())
+
+    def _render_for_size(self, target_size: QSize) -> None:
+        if self._source_pixmap.isNull() or target_size.isEmpty() or target_size == self._rendered_size:
+            return
+        self._rendered_size = target_size
+        self.setPixmap(
+            self._source_pixmap.scaled(
+                target_size,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     id: str
@@ -1297,7 +1331,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._snap_manual_stage_highlight)
 
     def _apply_tool_surface_depth(self, tool: QWidget) -> None:
-        """Replace major workspace outlines with restrained elevation."""
+        """Use inexpensive tonal elevation on large workspace surfaces."""
         surface_names = {
             "WorkspaceHeader",
             "WorkspaceSidebar",
@@ -1320,33 +1354,17 @@ class MainWindow(QMainWindow):
             if identity in seen:
                 continue
             seen.add(identity)
+            newly_elevated = not bool(surface.property("elevatedWorkspaceSurface"))
             surface.setProperty("elevatedWorkspaceSurface", True)
-            shadow = QGraphicsDropShadowEffect(surface)
-            shadow.setBlurRadius(16)
-            shadow.setOffset(0, 3)
-            shadow.setColor(QColor(0, 0, 0, 68 if theme.IS_DARK else 28))
-            surface.setGraphicsEffect(shadow)
-
-        if isinstance(tool, KneeCorrectionWidget):
-            tool.setStyleSheet(
-                tool.styleSheet()
-                + theme.stylesheet(
-                    """
-                    QGroupBox[elevatedWorkspaceSurface="true"] {
-                        background: {theme.SURFACE};
-                        border: 0;
-                        border-radius: 7px;
-                        margin-top: 12px;
-                        padding-top: 8px;
-                    }
-                    QGroupBox[elevatedWorkspaceSurface="true"]::title {
-                        subcontrol-origin: margin;
-                        left: 10px;
-                        padding: 0 4px;
-                    }
-                    """
-                )
-            )
+            # QGraphicsDropShadowEffect rasterizes the complete widget subtree on
+            # every repaint. These surfaces can contain tables, previews, and
+            # hundreds of controls, so their palette contrast provides depth far
+            # more cheaply than a live blur.
+            if surface.graphicsEffect() is not None:
+                surface.setGraphicsEffect(None)
+            if newly_elevated:
+                surface.style().unpolish(surface)
+                surface.style().polish(surface)
 
     def _refresh_stage_navigation(self) -> None:
         self._home_button.setProperty("activeNavigation", self._home_menu_active)
@@ -1813,6 +1831,13 @@ class MainMenuWidget(QWidget):
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(12)
 
+        illustration = MenuIllustrationLabel(
+            "runway-mouse",
+            "Laboratory mouse walking through a runway enclosure",
+            card,
+        )
+        illustration.setProperty("pipelineRole", "runway")
+        layout.addWidget(illustration)
         layout.addLayout(self._choice_header("runway", "runway", "Runway analysis"))
         description = QLabel(
             "Use the full runway workflow with automated runs, reusable profiles, "
@@ -1829,6 +1854,7 @@ class MainMenuWidget(QWidget):
         button.setCursor(Qt.PointingHandCursor)
         button.setToolTip("Open Automated, Profiles, and Manual runway workflows.")
         layout.addWidget(button)
+        self.runway_choice_illustration = illustration
         return card, button
 
     def _ladder_choice_card(self) -> tuple[QFrame, QPushButton]:
@@ -1839,6 +1865,13 @@ class MainMenuWidget(QWidget):
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(12)
 
+        illustration = MenuIllustrationLabel(
+            "ladder-mouse",
+            "Laboratory mouse walking across a horizontal ladder",
+            card,
+        )
+        illustration.setProperty("pipelineRole", "ladder")
+        layout.addWidget(illustration)
         layout.addLayout(self._choice_header("ladder", "ladder", "Ladder analysis"))
         description = QLabel("Detect paw placements, review slips or falls, and export ladder-rung events.")
         description.setObjectName("WorkspaceChoiceDescription")
@@ -1851,6 +1884,7 @@ class MainMenuWidget(QWidget):
         button.setProperty("pipelineRole", "ladder")
         button.setCursor(Qt.PointingHandCursor)
         layout.addWidget(button)
+        self.ladder_choice_illustration = illustration
         return card, button
 
     def showEvent(self, event) -> None:
@@ -1909,11 +1943,18 @@ class MainMenuWidget(QWidget):
 
     @staticmethod
     def _apply_card_depth(widget: QWidget) -> None:
-        shadow = QGraphicsDropShadowEffect(widget)
+        current_effect = widget.graphicsEffect()
+        if isinstance(current_effect, QGraphicsDropShadowEffect):
+            shadow = current_effect
+        elif current_effect is not None:
+            # Do not replace the temporary opacity effect used by entrance motion.
+            return
+        else:
+            shadow = QGraphicsDropShadowEffect(widget)
+            widget.setGraphicsEffect(shadow)
         shadow.setBlurRadius(24)
         shadow.setOffset(0, 5)
         shadow.setColor(QColor(0, 0, 0, 120 if theme.IS_DARK else 48))
-        widget.setGraphicsEffect(shadow)
 
     def show_home(self) -> None:
         self.view_stack.setCurrentWidget(self.home_page)
@@ -2030,11 +2071,15 @@ class MainMenuWidget(QWidget):
                 background: {theme.SURFACE};
                 border: 0;
                 border-radius: 8px;
-                min-height: 180px;
-                max-height: 210px;
+                min-height: 400px;
+                max-height: 455px;
             }
             QFrame#LadderChoiceCard {
                 background: {theme.SURFACE};
+            }
+            QLabel#WorkspaceChoiceIllustration {
+                background: transparent;
+                border: 0;
             }
             QLabel#PipelineChoiceGraphic {
                 background: {theme.PANEL};

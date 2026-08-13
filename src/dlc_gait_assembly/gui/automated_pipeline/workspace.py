@@ -3,15 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import (
-    QColor,
-    QPixmap,
-)
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -838,11 +834,9 @@ class AutomatedPipelineProfilesWidget(
         for surface in (
             frame for frame in self.findChildren(QFrame) if frame.objectName() in surface_names
         ):
-            shadow = QGraphicsDropShadowEffect(surface)
-            shadow.setBlurRadius(18)
-            shadow.setOffset(0, 4)
-            shadow.setColor(QColor(0, 0, 0, 72 if theme.IS_DARK else 32))
-            surface.setGraphicsEffect(shadow)
+            surface.setProperty("elevatedWorkspaceSurface", True)
+            if surface.graphicsEffect() is not None:
+                surface.setGraphicsEffect(None)
         icon_specs = (
             (self.remove_videos_button, "trash", theme.STATUS_ERROR),
             (self.clear_videos_button, "clear", theme.STATUS_ERROR),

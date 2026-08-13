@@ -257,7 +257,11 @@ class AlmaKinematicsWidget(QWidget):
         output_tab_layout = QVBoxLayout(output_tab)
         output_tab_layout.setContentsMargins(6, 6, 6, 6)
         output_tab_layout.setSpacing(3)
-        parameters_tab = GaitParameterSelectionWidget(self._defaults.enabled_parameter_names)
+        initial_multiside = self._defaults.input_mode not in {"Single side view", "Single-side ALMA"}
+        parameters_tab = GaitParameterSelectionWidget(
+            self._defaults.enabled_parameter_names,
+            multiside=initial_multiside,
+        )
         settings_tabs.addTab(setup_tab, "Setup")
         settings_tabs.addTab(calibration_tab, "Calibration")
         settings_tabs.addTab(analysis_tab, "Analysis")
@@ -299,9 +303,7 @@ class AlmaKinematicsWidget(QWidget):
         self.input_mode_combo = QComboBox()
         self.input_mode_combo.addItems([MULTI_SIDE_VIEW_MODE_LABEL, SINGLE_SIDE_VIEW_MODE_LABEL])
         self.input_mode_combo.setCurrentText(
-            SINGLE_SIDE_VIEW_MODE_LABEL
-            if self._defaults.input_mode in {"Single side view", "Single-side ALMA"}
-            else MULTI_SIDE_VIEW_MODE_LABEL
+            MULTI_SIDE_VIEW_MODE_LABEL if initial_multiside else SINGLE_SIDE_VIEW_MODE_LABEL
         )
         self.analysis_type_combo = QComboBox()
         self.analysis_type_combo.addItems(["Treadmill", "Spontaneous walking"])
@@ -737,6 +739,7 @@ class AlmaKinematicsWidget(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([500, 780])
         self.parameter_reference = GaitParameterReferenceWidget()
+        self.parameter_reference.set_multiside(initial_multiside)
         self.workspace_stack.addWidget(self.parameter_reference)
 
     def _install_interactions(self) -> None:
@@ -821,6 +824,7 @@ class AlmaKinematicsWidget(QWidget):
             self.workspace_title.setText("Runway analysis")
             self.parameter_reference_button.setText("Parameter reference")
         else:
+            self.parameter_reference.set_multiside(self._is_three_view_mode())
             self.workspace_stack.setCurrentWidget(self.parameter_reference)
             self.workspace_title.setText("Gait parameter reference")
             self.parameter_reference_button.setText("Back to analysis")
@@ -1200,6 +1204,8 @@ class AlmaKinematicsWidget(QWidget):
 
     def _update_input_mode(self) -> None:
         three_view = self._is_three_view_mode()
+        self.parameter_selection.set_multiside(three_view)
+        self.parameter_reference.set_multiside(three_view)
         self.view_set_table.setVisible(three_view)
         self.view_set_status_label.setVisible(three_view)
         self.edit_pairing_button.setVisible(three_view)

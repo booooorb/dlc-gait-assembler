@@ -53,6 +53,7 @@ from dlc_gait_assembly.gui.merging.window import MergingWidget
 from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 from dlc_gait_assembly.services.pipeline.alma import AlmaRunResult, AlmaSettings
+from dlc_gait_assembly.services.pipeline.gait_parameter_catalog import ALMA_PARAMETER_NAMES
 
 
 def test_application_stylesheet_uses_one_plain_component_system():
@@ -195,8 +196,16 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     ]
     assert menu.view_stack.currentWidget() is menu.home_page
     assert menu.automated_choice_button.text() == "Open automated pipeline"
-    assert menu.manual_choice_button.text() == "Open manual pipeline"
+    assert menu.manual_choice_button.text() == "Open Runway"
     assert menu.ladder_choice_button.text() == "Open ladder analysis"
+    assert not menu.runway_choice_illustration.pixmap().isNull()
+    assert not menu.ladder_choice_illustration.pixmap().isNull()
+    assert menu.runway_choice_illustration.accessibleName() == (
+        "Laboratory mouse walking through a runway enclosure"
+    )
+    assert menu.ladder_choice_illustration.accessibleName() == (
+        "Laboratory mouse walking across a horizontal ladder"
+    )
     assert not menu.automated_choice_button.icon().isNull()
     assert not menu.manual_choice_button.icon().isNull()
     expected_stages = [spec.label for spec in TOOL_SPECS]
@@ -252,8 +261,8 @@ def test_gait_parameter_reference_documents_and_filters_exported_parameters():
     reference = runway.parameter_reference
 
     assert runway.workspace_stack.currentWidget() is reference
-    assert reference.parameter_tree.topLevelItemCount() == 88
-    assert reference.count_label.text() == "Showing 88 of 88 gait parameters"
+    assert reference.parameter_tree.topLevelItemCount() == 132
+    assert reference.count_label.text() == "Showing 132 of 132 gait parameters"
 
     reference.view_filter.setCurrentText("Single-view")
     app.processEvents()
@@ -285,18 +294,38 @@ def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings()
     runway = AlmaKinematicsWidget()
     selection = runway.parameter_selection
 
-    assert selection.tree.topLevelItemCount() == 88
-    assert [selection.tree.topLevelItem(index).text(0) for index in range(3)] == ["1", "2", "3"]
-    assert selection.count_label.text() == "88 of 88 parameters enabled"
+    multi_names = selection.enabled_parameter_names()
+    multi_alma_names = {
+        name
+        for name in multi_names
+        if name.startswith(("left__", "right__")) and name.split("__", 1)[1] in ALMA_PARAMETER_NAMES
+    }
+    assert len(multi_alma_names) == 88
+    assert sum(name.startswith("left__") for name in multi_alma_names) == 44
+    assert sum(name.startswith("right__") for name in multi_alma_names) == 44
+    assert not set(ALMA_PARAMETER_NAMES).intersection(multi_names)
+    assert selection.count_label.text() == "132 of 132 parameters enabled"
 
     selection.clear_button.click()
     app.processEvents()
-    selection.tree.topLevelItem(3).setCheckState(1, Qt.Checked)
+    first_visible_item = next(
+        selection.tree.topLevelItem(index)
+        for index in range(selection.tree.topLevelItemCount())
+        if not selection.tree.topLevelItem(index).isHidden()
+    )
+    first_visible_item.setCheckState(1, Qt.Checked)
     app.processEvents()
 
-    selected_name = selection.tree.topLevelItem(3).text(1)
-    assert selection.count_label.text() == "1 of 88 parameters enabled"
+    selected_name = first_visible_item.text(1)
+    assert selection.count_label.text() == "1 of 132 parameters enabled"
     assert runway._collect_settings().enabled_parameter_names == (selected_name,)
+
+    runway.input_mode_combo.setCurrentText("Single side view")
+    app.processEvents()
+    single_names = runway._collect_settings().enabled_parameter_names
+    assert set(single_names) == set(ALMA_PARAMETER_NAMES)
+    assert not any(name.startswith(("left__", "right__")) for name in single_names)
+    assert selection.count_label.text() == "44 of 44 parameters enabled"
     runway.close()
 
 
