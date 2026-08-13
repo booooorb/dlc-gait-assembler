@@ -195,7 +195,9 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
         "Automated pipeline",
     ]
     assert menu.view_stack.currentWidget() is menu.home_page
-    assert menu.automated_choice_button.text() == "Open automated pipeline"
+    assert menu.automated_choice_button.text() == "Run automated pipeline"
+    assert menu.configure_profiles_button.text() == "Configure profiles"
+    assert menu.configure_profiles_button.sizeHint().height() < menu.automated_choice_button.sizeHint().height()
     assert menu.manual_choice_button.text() == "Open Runway"
     assert menu.ladder_choice_button.text() == "Open ladder analysis"
     assert not menu.runway_choice_illustration.pixmap().isNull()
@@ -207,6 +209,7 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
         "Laboratory mouse walking across a horizontal ladder"
     )
     assert not menu.automated_choice_button.icon().isNull()
+    assert not menu.configure_profiles_button.icon().isNull()
     assert not menu.manual_choice_button.icon().isNull()
     expected_stages = [spec.label for spec in TOOL_SPECS]
     manual_page = tabs.widget(0)
@@ -249,6 +252,36 @@ def test_ladder_analysis_opens_from_secondary_home_workflow_and_returns_home():
     app.processEvents()
     assert window._stack.currentWidget() is window._main_menu
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
+    window.close()
+
+
+def test_manual_pipeline_card_zooms_into_an_actionable_manual_only_menu():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.resize(1180, 700)
+    window.show()
+    window._show_runway_menu()
+    QTest.qWait(100)
+
+    source_width = window._main_menu._manual_choice_card_widget.width()
+    window._main_menu.runway_manual_choice_button.click()
+    app.processEvents()
+
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.manual_pipeline_page
+    assert window._main_menu._manual_zoom_animation.state() == QAbstractAnimation.State.Running
+    overlay_effect = window._main_menu._manual_zoom_overlay.graphicsEffect()
+    assert overlay_effect is None
+    QTest.qWait(380)
+    assert window._main_menu._manual_zoom_overlay is None
+    assert window._main_menu._expanded_manual_card_widget.width() > source_width
+    assert not window._main_menu._automated_choice_card_widget.isVisible()
+
+    stages = window._main_menu.manual_pipeline_page.findChildren(QFrame, "ManualMiniStage")
+    assert len(stages) == 6
+    assert all(stage.cursor().shape() == Qt.PointingHandCursor for stage in stages)
+    stages[0].clicked.emit("manual_calibration")
+    app.processEvents()
+    assert window._active_tool_id == "manual_calibration"
     window.close()
 
 
@@ -449,6 +482,8 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
         "Gait\nanalysis",
         "PCA + random\nforest",
     ]
+    assert all(button.iconSize() == QSize(20, 20) for button in window._manual_stage_buttons.values())
+    assert all(not button.icon().isNull() for button in window._manual_stage_buttons.values())
     assert [label.text() for label in window._manual_stage_frame.findChildren(QLabel, "ManualStageSeparator")] == [
         ">",
         ">",
@@ -463,12 +498,11 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert [button.x() for button in stage_buttons] == sorted(button.x() for button in stage_buttons)
     assert window._manual_stage_animation.duration() == 260
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
-    assert window._main_menu.view_stack.currentWidget() is window._main_menu.workspace_page
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.manual_pipeline_page
     assert window._manual_tools_button.property("activeManual") is True
-    workflow_cards = window._main_menu.workspace_page.findChildren(QFrame, "WorkflowStep")
-    assert len(workflow_cards) == 6
-    assert len({card.x() for card in workflow_cards}) == 3
-    assert len({card.y() for card in workflow_cards}) == 2
+    expanded_stages = window._main_menu.manual_pipeline_page.findChildren(QFrame, "ManualMiniStage")
+    assert len(expanded_stages) == 6
+    assert len({stage.y() for stage in expanded_stages}) == 1
 
     window._manual_stage_buttons["manual_calibration"].click()
     QTest.qWait(300)

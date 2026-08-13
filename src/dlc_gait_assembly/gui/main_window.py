@@ -89,6 +89,14 @@ MANUAL_STAGE_ICONS = {
     "gait_parameter_analysis": "gait",
     "pca_random_forest": "chart",
 }
+MANUAL_STAGE_MENU_ASSETS = {
+    "manual_calibration": "stage-calibration",
+    "video_processing": "stage-video",
+    "deeplabcut": "stage-deeplabcut",
+    "knee_correction": "stage-knee",
+    "gait_parameter_analysis": "stage-gait",
+    "pca_random_forest": "stage-analysis",
+}
 PARTNER_WEBSITES = {
     "choforcelab.png": "https://www.choforcelab.ca",
     "NERVES_Logo.png": "https://nerves.bme.utah.edu",
@@ -198,6 +206,29 @@ class MenuIllustrationLabel(QLabel):
         )
 
 
+class ManualMiniStage(QFrame):
+    """Keyboard-accessible stage tile for the expanded manual menu."""
+
+    clicked = Signal(str)
+
+    def __init__(self, tool_id: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._tool_id = tool_id
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit(self._tool_id)
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.clicked.emit(self._tool_id)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     id: str
@@ -280,6 +311,7 @@ class MainWindow(QMainWindow):
         self._main_menu.tool_requested.connect(self._open_tool)
         self._main_menu.runway_requested.connect(self._show_runway_menu)
         self._main_menu.automated_requested.connect(self._show_automated_pipeline)
+        self._main_menu.profiles_requested.connect(self._show_automated_profiles)
         self._main_menu.manual_requested.connect(self._show_main_menu)
         self._main_menu.pipeline_tabs.currentChanged.connect(self._pipeline_tab_changed)
         self._main_menu.automated_profiles.workspace_changed.connect(self._automated_workspace_changed)
@@ -516,8 +548,8 @@ class MainWindow(QMainWindow):
             button.setEnabled(spec.enabled)
             button.setCursor(Qt.PointingHandCursor)
             button.setToolTip(spec.label)
-            button.setIcon(interface_icon(MANUAL_STAGE_ICONS[spec.id], theme.TOOL_3))
-            button.setIconSize(QSize(15, 15))
+            button.setIcon(QIcon(_menu_asset_pixmap(MANUAL_STAGE_MENU_ASSETS[spec.id], 20)))
+            button.setIconSize(QSize(20, 20))
             if spec.enabled:
                 button.clicked.connect(lambda _checked=False, tool_id=spec.id: self._open_tool(tool_id))
             self._manual_stage_buttons[spec.id] = button
@@ -886,8 +918,8 @@ class MainWindow(QMainWindow):
             button.setIcon(_navigation_icon(icon_name, color))
             button.setIconSize(QSize(18, 18))
         for stage_id, button in self._manual_stage_buttons.items():
-            button.setIcon(interface_icon(MANUAL_STAGE_ICONS[stage_id], theme.TOOL_3))
-            button.setIconSize(QSize(15, 15))
+            button.setIcon(QIcon(_menu_asset_pixmap(MANUAL_STAGE_MENU_ASSETS[stage_id], 20)))
+            button.setIconSize(QSize(20, 20))
         self._settings_button.setIcon(interface_icon("gear", theme.TEXT))
         self._settings_button.setIconSize(QSize(16, 16))
 
@@ -989,8 +1021,7 @@ class MainWindow(QMainWindow):
             )
         manual_active = self._active_tool_id in self._manual_stage_buttons or (
             self._stack.currentWidget() is self._main_menu
-            and self._main_menu.view_stack.currentWidget() is self._main_menu.workspace_page
-            and self._main_menu.pipeline_tabs.currentIndex() == 0
+            and self._main_menu.view_stack.currentWidget() is self._main_menu.manual_pipeline_page
         )
         return self._runway_manual_button if manual_active else None
 
@@ -1496,6 +1527,7 @@ class MainMenuWidget(QWidget):
     tool_requested = Signal(str)
     runway_requested = Signal()
     automated_requested = Signal()
+    profiles_requested = Signal()
     manual_requested = Signal()
 
     def __init__(self, tools: list[ToolSpec]):
@@ -1505,6 +1537,8 @@ class MainMenuWidget(QWidget):
         self._tools = tools
         self._entrance_has_run = False
         self._entrance_animation: QParallelAnimationGroup | None = None
+        self._manual_zoom_animation: QParallelAnimationGroup | None = None
+        self._manual_zoom_overlay: QLabel | None = None
         self._build_ui()
         self._apply_style()
 
@@ -1531,7 +1565,7 @@ class MainMenuWidget(QWidget):
         home_layout.setSpacing(6)
         home_layout.addStretch(1)
 
-        home_title = QLabel("Choose an analysis workspace")
+        home_title = QLabel("Choose a setup")
         home_title.setObjectName("HomeTitle")
         home_layout.addWidget(home_title)
         self._home_title = home_title
@@ -1596,8 +1630,9 @@ class MainMenuWidget(QWidget):
         handoff_layout.addStretch(1)
         runway_choices.addWidget(handoff, 1)
 
-        automated_card, automated_button = self._automated_choice_card()
+        automated_card, automated_button, profiles_button = self._automated_choice_card()
         automated_button.clicked.connect(self.automated_requested.emit)
+        profiles_button.clicked.connect(self.profiles_requested.emit)
         runway_choices.addWidget(automated_card, 4)
         runway_home_layout.addLayout(runway_choices)
         runway_home_layout.addStretch(1)
@@ -1605,9 +1640,28 @@ class MainMenuWidget(QWidget):
         self._pipeline_handoff_widget = handoff
         self._automated_choice_card_widget = automated_card
         self.automated_choice_button = automated_button
+        self.configure_profiles_button = profiles_button
         self.runway_manual_choice_button = manual_button
         self.runway_home_page = runway_home_page
         view_stack.addWidget(runway_home_page)
+
+        manual_pipeline_page = QWidget()
+        manual_pipeline_page.setObjectName("ManualPipelineMenuPage")
+        manual_pipeline_layout = QVBoxLayout(manual_pipeline_page)
+        manual_pipeline_layout.setContentsMargins(22, 18, 22, 18)
+        manual_pipeline_layout.setSpacing(8)
+        manual_pipeline_layout.addStretch(1)
+        manual_pipeline_title = QLabel("Manual pipeline")
+        manual_pipeline_title.setObjectName("HomeTitle")
+        manual_pipeline_layout.addWidget(manual_pipeline_title)
+        expanded_manual_card, start_manual_button = self._manual_choice_card(expanded=True)
+        start_manual_button.clicked.connect(lambda: self.tool_requested.emit(self._tools[0].id))
+        manual_pipeline_layout.addWidget(expanded_manual_card)
+        manual_pipeline_layout.addStretch(1)
+        self._expanded_manual_card_widget = expanded_manual_card
+        self.start_manual_pipeline_button = start_manual_button
+        self.manual_pipeline_page = manual_pipeline_page
+        view_stack.addWidget(manual_pipeline_page)
 
         workspace_page = QWidget()
         workspace_page.setObjectName("PipelineWorkspacePage")
@@ -1682,7 +1736,7 @@ class MainMenuWidget(QWidget):
         header.addLayout(copy, 1)
         return header
 
-    def _automated_choice_card(self) -> tuple[QFrame, QPushButton]:
+    def _automated_choice_card(self) -> tuple[QFrame, QPushButton, QPushButton]:
         card = QFrame()
         card.setObjectName("PipelineChoiceCard")
         card.setProperty("pipelineRole", "automated")
@@ -1736,15 +1790,20 @@ class MainMenuWidget(QWidget):
                 flow.addWidget(connector)
         layout.addWidget(flow_widget)
         layout.addStretch(1)
-        button = QPushButton("Open automated pipeline")
+        profiles_button = QPushButton("Configure profiles")
+        profiles_button.setObjectName("ConfigureProfilesButton")
+        profiles_button.setCursor(Qt.PointingHandCursor)
+        profiles_button.setToolTip("Create, edit, and manage reusable automation profiles.")
+        layout.addWidget(profiles_button)
+        button = QPushButton("Run automated pipeline")
         button.setObjectName("PipelineChoiceButton")
         button.setProperty("pipelineRole", "automated")
         button.setCursor(Qt.PointingHandCursor)
         button.setToolTip("Select a profile and process a batch of videos.")
         layout.addWidget(button)
-        return card, button
+        return card, button, profiles_button
 
-    def _manual_choice_card(self) -> tuple[QFrame, QPushButton]:
+    def _manual_choice_card(self, *, expanded: bool = False) -> tuple[QFrame, QPushButton]:
         card = QFrame()
         card.setObjectName("PipelineChoiceCard")
         card.setProperty("pipelineRole", "manual")
@@ -1771,17 +1830,15 @@ class MainMenuWidget(QWidget):
             "Extract gait events and metrics.",
             "Perform PCA and classification.",
         )
-        stage_assets = (
-            "stage-calibration",
-            "stage-video",
-            "stage-deeplabcut",
-            "stage-knee",
-            "stage-gait",
-            "stage-analysis",
-        )
-        for index, _spec in enumerate(self._tools):
-            stage = QFrame()
+        for index, spec in enumerate(self._tools):
+            stage = ManualMiniStage(spec.id)
             stage.setObjectName("ManualMiniStage")
+            stage.setProperty("expandedStage", expanded)
+            stage.setAccessibleName(f"Open {stage_names[index]}")
+            if expanded and spec.enabled:
+                stage.setCursor(Qt.PointingHandCursor)
+                stage.setToolTip(f"Open {spec.label}")
+                stage.clicked.connect(self.tool_requested.emit)
             stage.setFixedHeight(198)
             stage_layout = QVBoxLayout(stage)
             stage_layout.setContentsMargins(0, 0, 0, 0)
@@ -1789,7 +1846,7 @@ class MainMenuWidget(QWidget):
             icon = QLabel()
             icon.setObjectName("ManualMiniStageIcon")
             icon.setAlignment(Qt.AlignCenter)
-            icon.setPixmap(_menu_asset_pixmap(stage_assets[index], 58))
+            icon.setPixmap(_menu_asset_pixmap(MANUAL_STAGE_MENU_ASSETS[spec.id], 58))
             icon.setFixedHeight(66)
             stage_layout.addWidget(icon)
             title = QLabel(f"{index + 1}. {stage_names[index]}")
@@ -1808,6 +1865,9 @@ class MainMenuWidget(QWidget):
             file_label.setObjectName("ManualMiniStageFile")
             file_label.setAlignment(Qt.AlignCenter)
             stage_layout.addWidget(file_label)
+            if expanded:
+                for label in stage.findChildren(QLabel):
+                    label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             stages.addWidget(stage, 1, Qt.AlignTop)
             if index < len(self._tools) - 1:
                 arrow = QLabel("→")
@@ -1816,7 +1876,7 @@ class MainMenuWidget(QWidget):
                 stages.addWidget(arrow)
         layout.addLayout(stages)
         layout.addStretch(1)
-        button = QPushButton("Open manual pipeline")
+        button = QPushButton("Start with calibration" if expanded else "Open manual pipeline")
         button.setObjectName("PipelineChoiceButton")
         button.setProperty("pipelineRole", "manual")
         button.setCursor(Qt.PointingHandCursor)
@@ -1966,8 +2026,62 @@ class MainMenuWidget(QWidget):
 
     def show_manual(self) -> None:
         self.pipeline_tabs.setCurrentIndex(0)
-        self.view_stack.setCurrentWidget(self.workspace_page)
-        QTimer.singleShot(0, self._apply_workflow_card_depth)
+        animate = self.view_stack.currentWidget() is self.runway_home_page
+        if not animate:
+            self.view_stack.setCurrentWidget(self.manual_pipeline_page)
+            QTimer.singleShot(0, lambda: self._apply_card_depth(self._expanded_manual_card_widget))
+            return
+
+        source = self._manual_choice_card_widget
+        source_rect = QRect(source.mapTo(self, QPoint(0, 0)), source.size())
+        source_pixmap = source.grab()
+        self.view_stack.setCurrentWidget(self.manual_pipeline_page)
+
+        destination_effect = QGraphicsOpacityEffect(self._expanded_manual_card_widget)
+        destination_effect.setOpacity(0.0)
+        self._expanded_manual_card_widget.setGraphicsEffect(destination_effect)
+
+        overlay = QLabel(self)
+        overlay.setObjectName("ManualPipelineZoomOverlay")
+        overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        overlay.setScaledContents(True)
+        overlay.setPixmap(source_pixmap)
+        overlay.setGeometry(source_rect)
+        overlay.show()
+        overlay.raise_()
+        self._manual_zoom_overlay = overlay
+        QTimer.singleShot(0, self._start_manual_zoom)
+
+    def _start_manual_zoom(self) -> None:
+        overlay = self._manual_zoom_overlay
+        if overlay is None:
+            return
+        target = self._expanded_manual_card_widget
+        target_rect = QRect(target.mapTo(self, QPoint(0, 0)), target.size())
+        group = QParallelAnimationGroup(self)
+        geometry_animation = QPropertyAnimation(overlay, b"geometry", group)
+        geometry_animation.setDuration(340)
+        geometry_animation.setStartValue(overlay.geometry())
+        geometry_animation.setEndValue(target_rect)
+        geometry_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        group.addAnimation(geometry_animation)
+
+        group.finished.connect(self._finish_manual_zoom)
+        self._manual_zoom_animation = group
+        group.start()
+
+    def _finish_manual_zoom(self) -> None:
+        overlay = self._manual_zoom_overlay
+        destination_effect = self._expanded_manual_card_widget.graphicsEffect()
+        if isinstance(destination_effect, QGraphicsOpacityEffect):
+            destination_effect.setOpacity(1.0)
+        self._expanded_manual_card_widget.repaint()
+        if overlay is not None:
+            overlay.hide()
+            overlay.deleteLater()
+        self._manual_zoom_overlay = None
+        self._expanded_manual_card_widget.setGraphicsEffect(None)
+        self._apply_card_depth(self._expanded_manual_card_widget)
 
     def show_automated(self) -> None:
         self.pipeline_tabs.setCurrentIndex(1)
@@ -2129,6 +2243,11 @@ class MainMenuWidget(QWidget):
                 min-height: 198px;
                 max-height: 204px;
             }
+            QFrame#ManualMiniStage[expandedStage="true"]:hover,
+            QFrame#ManualMiniStage[expandedStage="true"]:focus {
+                background: {theme.PANEL};
+                border-radius: 6px;
+            }
             QLabel#ManualMiniStageIcon {
                 min-height: 66px;
                 max-height: 66px;
@@ -2243,6 +2362,19 @@ class MainMenuWidget(QWidget):
                 background: {theme.PANEL};
                 border-color: {theme.TEXT};
             }
+            QPushButton#ConfigureProfilesButton {
+                background: transparent;
+                border: 0;
+                color: {theme.TOOL_2};
+                font-size: 11px;
+                font-weight: 650;
+                min-height: 24px;
+                padding: 1px 8px;
+            }
+            QPushButton#ConfigureProfilesButton:hover {
+                background: {theme.PANEL};
+                color: {theme.TEXT};
+            }
             QFrame#WorkflowSeparator {
                 border: 0;
                 background: {theme.BORDER};
@@ -2254,8 +2386,10 @@ class MainMenuWidget(QWidget):
                 font-size: 16px;
                 font-weight: 600;
             }
-            QWidget#ManualPipelinePage, QWidget#AutomatedPipelinePage {
+            QWidget#ManualPipelinePage, QWidget#AutomatedPipelinePage,
+            QWidget#ManualPipelineMenuPage {
                 background: transparent;
+                border: 0;
             }
             QFrame#WorkflowList {
                 background: transparent;
@@ -2330,6 +2464,8 @@ class MainMenuWidget(QWidget):
             self.ladder_choice_button.setIconSize(QSize(18, 18))
             self.automated_choice_button.setIcon(_navigation_icon("automated", theme.TOOL_1))
             self.automated_choice_button.setIconSize(QSize(18, 18))
+            self.configure_profiles_button.setIcon(_navigation_icon("profiles", theme.TOOL_2))
+            self.configure_profiles_button.setIconSize(QSize(14, 14))
             self.runway_manual_choice_button.setIcon(_navigation_icon("manual", theme.TOOL_3))
             self.runway_manual_choice_button.setIconSize(QSize(18, 18))
         for step in self.findChildren(WorkflowStep):
