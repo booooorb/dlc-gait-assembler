@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -62,7 +63,7 @@ from dlc_gait_assembly.gui.shared.icons import interface_icon
 from dlc_gait_assembly.gui.shared.widgets import CurrentPageStackedWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 
-WORKFLOW_ROW_HEIGHT = 64
+WORKFLOW_ROW_HEIGHT = 44
 APP_TOOLBAR_HEIGHT = 64
 MAIN_MENU_LOGO_HEIGHT = 24
 MAIN_MENU_LOGO_MAX_WIDTH = 104
@@ -115,7 +116,7 @@ def _navigation_icon(icon_name: str, color: str) -> QIcon:
     accent = QColor(color)
     painter.setPen(QPen(accent, 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
 
-    if icon_name == "run":
+    if icon_name == "automated":
         painter.drawEllipse(QRectF(1.8, 1.8, 14.4, 14.4))
         path = QPainterPath()
         path.moveTo(7.1, 5.2)
@@ -125,6 +126,15 @@ def _navigation_icon(icon_name: str, color: str) -> QIcon:
         painter.setPen(Qt.NoPen)
         painter.setBrush(accent)
         painter.drawPath(path)
+    elif icon_name == "runway":
+        path = QPainterPath()
+        path.moveTo(5.0, 16.0)
+        path.lineTo(7.1, 2.0)
+        path.moveTo(13.0, 16.0)
+        path.lineTo(10.9, 2.0)
+        painter.drawPath(path)
+        for y in (5.0, 9.0, 13.0):
+            painter.drawLine(QPointF(8.4, y), QPointF(9.6, y))
     elif icon_name == "profiles":
         painter.setBrush(Qt.NoBrush)
         for top, inset in ((2.4, 0.0), (6.4, 0.8), (10.4, 1.6)):
@@ -136,6 +146,11 @@ def _navigation_icon(icon_name: str, color: str) -> QIcon:
             painter.setBrush(accent)
             painter.drawEllipse(QPointF(knob_x, y), 2.0, 2.0)
             painter.setBrush(Qt.NoBrush)
+    elif icon_name == "ladder":
+        painter.drawLine(QPointF(4.0, 2.0), QPointF(4.0, 16.0))
+        painter.drawLine(QPointF(14.0, 2.0), QPointF(14.0, 16.0))
+        for y in (4.0, 7.5, 11.0, 14.5):
+            painter.drawLine(QPointF(4.0, y), QPointF(14.0, y))
 
     painter.end()
     return QIcon(pixmap)
@@ -229,6 +244,7 @@ class MainWindow(QMainWindow):
         self._stack = CurrentPageStackedWidget()
         self._main_menu = MainMenuWidget(TOOL_SPECS)
         self._main_menu.tool_requested.connect(self._open_tool)
+        self._main_menu.runway_requested.connect(self._show_runway_menu)
         self._main_menu.automated_requested.connect(self._show_automated_pipeline)
         self._main_menu.manual_requested.connect(self._show_main_menu)
         self._main_menu.pipeline_tabs.currentChanged.connect(self._pipeline_tab_changed)
@@ -260,6 +276,7 @@ class MainWindow(QMainWindow):
             apply_style = getattr(tool, "_apply_style", None)
             if apply_style is not None:
                 apply_style()
+            self._apply_tool_surface_depth(tool)
         self._refresh_stage_navigation()
         self.update()
 
@@ -273,12 +290,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_primary_navigation_highlight"):
             self._snap_primary_navigation_highlight()
         if getattr(self, "_manual_stage_expanded", False):
-            self._position_manual_stage_rail()
+            self._snap_manual_stage_highlight()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if getattr(self, "_manual_stage_expanded", False):
-            self._position_manual_stage_rail()
+            self._snap_manual_stage_highlight()
 
     def _build_shell(self, initial_theme_mode: str) -> None:
         shell = QWidget()
@@ -289,13 +306,15 @@ class MainWindow(QMainWindow):
 
         toolbar = QFrame()
         toolbar.setObjectName("AppToolbar")
-        toolbar.setFixedHeight(APP_TOOLBAR_HEIGHT)
+        toolbar.setMinimumHeight(APP_TOOLBAR_HEIGHT)
+        toolbar.setMaximumHeight(APP_TOOLBAR_HEIGHT)
         toolbar_layout = QVBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(0)
 
         primary_row = QFrame()
         primary_row.setObjectName("PrimaryToolbarRow")
+        primary_row.setFixedHeight(APP_TOOLBAR_HEIGHT)
         primary_layout = QHBoxLayout(primary_row)
         primary_layout.setContentsMargins(20, 0, 16, 0)
         primary_layout.setSpacing(10)
@@ -322,35 +341,95 @@ class MainWindow(QMainWindow):
         navigation_layout.setContentsMargins(0, 0, 0, 0)
         navigation_layout.setSpacing(4)
 
-        self._automation_run_button = QPushButton("Automated")
-        self._automation_run_button.setObjectName("TopAutomationButton")
-        self._automation_run_button.setProperty("activeNavigation", False)
-        self._automation_run_button.setProperty("navigationRole", "automated")
-        self._automation_run_button.setCursor(Qt.PointingHandCursor)
-        self._automation_run_button.setToolTip(
-            "Open the automation run screen to select a saved profile, queue source "
-            "videos, and monitor pipeline progress."
+        runway_button = QToolButton()
+        runway_button.setObjectName("RunwayNavigationButton")
+        runway_button.setText("Runway  ›")
+        runway_button.setProperty("activeNavigation", False)
+        runway_button.setProperty("navigationRole", "runway")
+        runway_button.setCursor(Qt.PointingHandCursor)
+        runway_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        runway_button.setToolTip("Show automated, profile, and manual runway workflows.")
+        runway_button.clicked.connect(lambda _checked=False: self._toggle_runway_options())
+        navigation_layout.addWidget(runway_button)
+        self._runway_button = runway_button
+
+        runway_options = QFrame()
+        runway_options.setObjectName("RunwayOptions")
+        runway_options_layout = QHBoxLayout(runway_options)
+        runway_options_layout.setContentsMargins(9, 0, 9, 0)
+        runway_options_layout.setSpacing(4)
+
+        automation_group_label = QLabel("AUTOMATION")
+        automation_group_label.setObjectName("RunwayGroupLabel")
+        runway_options_layout.addWidget(automation_group_label)
+
+        automated_button = QPushButton("Automated")
+        automated_button.setObjectName("RunwayOptionButton")
+        automated_button.setProperty("runwayOption", "automated")
+        automated_button.setCursor(Qt.PointingHandCursor)
+        automated_button.clicked.connect(self._show_automated_pipeline)
+        runway_options_layout.addWidget(automated_button)
+        self._automation_run_button = automated_button
+
+        profiles_button = QPushButton("Profiles")
+        profiles_button.setObjectName("RunwayOptionButton")
+        profiles_button.setProperty("runwayOption", "profiles")
+        profiles_button.setCursor(Qt.PointingHandCursor)
+        profiles_button.clicked.connect(self._show_automated_profiles)
+        runway_options_layout.addWidget(profiles_button)
+        self._automation_profiles_button = profiles_button
+
+        runway_group_divider = QFrame()
+        runway_group_divider.setObjectName("RunwayGroupDivider")
+        runway_group_divider.setFrameShape(QFrame.VLine)
+        runway_options_layout.addWidget(runway_group_divider)
+
+        manual_group_label = QLabel("MANUAL")
+        manual_group_label.setObjectName("RunwayManualLabel")
+        runway_options_layout.addWidget(manual_group_label)
+        runway_options_layout.addSpacing(8)
+
+        manual_button = QToolButton()
+        manual_button.setObjectName("RunwayManualButton")
+        manual_button.setText("Manual")
+        manual_button.setCursor(Qt.PointingHandCursor)
+        manual_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        manual_button.setToolTip("Slide down the manual runway stages.")
+        manual_button.clicked.connect(self._show_main_menu)
+        runway_options_layout.addWidget(manual_button)
+        self._runway_manual_button = manual_button
+        runway_mode_highlight = QFrame(runway_options)
+        runway_mode_highlight.setObjectName("RunwayModeHighlight")
+        runway_mode_highlight.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        runway_mode_highlight.hide()
+        self._runway_mode_highlight = runway_mode_highlight
+        self._runway_mode_highlight_animation = QPropertyAnimation(
+            runway_mode_highlight, b"geometry", self
         )
-        self._automation_run_button.clicked.connect(self._show_automated_pipeline)
-        navigation_layout.addWidget(self._automation_run_button)
-        self._automation_profiles_button = QPushButton("Profiles")
-        self._automation_profiles_button.setObjectName("TopAutomationButton")
-        self._automation_profiles_button.setProperty("activeNavigation", False)
-        self._automation_profiles_button.setProperty("navigationRole", "profiles")
-        self._automation_profiles_button.setCursor(Qt.PointingHandCursor)
-        self._automation_profiles_button.setToolTip(
-            "Create and manage reusable automation profiles containing processing, "
-            "DeepLabCut, calibration, and gait-analysis inputs."
-        )
-        self._automation_profiles_button.clicked.connect(self._show_automated_profiles)
-        navigation_layout.addWidget(self._automation_profiles_button)
+        self._runway_mode_highlight_animation.setDuration(220)
+        self._runway_mode_highlight_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        runway_options.setFixedHeight(46)
+        runway_options.setMaximumWidth(0)
+        runway_options.hide()
+        navigation_layout.addWidget(runway_options, 0, Qt.AlignVCenter)
+        self._runway_options = runway_options
+        self._runway_options_expanded = False
+        self._runway_options_animation = QPropertyAnimation(runway_options, b"maximumWidth", self)
+        self._runway_options_animation.setDuration(230)
+        self._runway_options_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._runway_options_animation.finished.connect(self._runway_options_animation_finished)
+
+        ladder_button = QPushButton("Ladder")
+        ladder_button.setObjectName("LadderNavigationButton")
+        ladder_button.setProperty("activeNavigation", False)
+        ladder_button.setProperty("navigationRole", "ladder")
+        ladder_button.setCursor(Qt.PointingHandCursor)
+        ladder_button.setToolTip("Open ladder analysis.")
+        ladder_button.clicked.connect(lambda _checked=False: self._open_tool(LADDER_TOOL_SPEC.id))
+        navigation_layout.addWidget(ladder_button)
+        self._ladder_button = ladder_button
         primary_layout.addWidget(primary_navigation)
         self._primary_navigation = primary_navigation
-
-        manual_divider = QFrame()
-        manual_divider.setObjectName("ManualNavigationDivider")
-        manual_divider.setFrameShape(QFrame.VLine)
-        primary_layout.addWidget(manual_divider)
 
         manual_pipeline_group = QFrame(primary_row)
         manual_pipeline_group.setObjectName("ManualPipelineGroup")
@@ -368,7 +447,7 @@ class MainWindow(QMainWindow):
         manual_tools_button.setFixedWidth(106)
         manual_tools_button.clicked.connect(lambda _checked=False: self._manual_navigation_clicked())
         self._manual_tools_button = manual_tools_button
-        manual_pipeline_layout.addWidget(manual_tools_button)
+        manual_tools_button.hide()
 
         navigation_highlight = QFrame(primary_row)
         navigation_highlight.setObjectName("PrimaryNavigationHighlight")
@@ -388,10 +467,10 @@ class MainWindow(QMainWindow):
         self._primary_layout = primary_layout
         self._primary_navigation_layout = navigation_layout
 
-        manual_stage_frame = QFrame(primary_row)
+        manual_stage_frame = QFrame(toolbar)
         manual_stage_frame.setObjectName("ManualStageExpansion")
         manual_stage_layout = QHBoxLayout(manual_stage_frame)
-        manual_stage_layout.setContentsMargins(6, 3, 6, 3)
+        manual_stage_layout.setContentsMargins(8, 2, 8, 2)
         manual_stage_layout.setSpacing(0)
         self._manual_stage_buttons: dict[str, QPushButton] = {}
         for index, spec in enumerate(TOOL_SPECS):
@@ -403,6 +482,8 @@ class MainWindow(QMainWindow):
             button.setEnabled(spec.enabled)
             button.setCursor(Qt.PointingHandCursor)
             button.setToolTip(spec.label)
+            button.setIcon(interface_icon(MANUAL_STAGE_ICONS[spec.id], theme.TOOL_3))
+            button.setIconSize(QSize(15, 15))
             if spec.enabled:
                 button.clicked.connect(lambda _checked=False, tool_id=spec.id: self._open_tool(tool_id))
             self._manual_stage_buttons[spec.id] = button
@@ -412,19 +493,38 @@ class MainWindow(QMainWindow):
                 separator.setObjectName("ManualStageSeparator")
                 separator.setAlignment(Qt.AlignCenter)
                 manual_stage_layout.addWidget(separator)
-        manual_stage_frame.hide()
-        self._manual_stage_frame = manual_stage_frame
-        self._manual_stage_expanded = False
-        primary_layout.addWidget(manual_pipeline_group)
-        self._manual_pipeline_group = manual_pipeline_group
-        self._manual_stage_animation = QPropertyAnimation(
-            manual_stage_frame,
+        manual_stage_highlight = QFrame(manual_stage_frame)
+        manual_stage_highlight.setObjectName("ManualStageHighlight")
+        manual_stage_highlight.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        manual_stage_highlight.hide()
+        self._manual_stage_highlight = manual_stage_highlight
+        self._manual_stage_highlight_animation = QPropertyAnimation(
+            manual_stage_highlight,
             b"geometry",
             self,
         )
-        self._manual_stage_animation.setDuration(260)
-        self._manual_stage_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._manual_stage_highlight_animation.setDuration(220)
+        self._manual_stage_highlight_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        manual_stage_frame.hide()
+        manual_stage_frame.setMaximumHeight(0)
+        self._manual_stage_frame = manual_stage_frame
+        self._manual_stage_expanded = False
+        manual_pipeline_group.hide()
+        self._manual_pipeline_group = manual_pipeline_group
+        self._manual_stage_animation = QPropertyAnimation(
+            manual_stage_frame,
+            b"maximumHeight",
+            self,
+        )
+        self._manual_stage_animation.setDuration(210)
+        self._manual_stage_animation.setEasingCurve(QEasingCurve.Type.OutQuart)
         self._manual_stage_animation.finished.connect(self._manual_stage_animation_finished)
+        self._toolbar_height_animation = QPropertyAnimation(toolbar, b"minimumHeight", self)
+        self._toolbar_height_animation.setDuration(210)
+        self._toolbar_height_animation.setEasingCurve(QEasingCurve.Type.OutQuart)
+        self._toolbar_max_height_animation = QPropertyAnimation(toolbar, b"maximumHeight", self)
+        self._toolbar_max_height_animation.setDuration(210)
+        self._toolbar_max_height_animation.setEasingCurve(QEasingCurve.Type.OutQuart)
 
         primary_layout.addStretch(1)
 
@@ -452,6 +552,7 @@ class MainWindow(QMainWindow):
         primary_layout.addWidget(partner_marks)
         self._partner_marks = partner_marks
         toolbar_layout.addWidget(primary_row, 0)
+        toolbar_layout.addWidget(manual_stage_frame, 0)
 
         shell_layout.addWidget(toolbar)
         shell_layout.addWidget(self._stack, 1)
@@ -503,15 +604,6 @@ class MainWindow(QMainWindow):
                     max-height: 22px;
                     margin: 0 2px;
                 }
-                QFrame#ManualNavigationDivider {
-                    background: {theme.BORDER};
-                    border: 0;
-                    min-width: 1px;
-                    max-width: 1px;
-                    min-height: 24px;
-                    max-height: 24px;
-                    margin: 0 1px;
-                }
                 QFrame#PrimaryNavigation {
                     background: transparent;
                     border: 0;
@@ -533,7 +625,18 @@ class MainWindow(QMainWindow):
                     background: NAV_MANUAL_FILL;
                     border-bottom-color: {theme.TOOL_3};
                 }
-                QPushButton#TopAutomationButton,
+                QFrame#PrimaryNavigationHighlight[navigationRole="runway"] {
+                    background: NAV_PARENT_FILL;
+                    border-bottom-color: {theme.CONNECTOR};
+                }
+                QFrame#PrimaryNavigationHighlight[navigationRole="ladder"] {
+                    background: NAV_PROFILES_FILL;
+                    border-bottom-color: {theme.TOOL_2};
+                }
+                QToolButton#RunwayNavigationButton,
+                QPushButton#LadderNavigationButton,
+                QPushButton#RunwayOptionButton,
+                QToolButton#RunwayManualButton,
                 QToolButton#ManualPipelineButton {
                     background: transparent;
                     border: 1px solid transparent;
@@ -546,22 +649,99 @@ class MainWindow(QMainWindow):
                     max-height: 36px;
                     padding: 0 12px;
                 }
-                QPushButton#TopAutomationButton:hover,
+                QToolButton#RunwayNavigationButton:hover,
+                QPushButton#LadderNavigationButton:hover,
+                QPushButton#RunwayOptionButton:hover,
+                QToolButton#RunwayManualButton:hover,
+                QToolButton#RunwayManualButton:open,
                 QToolButton#ManualPipelineButton:hover {
                     background: {theme.PANEL};
                     color: {theme.TEXT};
                 }
-                QPushButton#TopAutomationButton[navigationRole="automated"][activeNavigation="true"] {
+                QToolButton#RunwayNavigationButton[activeNavigation="true"] {
+                    background: transparent;
+                    border-color: transparent;
+                    color: {theme.TEXT};
+                    font-weight: 700;
+                }
+                QPushButton#LadderNavigationButton[activeNavigation="true"] {
                     background: transparent;
                     border-bottom-color: transparent;
                     color: {theme.TEXT};
                     font-weight: 700;
                 }
-                QPushButton#TopAutomationButton[navigationRole="profiles"][activeNavigation="true"] {
+                QFrame#RunwayOptions {
+                    background: RUNWAY_GROUP_FILL;
+                    border: 1px solid RUNWAY_GROUP_BORDER;
+                    border-radius: 7px;
+                }
+                QLabel#RunwayGroupLabel,
+                QLabel#RunwayManualLabel {
                     background: transparent;
-                    border-bottom-color: transparent;
-                    color: {theme.TEXT};
+                    border: 0;
+                    color: {theme.CONNECTOR};
+                    font-size: 8px;
                     font-weight: 700;
+                    padding: 0 2px;
+                }
+                QLabel#RunwayManualLabel {
+                    color: {theme.TOOL_3};
+                }
+                QFrame#RunwayGroupDivider {
+                    background: {theme.BORDER};
+                    border: 0;
+                    min-width: 1px;
+                    max-width: 1px;
+                    min-height: 24px;
+                    max-height: 24px;
+                    margin: 0 4px;
+                }
+                QPushButton#RunwayOptionButton[runwayOption="automated"] {
+                    color: {theme.TOOL_1};
+                    border-color: transparent;
+                    background: transparent;
+                }
+                QPushButton#RunwayOptionButton[runwayOption="profiles"] {
+                    color: {theme.TOOL_2};
+                    border-color: transparent;
+                    background: transparent;
+                }
+                QToolButton#RunwayManualButton {
+                    color: {theme.TOOL_3};
+                    border-color: transparent;
+                    background: transparent;
+                }
+                QPushButton#RunwayOptionButton[runwayOption="automated"][activeNavigation="true"] {
+                    background: transparent;
+                    border-color: transparent;
+                    font-weight: 700;
+                }
+                QPushButton#RunwayOptionButton[runwayOption="profiles"][activeNavigation="true"] {
+                    background: transparent;
+                    border-color: transparent;
+                    font-weight: 700;
+                }
+                QToolButton#RunwayManualButton[activeNavigation="true"] {
+                    background: transparent;
+                    border-color: transparent;
+                    font-weight: 700;
+                }
+                QFrame#RunwayModeHighlight {
+                    background: transparent;
+                    border: 0;
+                    border-radius: 6px;
+                }
+                QFrame#RunwayModeHighlight[runwayMode="automated"] {
+                    background: COLOR_AUTO_FILL;
+                    border-bottom: 3px solid {theme.TOOL_1};
+                }
+                QFrame#RunwayModeHighlight[runwayMode="profiles"] {
+                    background: COLOR_PROFILES_FILL;
+                    border-bottom: 3px solid {theme.TOOL_2};
+                }
+                QFrame#RunwayModeHighlight[runwayMode="manual"] {
+                    background: COLOR_MANUAL_FILL;
+                    border-bottom: 3px solid {theme.TOOL_3};
                 }
                 QToolButton#ManualPipelineButton[activeManual="true"] {
                     background: transparent;
@@ -570,8 +750,10 @@ class MainWindow(QMainWindow):
                     font-weight: 700;
                 }
                 QFrame#ManualStageExpansion {
-                    background: transparent;
+                    background: {theme.PANEL};
                     border: 0;
+                    border-top: 1px solid {theme.BORDER};
+                    border-bottom: 1px solid {theme.BORDER};
                 }
                 QFrame#ManualPipelineGroup {
                     background: transparent;
@@ -580,25 +762,29 @@ class MainWindow(QMainWindow):
                 QPushButton#ManualStageButton {
                     background: transparent;
                     border: 0;
-                    border-bottom: 2px solid transparent;
                     border-radius: 0;
                     color: {theme.CONNECTOR};
-                    font-size: 10px;
+                    font-size: 11px;
                     font-weight: 600;
-                    min-height: 40px;
-                    max-height: 40px;
-                    padding: 0 1px;
+                    min-height: 34px;
+                    max-height: 34px;
+                    padding: 0 5px;
                 }
                 QPushButton#ManualStageButton:hover {
                     background: transparent;
                     color: {theme.TEXT};
-                    border-bottom-color: {theme.BORDER};
                 }
                 QPushButton#ManualStageButton[activeStage="true"] {
                     background: transparent;
                     color: {theme.TOOL_3};
-                    border-bottom-color: {theme.TOOL_3};
                     font-weight: 700;
+                }
+                QFrame#ManualStageHighlight {
+                    background: {theme.TOOL_3};
+                    border: 0;
+                    border-radius: 1px;
+                    min-height: 3px;
+                    max-height: 3px;
                 }
                 QLabel#ManualStageSeparator {
                     background: transparent;
@@ -635,8 +821,20 @@ class MainWindow(QMainWindow):
         stylesheet = (
             stylesheet.replace("NAV_HOME_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.9))
             .replace("NAV_RUN_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.84))
+            .replace("NAV_PARENT_FILL", theme.mix_hex(theme.CONNECTOR, theme.SURFACE, 0.9))
             .replace("NAV_PROFILES_FILL", theme.mix_hex(theme.TOOL_2, theme.SURFACE, 0.86))
             .replace("NAV_MANUAL_FILL", theme.mix_hex(theme.TOOL_3, theme.SURFACE, 0.86))
+            .replace("COLOR_AUTO_BORDER", theme.mix_hex(theme.TOOL_1, theme.BORDER, 0.35))
+            .replace("COLOR_AUTO_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.92))
+            .replace("COLOR_PROFILES_BORDER", theme.mix_hex(theme.TOOL_2, theme.BORDER, 0.35))
+            .replace("COLOR_PROFILES_FILL", theme.mix_hex(theme.TOOL_2, theme.SURFACE, 0.92))
+            .replace("COLOR_MANUAL_BORDER", theme.mix_hex(theme.TOOL_3, theme.BORDER, 0.35))
+            .replace("COLOR_MANUAL_FILL", theme.mix_hex(theme.TOOL_3, theme.SURFACE, 0.92))
+            .replace("RUNWAY_GROUP_BORDER", theme.mix_hex(theme.TOOL_1, theme.BORDER, 0.65))
+            .replace("RUNWAY_GROUP_FILL", theme.mix_hex(theme.TOOL_1, theme.SURFACE, 0.95))
+            .replace("RUNWAY_SELECTED_FILL", theme.mix_hex(theme.CONNECTOR, theme.SURFACE, 0.9))
+            .replace("RUNWAY_SELECTED_BORDER", theme.mix_hex(theme.CONNECTOR, theme.BORDER, 0.45))
+            .replace("RUNWAY_SELECTED_ACCENT", theme.CONNECTOR)
         )
         self._shell.setStyleSheet(stylesheet)
         self._apply_navigation_icons()
@@ -644,13 +842,18 @@ class MainWindow(QMainWindow):
     def _apply_navigation_icons(self) -> None:
         self._apply_brand_logo()
         navigation_icons = (
-            (self._automation_run_button, "run", theme.TOOL_1),
+            (self._runway_button, "runway", theme.TEXT),
+            (self._automation_run_button, "automated", theme.TOOL_1),
             (self._automation_profiles_button, "profiles", theme.TOOL_2),
-            (self._manual_tools_button, "manual", theme.TOOL_3),
+            (self._ladder_button, "ladder", theme.TOOL_2),
+            (self._runway_manual_button, "manual", theme.TOOL_3),
         )
         for button, icon_name, color in navigation_icons:
             button.setIcon(_navigation_icon(icon_name, color))
             button.setIconSize(QSize(18, 18))
+        for stage_id, button in self._manual_stage_buttons.items():
+            button.setIcon(interface_icon(MANUAL_STAGE_ICONS[stage_id], theme.TOOL_3))
+            button.setIconSize(QSize(15, 15))
         self._settings_button.setIcon(interface_icon("gear", theme.TEXT))
         self._settings_button.setIconSize(QSize(16, 16))
 
@@ -699,56 +902,222 @@ class MainWindow(QMainWindow):
         if checked:
             self.theme_mode_requested.emit(mode)
 
+    def _toggle_runway_options(self) -> None:
+        if self._runway_options_expanded:
+            self._set_runway_options_expanded(False)
+            return
+        self._show_runway_menu()
+
+    def _set_runway_options_expanded(self, expanded: bool) -> None:
+        expanded = bool(expanded)
+        if self._runway_options_expanded == expanded:
+            return
+        self._runway_options_expanded = expanded
+        self._runway_button.setText("Runway  ‹" if expanded else "Runway  ›")
+        runway_workspace_active = self._automation_menu_active or (
+            not self._home_menu_active and self._active_tool_id != LADDER_TOOL_SPEC.id
+        )
+        self._runway_button.setProperty("activeNavigation", expanded or runway_workspace_active)
+        animation = self._runway_options_animation
+        animation.stop()
+        if expanded:
+            start_width = self._runway_options.width() if self._runway_options.isVisible() else 0
+            self._runway_options.show()
+            target_width = self._runway_options.sizeHint().width()
+            self._runway_options.setMaximumWidth(start_width)
+            animation.setStartValue(start_width)
+            animation.setEndValue(target_width)
+        else:
+            animation.setStartValue(self._runway_options.width())
+            animation.setEndValue(0)
+        animation.start()
+        self._runway_button.setProperty("expanded", self._runway_options_expanded)
+        self._runway_button.style().unpolish(self._runway_button)
+        self._runway_button.style().polish(self._runway_button)
+        self._runway_button.update()
+
+    def _runway_options_animation_finished(self) -> None:
+        if self._runway_options_expanded:
+            self._runway_options.setMaximumWidth(16_777_215)
+            self._snap_runway_mode_highlight()
+            self._snap_primary_navigation_highlight()
+            return
+        self._runway_options.hide()
+        self._runway_mode_highlight.hide()
+        self._snap_primary_navigation_highlight()
+
+    def _active_runway_mode_button(self):
+        if self._automation_menu_active:
+            return (
+                self._automation_profiles_button
+                if self._automated_workspace_page == "profiles"
+                else self._automation_run_button
+            )
+        manual_active = self._active_tool_id in self._manual_stage_buttons or (
+            self._stack.currentWidget() is self._main_menu
+            and self._main_menu.view_stack.currentWidget() is self._main_menu.workspace_page
+            and self._main_menu.pipeline_tabs.currentIndex() == 0
+        )
+        return self._runway_manual_button if manual_active else None
+
+    def _runway_mode_highlight_target(self) -> QRect | None:
+        button = self._active_runway_mode_button()
+        if button is None or not button.isVisible():
+            return None
+        top_left = button.mapTo(self._runway_options, button.rect().topLeft())
+        return QRect(top_left.x(), top_left.y(), button.width(), button.height())
+
+    def _style_runway_mode_highlight(self) -> None:
+        button = self._active_runway_mode_button()
+        if button is self._automation_run_button:
+            mode = "automated"
+        elif button is self._automation_profiles_button:
+            mode = "profiles"
+        elif button is self._runway_manual_button:
+            mode = "manual"
+        else:
+            mode = ""
+        highlight = self._runway_mode_highlight
+        if highlight.property("runwayMode") == mode:
+            return
+        highlight.setProperty("runwayMode", mode)
+        highlight.style().unpolish(highlight)
+        highlight.style().polish(highlight)
+
+    def _snap_runway_mode_highlight(self) -> None:
+        target = self._runway_mode_highlight_target()
+        if target is None:
+            self._runway_mode_highlight.hide()
+            return
+        self._style_runway_mode_highlight()
+        self._runway_mode_highlight_animation.stop()
+        self._runway_mode_highlight.setGeometry(target)
+        self._runway_mode_highlight.show()
+        self._runway_mode_highlight.lower()
+
+    def _animate_runway_mode_highlight(self) -> None:
+        target = self._runway_mode_highlight_target()
+        highlight = self._runway_mode_highlight
+        if target is None:
+            highlight.hide()
+            return
+        self._style_runway_mode_highlight()
+        animation = self._runway_mode_highlight_animation
+        animation.stop()
+        if highlight.isHidden() or not self.isVisible():
+            highlight.setGeometry(target)
+            highlight.show()
+            highlight.lower()
+            return
+        animation.setStartValue(highlight.geometry())
+        animation.setEndValue(target)
+        highlight.show()
+        highlight.lower()
+        animation.start()
+
     def _set_manual_pipeline_expanded(self, expanded: bool) -> None:
         expanded = bool(expanded)
-        self._manual_tools_button.setText("Manual")
         if self._manual_stage_expanded == expanded:
-            self._toolbar.setFixedHeight(APP_TOOLBAR_HEIGHT)
+            if expanded and self._manual_stage_frame.isHidden():
+                self._manual_stage_frame.show()
+                self._manual_stage_frame.setMaximumHeight(WORKFLOW_ROW_HEIGHT)
+                self._toolbar.setMinimumHeight(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+                self._toolbar.setMaximumHeight(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+            elif expanded and self._manual_stage_animation.state() != QPropertyAnimation.State.Running:
+                self._manual_stage_frame.setMaximumHeight(WORKFLOW_ROW_HEIGHT)
+                self._toolbar.setMinimumHeight(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+                self._toolbar.setMaximumHeight(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+            elif not expanded and self._manual_stage_animation.state() != QPropertyAnimation.State.Running:
+                self._manual_stage_frame.hide()
+                self._toolbar.setMinimumHeight(APP_TOOLBAR_HEIGHT)
+                self._toolbar.setMaximumHeight(APP_TOOLBAR_HEIGHT)
             return
 
         self._manual_stage_expanded = expanded
         animation = self._manual_stage_animation
+        toolbar_animation = self._toolbar_height_animation
+        toolbar_max_animation = self._toolbar_max_height_animation
         animation.stop()
+        toolbar_animation.stop()
+        toolbar_max_animation.stop()
         if expanded:
-            self._partner_marks.hide()
-            self._primary_layout.activate()
-            target = self._manual_stage_target_geometry()
-            start = QRect(target.x(), target.y(), 0, target.height())
-            self._manual_stage_frame.setGeometry(start)
             self._manual_stage_frame.show()
-            self._manual_stage_frame.raise_()
-            animation.setStartValue(start)
-            animation.setEndValue(target)
+            self._manual_stage_frame.setMaximumHeight(0)
+            animation.setStartValue(0)
+            animation.setEndValue(WORKFLOW_ROW_HEIGHT)
+            toolbar_animation.setStartValue(self._toolbar.height())
+            toolbar_animation.setEndValue(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+            toolbar_max_animation.setStartValue(self._toolbar.height())
+            toolbar_max_animation.setEndValue(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
         else:
-            start = self._manual_stage_frame.geometry()
-            animation.setStartValue(start)
-            animation.setEndValue(QRect(start.x(), start.y(), 0, start.height()))
+            animation.setStartValue(self._manual_stage_frame.height())
+            animation.setEndValue(0)
+            toolbar_animation.setStartValue(self._toolbar.height())
+            toolbar_animation.setEndValue(APP_TOOLBAR_HEIGHT)
+            toolbar_max_animation.setStartValue(self._toolbar.height())
+            toolbar_max_animation.setEndValue(APP_TOOLBAR_HEIGHT)
         animation.start()
-        self._toolbar.setFixedHeight(APP_TOOLBAR_HEIGHT)
+        toolbar_animation.start()
+        toolbar_max_animation.start()
 
     def _manual_stage_target_geometry(self) -> QRect:
-        self._primary_layout.activate()
-        anchor = self._manual_tools_button.mapTo(self._primary_row, self._manual_tools_button.rect().topRight())
-        x = anchor.x() + 8
-        settings_left = self._settings_button.mapTo(self._primary_row, self._settings_button.rect().topLeft()).x()
-        width = min(500, max(0, settings_left - x - 12))
-        height = 50
-        return QRect(x, (APP_TOOLBAR_HEIGHT - height) // 2, width, height)
+        return QRect(0, APP_TOOLBAR_HEIGHT, self._shell.width(), WORKFLOW_ROW_HEIGHT)
 
     def _position_manual_stage_rail(self) -> None:
         if self._manual_stage_animation.state() == QPropertyAnimation.State.Running:
             return
-        self._manual_stage_frame.setGeometry(self._manual_stage_target_geometry())
-        self._manual_stage_frame.raise_()
+        self._manual_stage_frame.setMaximumHeight(WORKFLOW_ROW_HEIGHT)
 
     def _manual_stage_animation_finished(self) -> None:
         if self._manual_stage_expanded:
-            self._position_manual_stage_rail()
+            self._manual_stage_frame.setMaximumHeight(WORKFLOW_ROW_HEIGHT)
+            self._toolbar.setMinimumHeight(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+            self._toolbar.setMaximumHeight(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+            self._snap_manual_stage_highlight()
             if not self._automation_menu_active and not self._home_menu_active:
                 self._snap_primary_navigation_highlight()
             return
         self._manual_stage_frame.hide()
-        self._partner_marks.show()
+        self._manual_stage_highlight.hide()
+        self._toolbar.setMinimumHeight(APP_TOOLBAR_HEIGHT)
+        self._toolbar.setMaximumHeight(APP_TOOLBAR_HEIGHT)
+
+    def _manual_stage_highlight_target(self) -> QRect | None:
+        button = self._manual_stage_buttons.get(self._active_tool_id or "")
+        if button is None or not button.isVisible():
+            return None
+        top_left = button.mapTo(self._manual_stage_frame, button.rect().bottomLeft())
+        row_height = max(self._manual_stage_frame.height(), WORKFLOW_ROW_HEIGHT)
+        return QRect(top_left.x() + 4, row_height - 4, max(8, button.width() - 8), 3)
+
+    def _snap_manual_stage_highlight(self) -> None:
+        target = self._manual_stage_highlight_target()
+        if target is None:
+            self._manual_stage_highlight.hide()
+            return
+        self._manual_stage_highlight_animation.stop()
+        self._manual_stage_highlight.setGeometry(target)
+        self._manual_stage_highlight.show()
+        self._manual_stage_highlight.raise_()
+
+    def _animate_manual_stage_highlight(self) -> None:
+        target = self._manual_stage_highlight_target()
+        highlight = self._manual_stage_highlight
+        if target is None:
+            highlight.hide()
+            return
+        animation = self._manual_stage_highlight_animation
+        animation.stop()
+        if highlight.isHidden() or not self.isVisible():
+            highlight.setGeometry(target)
+            highlight.show()
+            highlight.raise_()
+            return
+        animation.setStartValue(highlight.geometry())
+        animation.setEndValue(target)
+        highlight.show()
+        highlight.raise_()
+        animation.start()
 
     def _manual_navigation_clicked(self) -> None:
         manual_active = (
@@ -788,6 +1157,7 @@ class MainWindow(QMainWindow):
         self._active_tool_id = None
         self._home_menu_active = True
         self._automation_menu_active = False
+        self._set_runway_options_expanded(False)
         self._set_manual_pipeline_expanded(False)
         self._main_menu.show_home()
         self.setWindowTitle("DLC Gait Assembler")
@@ -801,9 +1171,24 @@ class MainWindow(QMainWindow):
         self._active_tool_id = None
         self._home_menu_active = False
         self._automation_menu_active = False
+        self._set_runway_options_expanded(True)
         self._set_manual_pipeline_expanded(True)
         self._main_menu.show_manual()
         self.setWindowTitle("DLC Gait Assembler - Manual pipeline")
+        self._refresh_stage_navigation()
+        self._show_widget(self._main_menu)
+
+    def _show_runway_menu(self) -> None:
+        if not self._can_leave_active_tool():
+            return
+        self._active_tool = None
+        self._active_tool_id = None
+        self._home_menu_active = False
+        self._automation_menu_active = False
+        self._set_runway_options_expanded(True)
+        self._set_manual_pipeline_expanded(False)
+        self._main_menu.show_runway_home()
+        self.setWindowTitle("DLC Gait Assembler - Runway")
         self._refresh_stage_navigation()
         self._show_widget(self._main_menu)
 
@@ -814,6 +1199,7 @@ class MainWindow(QMainWindow):
         self._active_tool_id = None
         self._home_menu_active = False
         self._automation_menu_active = True
+        self._set_runway_options_expanded(True)
         self._automated_workspace_page = "run"
         self._set_manual_pipeline_expanded(False)
         self._main_menu.show_automated()
@@ -829,6 +1215,7 @@ class MainWindow(QMainWindow):
         self._active_tool_id = None
         self._home_menu_active = False
         self._automation_menu_active = True
+        self._set_runway_options_expanded(True)
         self._automated_workspace_page = "profiles"
         self._set_manual_pipeline_expanded(False)
         self._main_menu.show_automated()
@@ -853,6 +1240,8 @@ class MainWindow(QMainWindow):
             return
         self._home_menu_active = False
         self._automation_menu_active = index == 1
+        self._set_runway_options_expanded(True)
+        self._set_manual_pipeline_expanded(not self._automation_menu_active)
         if not self._automation_menu_active:
             self._active_tool_id = None
         self.setWindowTitle(
@@ -876,18 +1265,96 @@ class MainWindow(QMainWindow):
                 tool.back_requested.connect(self._show_home_menu)
             self._tool_widgets[tool_id] = tool
             self._stack.addWidget(tool)
+        self._apply_tool_surface_depth(tool)
 
+        is_manual_tool = tool_id in self._manual_stage_buttons
         self._active_tool = tool
         self._active_tool_id = tool_id
         self._home_menu_active = False
         self._automation_menu_active = False
-        self._set_manual_pipeline_expanded(tool_id != LADDER_TOOL_SPEC.id)
+        self._set_runway_options_expanded(is_manual_tool)
+        self._set_manual_pipeline_expanded(is_manual_tool)
         self.setWindowTitle(f"DLC Gait Assembler - {spec.label}")
         self._refresh_stage_navigation()
         self._show_widget(tool)
+        if is_manual_tool:
+            QTimer.singleShot(240, lambda expected_tool_id=tool_id: self._enforce_manual_row(expected_tool_id))
+
+    def _enforce_manual_row(self, expected_tool_id: str) -> None:
+        """Keep manual navigation visible after a newly mounted workspace settles."""
+        if self._active_tool_id != expected_tool_id or expected_tool_id not in self._manual_stage_buttons:
+            return
+        self._manual_stage_animation.stop()
+        self._toolbar_height_animation.stop()
+        self._toolbar_max_height_animation.stop()
+        self._manual_stage_expanded = True
+        self._manual_stage_frame.show()
+        self._manual_stage_frame.setMaximumHeight(WORKFLOW_ROW_HEIGHT)
+        self._toolbar.setMinimumHeight(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+        self._toolbar.setMaximumHeight(APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT)
+        self._manual_stage_frame.updateGeometry()
+        self._toolbar.updateGeometry()
+        QTimer.singleShot(0, self._snap_manual_stage_highlight)
+
+    def _apply_tool_surface_depth(self, tool: QWidget) -> None:
+        """Replace major workspace outlines with restrained elevation."""
+        surface_names = {
+            "WorkspaceHeader",
+            "WorkspaceSidebar",
+            "WorkspaceCanvas",
+            "OperationsBar",
+            "TerminalToolbar",
+            "TerminalFrame",
+        }
+        surfaces = [
+            child
+            for child in tool.findChildren(QWidget)
+            if child.objectName() in surface_names
+        ]
+        if isinstance(tool, KneeCorrectionWidget):
+            surfaces.extend(tool.findChildren(QGroupBox))
+
+        seen: set[int] = set()
+        for surface in surfaces:
+            identity = id(surface)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            surface.setProperty("elevatedWorkspaceSurface", True)
+            shadow = QGraphicsDropShadowEffect(surface)
+            shadow.setBlurRadius(16)
+            shadow.setOffset(0, 3)
+            shadow.setColor(QColor(0, 0, 0, 68 if theme.IS_DARK else 28))
+            surface.setGraphicsEffect(shadow)
+
+        if isinstance(tool, KneeCorrectionWidget):
+            tool.setStyleSheet(
+                tool.styleSheet()
+                + theme.stylesheet(
+                    """
+                    QGroupBox[elevatedWorkspaceSurface="true"] {
+                        background: {theme.SURFACE};
+                        border: 0;
+                        border-radius: 7px;
+                        margin-top: 12px;
+                        padding-top: 8px;
+                    }
+                    QGroupBox[elevatedWorkspaceSurface="true"]::title {
+                        subcontrol-origin: margin;
+                        left: 10px;
+                        padding: 0 4px;
+                    }
+                    """
+                )
+            )
 
     def _refresh_stage_navigation(self) -> None:
         self._home_button.setProperty("activeNavigation", self._home_menu_active)
+        runway_active = self._automation_menu_active or (
+            not self._home_menu_active and self._active_tool_id != LADDER_TOOL_SPEC.id
+        )
+        self._runway_button.setProperty("activeNavigation", runway_active)
+        self._ladder_button.setProperty("activeNavigation", self._active_tool_id == LADDER_TOOL_SPEC.id)
         self._automation_run_button.setProperty(
             "activeNavigation",
             self._automation_menu_active and self._automated_workspace_page == "run",
@@ -895,6 +1362,10 @@ class MainWindow(QMainWindow):
         self._automation_profiles_button.setProperty(
             "activeNavigation",
             self._automation_menu_active and self._automated_workspace_page == "profiles",
+        )
+        self._runway_manual_button.setProperty(
+            "activeNavigation",
+            self._active_runway_mode_button() is self._runway_manual_button,
         )
         manual_active = not self._home_menu_active and not self._automation_menu_active
         self._manual_tools_button.setProperty("activeManual", manual_active)
@@ -905,13 +1376,20 @@ class MainWindow(QMainWindow):
             stage_button.update()
         for button in (
             self._home_button,
+            self._runway_button,
+            self._ladder_button,
             self._automation_run_button,
             self._automation_profiles_button,
+            self._runway_manual_button,
             self._manual_tools_button,
         ):
             button.style().unpolish(button)
             button.style().polish(button)
             button.update()
+        if self._manual_stage_expanded:
+            self._animate_manual_stage_highlight()
+        if self._runway_options_expanded:
+            self._animate_runway_mode_highlight()
         self._animate_primary_navigation_highlight()
 
     def _animate_primary_navigation_highlight(self) -> None:
@@ -967,12 +1445,8 @@ class MainWindow(QMainWindow):
         highlight.style().polish(highlight)
 
     def _active_primary_navigation_target(self):
-        if self._automation_menu_active:
-            if self._automated_workspace_page == "profiles":
-                return self._automation_profiles_button, "profiles"
-            return self._automation_run_button, "automated"
-        if not self._home_menu_active and self._active_tool_id != LADDER_TOOL_SPEC.id:
-            return self._manual_tools_button, "manual"
+        if self._active_tool_id == LADDER_TOOL_SPEC.id:
+            return self._ladder_button, "ladder"
         return None, ""
 
     def _tool_spec(self, tool_id: str) -> ToolSpec:
@@ -1002,6 +1476,7 @@ class MainWindow(QMainWindow):
 
 class MainMenuWidget(QWidget):
     tool_requested = Signal(str)
+    runway_requested = Signal()
     automated_requested = Signal()
     manual_requested = Signal()
 
@@ -1038,17 +1513,47 @@ class MainMenuWidget(QWidget):
         home_layout.setSpacing(6)
         home_layout.addStretch(1)
 
-        home_title = QLabel("Gait analysis workflow")
+        home_title = QLabel("Choose an analysis workspace")
         home_title.setObjectName("HomeTitle")
         home_layout.addWidget(home_title)
         self._home_title = home_title
 
         choices = QHBoxLayout()
-        choices.setSpacing(10)
-        choices.setAlignment(Qt.AlignTop)
+        choices.setSpacing(16)
+        choices.setAlignment(Qt.AlignCenter)
+        runway_card, runway_button = self._runway_choice_card()
+        runway_button.clicked.connect(self.runway_requested.emit)
+        choices.addWidget(runway_card, 1)
+        ladder_card, ladder_button = self._ladder_choice_card()
+        ladder_button.clicked.connect(lambda: self.tool_requested.emit(LADDER_TOOL_SPEC.id))
+        choices.addWidget(ladder_card, 1)
+        home_layout.addLayout(choices)
+        self._runway_choice_card_widget = runway_card
+        self._ladder_choice_card_widget = ladder_card
+        self.ladder_choice_button = ladder_button
+
+        home_layout.addStretch(1)
+        self.runway_choice_button = runway_button
+        self.manual_choice_button = runway_button
+        self.home_page = home_page
+        view_stack.addWidget(home_page)
+
+        runway_home_page = QWidget()
+        runway_home_page.setObjectName("RunwayHomePage")
+        runway_home_layout = QVBoxLayout(runway_home_page)
+        runway_home_layout.setContentsMargins(22, 18, 22, 18)
+        runway_home_layout.setSpacing(8)
+        runway_home_layout.addStretch(1)
+        runway_title = QLabel("Runway workflow")
+        runway_title.setObjectName("HomeTitle")
+        runway_home_layout.addWidget(runway_title)
+
+        runway_choices = QHBoxLayout()
+        runway_choices.setSpacing(10)
+        runway_choices.setAlignment(Qt.AlignTop)
         manual_card, manual_button = self._manual_choice_card()
         manual_button.clicked.connect(self.manual_requested.emit)
-        choices.addWidget(manual_card, 9)
+        runway_choices.addWidget(manual_card, 9)
 
         handoff = QFrame()
         handoff.setObjectName("PipelineHandoff")
@@ -1071,27 +1576,20 @@ class MainMenuWidget(QWidget):
         handoff_arrow.setAlignment(Qt.AlignCenter)
         handoff_layout.addWidget(handoff_arrow)
         handoff_layout.addStretch(1)
-        choices.addWidget(handoff, 1)
+        runway_choices.addWidget(handoff, 1)
 
         automated_card, automated_button = self._automated_choice_card()
         automated_button.clicked.connect(self.automated_requested.emit)
-        choices.addWidget(automated_card, 4)
-        home_layout.addLayout(choices)
+        runway_choices.addWidget(automated_card, 4)
+        runway_home_layout.addLayout(runway_choices)
+        runway_home_layout.addStretch(1)
         self._manual_choice_card_widget = manual_card
         self._pipeline_handoff_widget = handoff
         self._automated_choice_card_widget = automated_card
-
-        ladder_card, ladder_button = self._ladder_choice_card()
-        ladder_button.clicked.connect(lambda: self.tool_requested.emit(LADDER_TOOL_SPEC.id))
-        home_layout.addWidget(ladder_card)
-        self._ladder_choice_card_widget = ladder_card
-        self.ladder_choice_button = ladder_button
-
-        home_layout.addStretch(1)
         self.automated_choice_button = automated_button
-        self.manual_choice_button = manual_button
-        self.home_page = home_page
-        view_stack.addWidget(home_page)
+        self.runway_manual_choice_button = manual_button
+        self.runway_home_page = runway_home_page
+        view_stack.addWidget(runway_home_page)
 
         workspace_page = QWidget()
         workspace_page.setObjectName("PipelineWorkspacePage")
@@ -1186,27 +1684,27 @@ class MainMenuWidget(QWidget):
         )
         for index, (asset_name, title_text, description_text) in enumerate(automated_steps):
             step = QWidget()
-            step.setFixedHeight(158)
+            step.setFixedHeight(198)
             step_layout = QVBoxLayout(step)
             step_layout.setContentsMargins(0, 0, 0, 0)
             step_layout.setSpacing(3)
             icon = QLabel()
             icon.setObjectName("AutomationFlowIcon")
-            icon.setPixmap(_menu_asset_pixmap(asset_name, 46))
+            icon.setPixmap(_menu_asset_pixmap(asset_name, 58))
             icon.setAlignment(Qt.AlignCenter)
-            icon.setFixedHeight(50)
+            icon.setFixedHeight(66)
             step_layout.addWidget(icon)
             title = QLabel(title_text)
             title.setObjectName("AutomationFlowTitle")
             title.setAlignment(Qt.AlignCenter)
             title.setWordWrap(True)
-            title.setFixedHeight(32)
+            title.setFixedHeight(40)
             step_layout.addWidget(title)
             description = QLabel(description_text)
             description.setObjectName("AutomationFlowDescription")
             description.setAlignment(Qt.AlignCenter)
             description.setWordWrap(True)
-            description.setFixedHeight(36)
+            description.setFixedHeight(48)
             step_layout.addWidget(description)
             output_spacer = QLabel()
             output_spacer.setObjectName("AutomationFlowSpacer")
@@ -1266,27 +1764,27 @@ class MainMenuWidget(QWidget):
         for index, _spec in enumerate(self._tools):
             stage = QFrame()
             stage.setObjectName("ManualMiniStage")
-            stage.setFixedHeight(158)
+            stage.setFixedHeight(198)
             stage_layout = QVBoxLayout(stage)
             stage_layout.setContentsMargins(0, 0, 0, 0)
             stage_layout.setSpacing(3)
             icon = QLabel()
             icon.setObjectName("ManualMiniStageIcon")
             icon.setAlignment(Qt.AlignCenter)
-            icon.setPixmap(_menu_asset_pixmap(stage_assets[index], 46))
-            icon.setFixedHeight(50)
+            icon.setPixmap(_menu_asset_pixmap(stage_assets[index], 58))
+            icon.setFixedHeight(66)
             stage_layout.addWidget(icon)
             title = QLabel(f"{index + 1}. {stage_names[index]}")
             title.setObjectName("ManualMiniStageTitle")
             title.setAlignment(Qt.AlignCenter)
             title.setWordWrap(True)
-            title.setFixedHeight(32)
+            title.setFixedHeight(40)
             stage_layout.addWidget(title)
             description = QLabel(descriptions[index])
             description.setObjectName("ManualMiniStageDescription")
             description.setAlignment(Qt.AlignCenter)
             description.setWordWrap(True)
-            description.setFixedHeight(36)
+            description.setFixedHeight(48)
             stage_layout.addWidget(description)
             file_label = QLabel(files[index])
             file_label.setObjectName("ManualMiniStageFile")
@@ -1307,37 +1805,51 @@ class MainMenuWidget(QWidget):
         layout.addWidget(button)
         return card, button
 
+    def _runway_choice_card(self) -> tuple[QFrame, QPushButton]:
+        card = QFrame()
+        card.setObjectName("RunwayChoiceCard")
+        card.setProperty("pipelineRole", "runway")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(12)
+
+        layout.addLayout(self._choice_header("runway", "runway", "Runway analysis"))
+        description = QLabel(
+            "Use the full runway workflow with automated runs, reusable profiles, "
+            "or the step-by-step manual pipeline."
+        )
+        description.setObjectName("WorkspaceChoiceDescription")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+        layout.addStretch(1)
+
+        button = QPushButton("Open Runway")
+        button.setObjectName("PipelineChoiceButton")
+        button.setProperty("pipelineRole", "manual")
+        button.setCursor(Qt.PointingHandCursor)
+        button.setToolTip("Open Automated, Profiles, and Manual runway workflows.")
+        layout.addWidget(button)
+        return card, button
+
     def _ladder_choice_card(self) -> tuple[QFrame, QPushButton]:
         card = QFrame()
         card.setObjectName("LadderChoiceCard")
         card.setProperty("pipelineRole", "ladder")
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(14)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(12)
 
-        graphic = QLabel()
-        graphic.setObjectName("PipelineChoiceGraphic")
-        graphic.setProperty("pipelineRole", "ladder")
-        graphic.setProperty("iconName", "ladder")
-        graphic.setAlignment(Qt.AlignCenter)
-        graphic.setFixedSize(48, 48)
-        layout.addWidget(graphic)
-
-        copy = QVBoxLayout()
-        copy.setSpacing(3)
-        title = QLabel("Ladder analysis")
-        title.setObjectName("PipelineChoiceTitle")
-        copy.addWidget(title)
+        layout.addLayout(self._choice_header("ladder", "ladder", "Ladder analysis"))
         description = QLabel("Detect paw placements, review slips or falls, and export ladder-rung events.")
-        description.setObjectName("LadderChoiceDescription")
-        copy.addWidget(description)
-        layout.addLayout(copy, 1)
+        description.setObjectName("WorkspaceChoiceDescription")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+        layout.addStretch(1)
 
         button = QPushButton("Open ladder analysis")
         button.setObjectName("PipelineChoiceButton")
         button.setProperty("pipelineRole", "ladder")
         button.setCursor(Qt.PointingHandCursor)
-        button.setMinimumWidth(210)
         layout.addWidget(button)
         return card, button
 
@@ -1353,10 +1865,8 @@ class MainMenuWidget(QWidget):
         group = QParallelAnimationGroup(self)
         targets = (
             (self._home_title, 0, False),
-            (self._manual_choice_card_widget, 70, True),
-            (self._pipeline_handoff_widget, 160, False),
-            (self._automated_choice_card_widget, 240, True),
-            (self._ladder_choice_card_widget, 320, True),
+            (self._runway_choice_card_widget, 80, True),
+            (self._ladder_choice_card_widget, 170, True),
         )
         for widget, delay, add_depth in targets:
             end_position = widget.pos()
@@ -1407,14 +1917,32 @@ class MainMenuWidget(QWidget):
 
     def show_home(self) -> None:
         self.view_stack.setCurrentWidget(self.home_page)
+        QTimer.singleShot(0, self._apply_home_card_depth)
+
+    def show_runway_home(self) -> None:
+        self.view_stack.setCurrentWidget(self.runway_home_page)
+        QTimer.singleShot(0, self._apply_runway_home_card_depth)
 
     def show_manual(self) -> None:
         self.pipeline_tabs.setCurrentIndex(0)
         self.view_stack.setCurrentWidget(self.workspace_page)
+        QTimer.singleShot(0, self._apply_workflow_card_depth)
 
     def show_automated(self) -> None:
         self.pipeline_tabs.setCurrentIndex(1)
         self.view_stack.setCurrentWidget(self.workspace_page)
+
+    def _apply_home_card_depth(self) -> None:
+        for card in (self._runway_choice_card_widget, self._ladder_choice_card_widget):
+            self._apply_card_depth(card)
+
+    def _apply_runway_home_card_depth(self) -> None:
+        for card in (self._manual_choice_card_widget, self._automated_choice_card_widget):
+            self._apply_card_depth(card)
+
+    def _apply_workflow_card_depth(self) -> None:
+        for card in self.workspace_page.findChildren(QFrame, "WorkflowStep"):
+            self._apply_card_depth(card)
 
     def _update_pipeline_heading(self, index: int) -> None:
         self.section_title.setVisible(index == 0)
@@ -1473,37 +2001,40 @@ class MainMenuWidget(QWidget):
             }
             QStackedWidget#MainMenuViewStack,
             QWidget#PipelineHomePage,
+            QWidget#RunwayHomePage,
             QWidget#PipelineWorkspacePage {
                 background: transparent;
                 border: 0;
             }
             QLabel#HomeTitle {
                 color: {theme.TEXT};
-                font-size: 27px;
+                font-size: 31px;
                 font-weight: 750;
                 padding-bottom: 2px;
             }
             QFrame#PipelineChoiceCard {
                 background: {theme.SURFACE};
-                border: 1px solid {theme.BORDER};
-                border-top: 3px solid {theme.BORDER};
-                border-radius: 6px;
-                min-height: 310px;
-                max-height: 330px;
+                border: 0;
+                border-radius: 8px;
+                min-height: 390px;
+                max-height: 420px;
             }
             QFrame#PipelineChoiceCard[pipelineRole="automated"] {
-                border-color: {theme.TOOL_1};
+                background: {theme.SURFACE};
             }
             QFrame#PipelineChoiceCard[pipelineRole="manual"] {
-                border-color: {theme.TOOL_3};
+                background: {theme.SURFACE};
+            }
+            QFrame#RunwayChoiceCard,
+            QFrame#LadderChoiceCard {
+                background: {theme.SURFACE};
+                border: 0;
+                border-radius: 8px;
+                min-height: 180px;
+                max-height: 210px;
             }
             QFrame#LadderChoiceCard {
                 background: {theme.SURFACE};
-                border: 1px solid {theme.TOOL_2};
-                border-left: 4px solid {theme.TOOL_2};
-                border-radius: 6px;
-                min-height: 78px;
-                max-height: 88px;
             }
             QLabel#PipelineChoiceGraphic {
                 background: {theme.PANEL};
@@ -1517,12 +2048,12 @@ class MainMenuWidget(QWidget):
             }
             QLabel#AutomationFlowTitle {
                 color: {theme.TEXT};
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 700;
             }
             QLabel#AutomationFlowDescription {
                 color: {theme.CONNECTOR};
-                font-size: 9px;
+                font-size: 11px;
             }
             QLabel#AutomationConnector {
                 color: {theme.TOOL_1};
@@ -1536,8 +2067,8 @@ class MainMenuWidget(QWidget):
                 padding-top: 7px;
             }
             QWidget#AutomatedFlow {
-                min-height: 158px;
-                max-height: 164px;
+                min-height: 198px;
+                max-height: 204px;
             }
             QLabel#ManualFlowTitle {
                 border-top: 1px solid {theme.BORDER};
@@ -1550,21 +2081,21 @@ class MainMenuWidget(QWidget):
                 background: transparent;
                 border: 0;
                 min-width: 70px;
-                min-height: 158px;
-                max-height: 164px;
+                min-height: 198px;
+                max-height: 204px;
             }
             QLabel#ManualMiniStageIcon {
-                min-height: 50px;
-                max-height: 50px;
+                min-height: 66px;
+                max-height: 66px;
             }
             QLabel#ManualMiniStageTitle {
                 color: {theme.TEXT};
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 700;
             }
             QLabel#ManualMiniStageDescription {
                 color: {theme.CONNECTOR};
-                font-size: 9px;
+                font-size: 11px;
             }
             QLabel#ManualMiniStageFile {
                 background: {theme.SOFT};
@@ -1640,9 +2171,9 @@ class MainMenuWidget(QWidget):
                 color: {theme.CONNECTOR};
                 font-size: 13px;
             }
-            QLabel#LadderChoiceDescription {
+            QLabel#WorkspaceChoiceDescription {
                 color: {theme.CONNECTOR};
-                font-size: 12px;
+                font-size: 13px;
             }
             QPushButton#PipelineChoiceButton {
                 background: {theme.BACKGROUND};
@@ -1687,12 +2218,11 @@ class MainMenuWidget(QWidget):
             }
             QFrame#WorkflowStep {
                 background: {theme.SURFACE};
-                border: 1px solid {theme.BORDER};
-                border-radius: 6px;
+                border: 0;
+                border-radius: 8px;
             }
             QFrame#WorkflowStep[enabledStep="true"]:hover {
                 background: {theme.PANEL};
-                border-color: {theme.TOOL_3};
             }
             QFrame#WorkflowStep[enabledStep="false"] {
                 background: {theme.BACKGROUND};
@@ -1748,26 +2278,32 @@ class MainMenuWidget(QWidget):
             """
             )
         )
-        if hasattr(self, "automated_choice_button"):
-            self.automated_choice_button.setIcon(_navigation_icon("run", theme.TOOL_1))
-            self.manual_choice_button.setIcon(_navigation_icon("manual", theme.TOOL_3))
-            self.automated_choice_button.setIconSize(QSize(18, 18))
-            self.manual_choice_button.setIconSize(QSize(18, 18))
+        if hasattr(self, "runway_choice_button"):
+            self.runway_choice_button.setIcon(_navigation_icon("runway", theme.TOOL_1))
+            self.runway_choice_button.setIconSize(QSize(18, 18))
             self.ladder_choice_button.setIcon(interface_icon("ladder", theme.TOOL_2))
             self.ladder_choice_button.setIconSize(QSize(18, 18))
+            self.automated_choice_button.setIcon(_navigation_icon("automated", theme.TOOL_1))
+            self.automated_choice_button.setIconSize(QSize(18, 18))
+            self.runway_manual_choice_button.setIcon(_navigation_icon("manual", theme.TOOL_3))
+            self.runway_manual_choice_button.setIconSize(QSize(18, 18))
         for step in self.findChildren(WorkflowStep):
             step.apply_theme()
         for graphic in self.findChildren(QLabel, "PipelineChoiceGraphic"):
             role = graphic.property("pipelineRole")
             color = theme.TOOL_1 if role == "automated" else theme.TOOL_2 if role == "ladder" else theme.TOOL_3
-            graphic.setPixmap(interface_icon(graphic.property("iconName"), color, size=30).pixmap(30, 30))
+            if role == "runway":
+                graphic.setPixmap(_navigation_icon("runway", theme.TOOL_1).pixmap(30, 30))
+            else:
+                graphic.setPixmap(interface_icon(graphic.property("iconName"), color, size=30).pixmap(30, 30))
         if self._entrance_has_run and (
             self._entrance_animation is None
             or self._entrance_animation.state() != QParallelAnimationGroup.State.Running
         ):
+            self._apply_card_depth(self._runway_choice_card_widget)
+            self._apply_card_depth(self._ladder_choice_card_widget)
             self._apply_card_depth(self._manual_choice_card_widget)
             self._apply_card_depth(self._automated_choice_card_widget)
-            self._apply_card_depth(self._ladder_choice_card_widget)
 
 
 class PartnerLogoLabel(QLabel):

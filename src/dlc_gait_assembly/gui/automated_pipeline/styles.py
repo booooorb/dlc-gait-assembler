@@ -6,12 +6,16 @@ QWidget#AutomatedPipelineProfilesWidget {
     background-image: url({theme.BACKGROUND_TEXTURE});
     color: {theme.TEXT};
 }
-QFrame#ProfileHeader, QFrame#MainAutomationMenu,
+QFrame#ProfileHeader, QFrame#MainAutomationMenu {
+    background: {theme.SURFACE};
+    border: 0;
+    border-radius: 7px;
+}
 QFrame#ProfileConfigurationToolbar, QFrame#ProfileManagementPanel,
 QFrame#ProfileReadinessPanel {
     background: {theme.SURFACE};
-    border: 1px solid {theme.BORDER};
-    border-radius: 5px;
+    border: 0;
+    border-radius: 7px;
 }
 QLabel#AutomatedProfileTitle, QLabel#MainAutomationTitle,
 QLabel#ProfileConfigurationTitle, QLabel#ProfileStageTitle {

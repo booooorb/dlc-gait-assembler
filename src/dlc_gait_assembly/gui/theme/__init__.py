@@ -1,4 +1,11 @@
-from dlc_gait_assembly.gui.theme.palette import color, fixed_width_font, interface_font, mix_hex
+from dlc_gait_assembly.gui.theme.palette import (
+    NOTO_SANS_FONT_DIR,
+    NOTO_SANS_FONT_FILES,
+    color,
+    fixed_width_font,
+    interface_font,
+    mix_hex,
+)
 from dlc_gait_assembly.gui.theme.tokens import (
     AESTHETIC_PALETTE,
     BRAND_SURFACE,
@@ -78,6 +85,8 @@ __all__ = [
     "DARK_COLORS",
     "DARK_TOOLS",
     "HIGH_VARIETY",
+    "NOTO_SANS_FONT_DIR",
+    "NOTO_SANS_FONT_FILES",
     "IS_DARK",
     "LIGHT",
     "LIGHT_COLORS",

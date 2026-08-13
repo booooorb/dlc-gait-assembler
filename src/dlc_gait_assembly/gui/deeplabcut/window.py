@@ -158,7 +158,6 @@ class DeepLabCutWidget(QWidget):
 
         root.addWidget(toolbar)
         self.progress = DynamicProgressBar(accent_role="running")
-        self.progress.set_indeterminate_animated(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat("Ready")
@@ -253,7 +252,13 @@ class DeepLabCutWidget(QWidget):
         self._process.finished.connect(self._on_process_finished)
 
         self._set_running(True)
-        self._set_progress_busy(f"Running {display_command}")
+        if command == DEEPLABCUT_INSTALL_COMMAND:
+            progress_text = "Installing DeepLabCut…"
+        elif command == DEEPLABCUT_CHECK_COMMAND:
+            progress_text = "Checking for DeepLabCut…"
+        else:
+            progress_text = f"Running {display_command}"
+        self._set_progress_busy(progress_text)
         self._process.start()
 
     def _terminal_command_info(self, command: str) -> tuple[str, str] | None:
@@ -300,6 +305,11 @@ class DeepLabCutWidget(QWidget):
 
     def _set_running(self, running: bool) -> None:
         self.launch_button.setText("Running..." if running else "Launch DeepLabCut")
+        self.install_button.setText(
+            "Installing..."
+            if running and self._running_command == DEEPLABCUT_INSTALL_COMMAND
+            else "Install DeepLabCut"
+        )
         if running:
             self._set_status("Running", "running")
         else:
@@ -346,7 +356,7 @@ class DeepLabCutWidget(QWidget):
         self._probe_process.errorOccurred.connect(self._on_probe_error)
         self._probe_process.finished.connect(self._on_probe_finished)
         self._set_status("Checking", "other")
-        self._set_progress_busy("Checking DeepLabCut environment")
+        self._set_progress_busy("Checking for DeepLabCut…")
         self._sync_environment_buttons()
         self._probe_process.start()
 

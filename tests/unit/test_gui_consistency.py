@@ -30,7 +30,10 @@ from dlc_gait_assembly.gui.app import (
     restore_window_geometry,
     save_window_geometry,
 )
-from dlc_gait_assembly.gui.deeplabcut.window import DeepLabCutWidget
+from dlc_gait_assembly.gui.deeplabcut.window import (
+    DEEPLABCUT_INSTALL_COMMAND,
+    DeepLabCutWidget,
+)
 from dlc_gait_assembly.gui.gait_analysis.ladder_window import LadderAnalysisWidget
 from dlc_gait_assembly.gui.gait_analysis.previews import OutputPreviewWidget
 from dlc_gait_assembly.gui.gait_analysis.workers import AlmaAnalysisThread
@@ -55,6 +58,8 @@ from dlc_gait_assembly.services.pipeline.alma import AlmaRunResult, AlmaSettings
 def test_application_stylesheet_uses_one_plain_component_system():
     stylesheet = theme.application_stylesheet()
 
+    assert 'font-family: "Noto Sans"' in stylesheet
+
     for selector in (
         "QPushButton, QToolButton",
         "QLineEdit, QTextEdit, QPlainTextEdit, QComboBox",
@@ -69,6 +74,17 @@ def test_application_stylesheet_uses_one_plain_component_system():
     assert "gradient" not in lowered
     assert "box-shadow" not in lowered
     assert "border-radius: 20" not in lowered
+
+
+def test_application_uses_bundled_noto_sans_universally():
+    app = QApplication.instance() or QApplication([])
+
+    interface_font = theme.interface_font()
+    fixed_width_font = theme.fixed_width_font()
+
+    assert interface_font.family() == "Noto Sans"
+    assert fixed_width_font.family() == "Noto Sans"
+    assert all((theme.NOTO_SANS_FONT_DIR / filename).is_file() for filename in theme.NOTO_SANS_FONT_FILES)
 
 
 def test_every_tool_workspace_uses_the_shared_workspace_contract(monkeypatch):
@@ -110,6 +126,30 @@ def test_every_tool_workspace_uses_the_shared_workspace_contract(monkeypatch):
         if release_resources is not None:
             release_resources()
         widget.close()
+
+
+def test_deeplabcut_check_and_install_show_animated_progress(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(DeepLabCutWidget, "_check_deeplabcut_available", lambda self: None)
+    widget = DeepLabCutWidget()
+
+    widget._set_progress_busy("Checking for DeepLabCut…")
+    assert widget.progress.minimum() == 0
+    assert widget.progress.maximum() == 0
+    assert widget.progress.format() == "Checking for DeepLabCut…"
+    assert widget.progress._timer.isActive()
+
+    widget._running_command = DEEPLABCUT_INSTALL_COMMAND
+    widget._set_running(True)
+    widget._set_progress_busy("Installing DeepLabCut…")
+    assert widget.install_button.text() == "Installing..."
+    assert widget.progress.format() == "Installing DeepLabCut…"
+    assert widget.progress._timer.isActive()
+
+    widget._process = None
+    widget._running_command = None
+    widget._set_running(False)
+    widget.close()
 
 
 def test_visible_settings_dropdown_emits_theme_choices_without_reemitting_updates():

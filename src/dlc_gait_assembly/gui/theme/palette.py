@@ -1,25 +1,46 @@
 from __future__ import annotations
 
+from functools import lru_cache
+from pathlib import Path
+
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 
 
+NOTO_SANS_FONT_DIR = Path(__file__).with_name("fonts")
+NOTO_SANS_FONT_FILES = (
+    "NotoSans-Regular.ttf",
+    "NotoSans-Medium.ttf",
+    "NotoSans-SemiBold.ttf",
+    "NotoSans-Bold.ttf",
+)
+
+
+@lru_cache(maxsize=1)
+def _noto_sans_family() -> str:
+    """Register the bundled static Noto Sans fonts and return their Qt family name."""
+    family = ""
+    for filename in NOTO_SANS_FONT_FILES:
+        path = NOTO_SANS_FONT_DIR / filename
+        font_id = QFontDatabase.addApplicationFont(str(path))
+        if font_id < 0:
+            raise RuntimeError(f"Qt could not register the bundled font: {path}")
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if not families:
+            raise RuntimeError(f"Qt registered no font family for: {path}")
+        if not family:
+            family = families[0]
+    return family
+
+
 def fixed_width_font() -> QFont:
-    """Return an installed fixed-width family instead of Qt's generic alias."""
-    installed = set(QFontDatabase.families())
-    for family in ("Menlo", "Monaco", "Consolas", "Courier New", "DejaVu Sans Mono"):
-        if family in installed:
-            return QFont(family)
-    return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+    """Return Noto Sans for text surfaces that historically requested a fixed font."""
+    return QFont(_noto_sans_family())
 
 
 def interface_font() -> QFont:
-    """Resolve Qt's generic UI alias to a concrete installed family."""
-    installed = set(QFontDatabase.families())
+    """Return the bundled Noto Sans family while retaining the platform UI size."""
     general = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
-    title_family = QFontDatabase.systemFont(QFontDatabase.SystemFont.TitleFont).family()
-    candidates = (title_family, ".AppleSystemUIFont", "Segoe UI", "Arial", "Helvetica", "Noto Sans")
-    family = next((candidate for candidate in candidates if candidate in installed), general.family())
-    font = QFont(family)
+    font = QFont(_noto_sans_family())
     if general.pointSizeF() > 0:
         font.setPointSizeF(general.pointSizeF())
     return font

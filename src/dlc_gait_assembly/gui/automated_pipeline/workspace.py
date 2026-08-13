@@ -4,12 +4,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
+    QColor,
     QPixmap,
 )
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -144,6 +146,7 @@ class AutomatedPipelineProfilesWidget(
 
         header = QFrame()
         header.setObjectName("ProfileHeader")
+        self._automation_header = header
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(18, 14, 18, 14)
         header_layout.setSpacing(24)
@@ -185,6 +188,7 @@ class AutomatedPipelineProfilesWidget(
 
         automation_menu = QFrame()
         automation_menu.setObjectName("MainAutomationMenu")
+        self._automation_menu_surface = automation_menu
         automation_layout = QVBoxLayout(automation_menu)
         automation_layout.setContentsMargins(16, 16, 16, 14)
         automation_layout.setSpacing(12)
@@ -821,6 +825,21 @@ class AutomatedPipelineProfilesWidget(
 
     def _apply_style(self) -> None:
         self.setStyleSheet(automated_pipeline_stylesheet())
+        surface_names = {
+            "ProfileHeader",
+            "MainAutomationMenu",
+            "ProfileConfigurationToolbar",
+            "ProfileManagementPanel",
+            "ProfileReadinessPanel",
+        }
+        for surface in (
+            frame for frame in self.findChildren(QFrame) if frame.objectName() in surface_names
+        ):
+            shadow = QGraphicsDropShadowEffect(surface)
+            shadow.setBlurRadius(18)
+            shadow.setOffset(0, 4)
+            shadow.setColor(QColor(0, 0, 0, 72 if theme.IS_DARK else 32))
+            surface.setGraphicsEffect(shadow)
         icon_specs = (
             (self.remove_videos_button, "trash", theme.STATUS_ERROR),
             (self.clear_videos_button, "clear", theme.STATUS_ERROR),

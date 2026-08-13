@@ -54,6 +54,9 @@ dlc-gait-assembler = "dlc_gait_assembly.gui.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"dlc_gait_assembly.gui.theme" = ["fonts/*.ttf", "fonts/OFL.txt"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

@@ -12,6 +12,7 @@ def application_stylesheet() -> str:
     return stylesheet(
         """
         QWidget {
+            font-family: "Noto Sans";
             font-size: 13px;
         }
         QToolTip {
@@ -263,20 +264,24 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
         }
         QWidget#WorkspaceSidebar {
             background: {theme.PANEL};
-            border-right: 1px solid {theme.BORDER};
+            border: 0;
+            border-radius: 7px;
         }
         QWidget#WorkspaceCanvas {
             background: {theme.BACKGROUND};
             background-image: url({theme.BACKGROUND_TEXTURE});
+            border: 0;
+            border-radius: 7px;
         }
         QWidget#WorkspaceHeader {
             background: {theme.SURFACE};
-            border-bottom: 1px solid {theme.BORDER};
+            border: 0;
+            border-radius: 7px;
         }
         QFrame#OperationsBar, QFrame#TerminalToolbar {
             background: {theme.SURFACE};
-            border: 1px solid {theme.BORDER};
-            border-radius: 4px;
+            border: 0;
+            border-radius: 7px;
         }
         QFrame#InlineSettings, QFrame#MarkerGapInline {
             background: transparent;
