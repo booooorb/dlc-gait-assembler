@@ -278,11 +278,15 @@ class AlmaKinematicsWidget(QWidget):
             self.settings_section_rows[0].addTab(label)
         for label in section_labels[4:]:
             self.settings_section_rows[1].addTab(label)
-        self.settings_section_rows[0].currentChanged.connect(
-            lambda index: settings_tabs.setCurrentIndex(index) if index >= 0 else None
+        # Drive navigation from explicit clicks rather than currentChanged. The
+        # inactive row intentionally has index -1, and using currentChanged for
+        # both user input and programmatic synchronization can drop rapid
+        # top-to-bottom (or bottom-to-top) selections.
+        self.settings_section_rows[0].tabBarClicked.connect(
+            lambda index: settings_tabs.setCurrentIndex(index)
         )
-        self.settings_section_rows[1].currentChanged.connect(
-            lambda index: settings_tabs.setCurrentIndex(index + 4) if index >= 0 else None
+        self.settings_section_rows[1].tabBarClicked.connect(
+            lambda index: settings_tabs.setCurrentIndex(index + 4)
         )
 
         def sync_settings_rows(index: int) -> None:
@@ -290,8 +294,14 @@ class AlmaKinematicsWidget(QWidget):
             second_index = index - 4 if index >= 4 else -1
             self.settings_section_rows[0].set_active_row(index < 4)
             self.settings_section_rows[1].set_active_row(index >= 4)
-            self.settings_section_rows[0].setCurrentIndex(first_index)
-            self.settings_section_rows[1].setCurrentIndex(second_index)
+            for row, row_index in zip(
+                self.settings_section_rows,
+                (first_index, second_index),
+                strict=True,
+            ):
+                row.blockSignals(True)
+                row.setCurrentIndex(row_index)
+                row.blockSignals(False)
 
         settings_tabs.currentChanged.connect(sync_settings_rows)
         sync_settings_rows(0)

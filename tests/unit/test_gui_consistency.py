@@ -255,6 +255,36 @@ def test_ladder_analysis_opens_from_secondary_home_workflow_and_returns_home():
     window.close()
 
 
+def test_entire_runway_and_ladder_cards_are_clickable():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.resize(1180, 700)
+    window.show()
+    QTest.qWait(600)
+
+    runway_card = window._main_menu._runway_choice_card_widget
+    runway_point = window._main_menu.runway_choice_illustration.mapToGlobal(
+        window._main_menu.runway_choice_illustration.rect().center()
+    )
+    runway_target = QApplication.widgetAt(runway_point)
+    assert runway_target is runway_card
+    QTest.mouseClick(runway_target, Qt.LeftButton, pos=runway_target.mapFromGlobal(runway_point))
+    app.processEvents()
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.runway_home_page
+    window.close()
+
+    window = MainWindow()
+    window.resize(1180, 700)
+    window.show()
+    QTest.qWait(600)
+    ladder_card = window._main_menu._ladder_choice_card_widget
+    assert window._main_menu.ladder_choice_illustration.testAttribute(Qt.WA_TransparentForMouseEvents)
+    QTest.mouseClick(ladder_card, Qt.LeftButton, pos=ladder_card.rect().center())
+    app.processEvents()
+    assert window._active_tool_id == LADDER_TOOL_SPEC.id
+    window.close()
+
+
 def test_manual_pipeline_card_zooms_into_an_actionable_manual_only_menu():
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
@@ -359,6 +389,28 @@ def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings()
     assert set(single_names) == set(ALMA_PARAMETER_NAMES)
     assert not any(name.startswith(("left__", "right__")) for name in single_names)
     assert selection.count_label.text() == "44 of 44 parameters enabled"
+    runway.close()
+
+
+def test_gait_settings_rows_accept_repeated_cross_row_clicks():
+    app = QApplication.instance() or QApplication([])
+    runway = AlmaKinematicsWidget()
+    runway.resize(1180, 700)
+    runway.show()
+    app.processEvents()
+    top_row, bottom_row = runway.settings_section_rows
+
+    click_sequence = (
+        (bottom_row, 0, 4),
+        (top_row, 2, 2),
+        (bottom_row, 2, 6),
+        (top_row, 0, 0),
+    ) * 3
+    for row, row_index, settings_index in click_sequence:
+        QTest.mouseClick(row, Qt.LeftButton, pos=row.tabRect(row_index).center())
+        app.processEvents()
+        assert runway.settings_tabs.currentIndex() == settings_index
+
     runway.close()
 
 

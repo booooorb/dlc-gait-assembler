@@ -10,6 +10,7 @@ from PySide6.QtCore import (
     QPauseAnimation,
     QPoint,
     QPointF,
+    Property,
     QPropertyAnimation,
     QRect,
     QRectF,
@@ -173,7 +174,7 @@ def _menu_asset_pixmap(name: str, size: int) -> QPixmap:
 
 
 class MenuIllustrationLabel(QLabel):
-    """Aspect-fit a high-resolution menu illustration without affecting layout size."""
+    """Paint a clipped, aspect-fit illustration without changing layout hints."""
 
     def __init__(self, asset_name: str, accessible_name: str, parent: QWidget | None = None):
         super().__init__(parent)
@@ -183,27 +184,36 @@ class MenuIllustrationLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setFixedHeight(178)
         self._source_pixmap = QPixmap(str(MAIN_MENU_ICON_ASSET_DIR / f"{asset_name}.png"))
-        self._rendered_size = QSize()
-        self._render_for_size(self.sizeHint())
+        self._zoom = 1.0
 
     def sizeHint(self) -> QSize:
         return QSize(360, 178)
 
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._render_for_size(self.contentsRect().size())
-
-    def _render_for_size(self, target_size: QSize) -> None:
-        if self._source_pixmap.isNull() or target_size.isEmpty() or target_size == self._rendered_size:
+    def paintEvent(self, event) -> None:
+        if self._source_pixmap.isNull():
+            super().paintEvent(event)
             return
-        self._rendered_size = target_size
-        self.setPixmap(
-            self._source_pixmap.scaled(
-                target_size,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
+        viewport = self.contentsRect()
+        fitted = self._source_pixmap.size().scaled(viewport.size(), Qt.KeepAspectRatio)
+        draw_size = QSize(
+            round(fitted.width() * self._zoom),
+            round(fitted.height() * self._zoom),
         )
+        target = QRect(QPoint(), draw_size)
+        target.moveCenter(viewport.center())
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setClipRect(viewport)
+        painter.drawPixmap(target, self._source_pixmap)
+
+    def _get_zoom(self) -> float:
+        return self._zoom
+
+    def _set_zoom(self, zoom: float) -> None:
+        self._zoom = max(1.0, min(float(zoom), 1.025))
+        self.update()
+
+    zoom = Property(float, _get_zoom, _set_zoom)
 
 
 class ManualMiniStage(QFrame):
@@ -224,6 +234,75 @@ class ManualMiniStage(QFrame):
     def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
             self.clicked.emit(self._tool_id)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class WorkspaceChoiceCard(QFrame):
+    """A setup card whose full visible surface acts as one accessible control."""
+
+    clicked = Signal()
+    _active_hover_card: WorkspaceChoiceCard | None = None
+
+    def __init__(self, accessible_name: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setAccessibleName(accessible_name)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+        self._hover_animation: QPropertyAnimation | None = None
+
+    def _animate_illustration(self, zoom: float, duration: int) -> None:
+        illustration = self.findChild(MenuIllustrationLabel)
+        if illustration is None:
+            return
+        if self._hover_animation is not None:
+            self._hover_animation.stop()
+        animation = QPropertyAnimation(illustration, b"zoom", self)
+        animation.setDuration(duration)
+        animation.setStartValue(illustration.zoom)
+        animation.setEndValue(zoom)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hover_animation = animation
+        animation.start()
+
+    def enterEvent(self, event) -> None:
+        previous = WorkspaceChoiceCard._active_hover_card
+        if previous is not None and previous is not self:
+            previous._reset_hover_immediately()
+        WorkspaceChoiceCard._active_hover_card = self
+        self._animate_illustration(1.025, 190)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if WorkspaceChoiceCard._active_hover_card is self:
+            WorkspaceChoiceCard._active_hover_card = None
+        self._reset_hover_immediately()
+        super().leaveEvent(event)
+
+    def _reset_hover_immediately(self) -> None:
+        if self._hover_animation is not None:
+            self._hover_animation.stop()
+        illustration = self.findChild(MenuIllustrationLabel)
+        if illustration is not None:
+            illustration.zoom = 1.0
+
+    def make_decorations_mouse_transparent(self, action_button: QPushButton) -> None:
+        for child in self.findChildren(QWidget):
+            if child is not action_button and not isinstance(child, QPushButton):
+                child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            if WorkspaceChoiceCard._active_hover_card is self:
+                WorkspaceChoiceCard._active_hover_card = None
+            self._reset_hover_immediately()
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.clicked.emit()
             event.accept()
             return
         super().keyPressEvent(event)
@@ -1575,9 +1654,11 @@ class MainMenuWidget(QWidget):
         choices.setAlignment(Qt.AlignCenter)
         runway_card, runway_button = self._runway_choice_card()
         runway_button.clicked.connect(self.runway_requested.emit)
+        runway_card.clicked.connect(self.runway_requested.emit)
         choices.addWidget(runway_card, 1)
         ladder_card, ladder_button = self._ladder_choice_card()
         ladder_button.clicked.connect(lambda: self.tool_requested.emit(LADDER_TOOL_SPEC.id))
+        ladder_card.clicked.connect(lambda: self.tool_requested.emit(LADDER_TOOL_SPEC.id))
         choices.addWidget(ladder_card, 1)
         home_layout.addLayout(choices)
         self._runway_choice_card_widget = runway_card
@@ -1883,8 +1964,8 @@ class MainMenuWidget(QWidget):
         layout.addWidget(button)
         return card, button
 
-    def _runway_choice_card(self) -> tuple[QFrame, QPushButton]:
-        card = QFrame()
+    def _runway_choice_card(self) -> tuple[WorkspaceChoiceCard, QPushButton]:
+        card = WorkspaceChoiceCard("Open Runway analysis")
         card.setObjectName("RunwayChoiceCard")
         card.setProperty("pipelineRole", "runway")
         layout = QVBoxLayout(card)
@@ -1914,11 +1995,12 @@ class MainMenuWidget(QWidget):
         button.setCursor(Qt.PointingHandCursor)
         button.setToolTip("Open Automated, Profiles, and Manual runway workflows.")
         layout.addWidget(button)
+        card.make_decorations_mouse_transparent(button)
         self.runway_choice_illustration = illustration
         return card, button
 
-    def _ladder_choice_card(self) -> tuple[QFrame, QPushButton]:
-        card = QFrame()
+    def _ladder_choice_card(self) -> tuple[WorkspaceChoiceCard, QPushButton]:
+        card = WorkspaceChoiceCard("Open Ladder analysis")
         card.setObjectName("LadderChoiceCard")
         card.setProperty("pipelineRole", "ladder")
         layout = QVBoxLayout(card)
@@ -1944,6 +2026,7 @@ class MainMenuWidget(QWidget):
         button.setProperty("pipelineRole", "ladder")
         button.setCursor(Qt.PointingHandCursor)
         layout.addWidget(button)
+        card.make_decorations_mouse_transparent(button)
         self.ladder_choice_illustration = illustration
         return card, button
 
@@ -2191,6 +2274,21 @@ class MainMenuWidget(QWidget):
             QFrame#LadderChoiceCard {
                 background: {theme.SURFACE};
             }
+            QFrame#RunwayChoiceCard:hover {
+                background: {theme.PANEL};
+            }
+            QFrame#LadderChoiceCard:hover {
+                background: {theme.PANEL};
+            }
+            QFrame#RunwayChoiceCard:hover QLabel#PipelineChoiceTitle {
+                color: #f7f5f2;
+            }
+            QFrame#RunwayChoiceCard QLabel#PipelineChoiceTitle {
+                color: #f7f5f2;
+            }
+            QFrame#LadderChoiceCard:hover QLabel#PipelineChoiceTitle {
+                color: {theme.TOOL_2};
+            }
             QLabel#WorkspaceChoiceIllustration {
                 background: transparent;
                 border: 0;
@@ -2199,6 +2297,11 @@ class MainMenuWidget(QWidget):
                 background: {theme.PANEL};
                 border: 1px solid {theme.BORDER};
                 border-radius: 10px;
+            }
+            QFrame#RunwayChoiceCard QLabel#PipelineChoiceGraphic,
+            QFrame#LadderChoiceCard QLabel#PipelineChoiceGraphic {
+                background: transparent;
+                border: 0;
             }
             QLabel#AutomationFlowIcon {
                 background: transparent;
