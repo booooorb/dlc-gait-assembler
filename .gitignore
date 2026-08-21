@@ -12,6 +12,7 @@ outputs/**
 !outputs/**/
 !outputs/.gitkeep
 !outputs/**/.gitkeep
+!outputs/README.md
 
 # Local ALMA source checkout / reference data
 DLC-Gait-Analysis-main/
@@ -20,6 +21,9 @@ Dlc-Gait-Analysis-m/
 
 TODO.txt
 Uncodixfy.md 
-*.pdf
-*.tex
-ARCHITECTURE.md
+
+# Local design/presentation working files
+.superdesign/
+*.key
+*.pptx
+*.pptx.inspect.ndjson

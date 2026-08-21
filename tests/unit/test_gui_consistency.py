@@ -9,13 +9,15 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QAbstractAnimation, QPoint, QSettings, Qt
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtCore import QAbstractAnimation, QPoint, QRectF, QSettings, QSize, Qt
+from PySide6.QtGui import QCursor, QDesktopServices, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QInputDialog,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -35,12 +37,18 @@ from dlc_gait_assembly.gui.deeplabcut.window import (
     DeepLabCutWidget,
 )
 from dlc_gait_assembly.gui.gait_analysis.ladder_window import LadderAnalysisWidget
-from dlc_gait_assembly.gui.gait_analysis.previews import OutputPreviewWidget
+from dlc_gait_assembly.gui.gait_analysis.parameter_reference import gait_figure_catalog
+from dlc_gait_assembly.gui.gait_analysis.previews import (
+    OutputPreviewWidget,
+    StickPlotPairPreviewWidget,
+)
 from dlc_gait_assembly.gui.gait_analysis.workers import AlmaAnalysisThread
 from dlc_gait_assembly.gui.gait_analysis.window import AlmaKinematicsWidget, _auto_bodypart_label
 from dlc_gait_assembly.gui.knee_correction import KneeCorrectionWidget
 from dlc_gait_assembly.gui.manual_calibration.window import ManualCalibrationWidget
+from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationStickItem
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
+from dlc_gait_assembly.gui.automated_pipeline.previews import render_svg_pixmap
 from dlc_gait_assembly.gui.main_window import (
     BRAND_LOGO_FILENAMES,
     LADDER_TOOL_SPEC,
@@ -54,6 +62,26 @@ from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
 from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 from dlc_gait_assembly.services.pipeline.alma import AlmaRunResult, AlmaSettings
 from dlc_gait_assembly.services.pipeline.gait_parameter_catalog import ALMA_PARAMETER_NAMES
+from dlc_gait_assembly.services.profiles import AutomatedProfileStore
+from dlc_gait_assembly.services.domain.calibration import CalibrationPoint, CalibrationStick
+
+
+def test_calibration_hover_uses_concrete_qcursors():
+    app = QApplication.instance() or QApplication([])
+    stick = CalibrationStick("x", 1, CalibrationPoint(0, 0), CalibrationPoint(100, 0))
+    item = CalibrationStickItem(stick, QRectF(0, 0, 100, 100), lambda _stick: None)
+
+    expected_shapes = {
+        "start": Qt.CrossCursor,
+        "end": Qt.CrossCursor,
+        "move": Qt.SizeAllCursor,
+        0: Qt.PointingHandCursor,
+        "none": Qt.ArrowCursor,
+    }
+    for hit, expected_shape in expected_shapes.items():
+        cursor = item._cursor_for_hit(hit)
+        assert isinstance(cursor, QCursor)
+        assert cursor.shape() == expected_shape
 
 
 def test_application_stylesheet_uses_one_plain_component_system():
@@ -324,6 +352,7 @@ def test_gait_parameter_reference_documents_and_filters_exported_parameters():
     reference = runway.parameter_reference
 
     assert runway.workspace_stack.currentWidget() is reference
+    assert reference.documentation_stack.currentWidget() is reference.parameter_documentation
     assert reference.parameter_tree.topLevelItemCount() == 132
     assert reference.count_label.text() == "Showing 132 of 132 gait parameters"
 
@@ -338,17 +367,87 @@ def test_gait_parameter_reference_documents_and_filters_exported_parameters():
     reference.source_filter.setCurrentText("RustLab1")
     app.processEvents()
     assert reference.parameter_tree.topLevelItemCount() == 30
+    assert reference.count_label.text() == "Showing 30 of 30 gait parameters"
+    rustlab_labels = [reference.parameter_tree.topLevelItem(index).text(1) for index in range(30)]
+    assert len(set(rustlab_labels)) == 30
+    assert rustlab_labels[:3] == [
+        "Left hindpaw angle — mean (deg)",
+        "Left hindpaw angle — 95th percentile (deg)",
+        "Left hindpaw angle — 10th percentile (deg)",
+    ]
+    assert "Left ankle average height (mm)" in rustlab_labels
+    assert "Right hip displacement per step (cm)" in rustlab_labels
 
-    reference.search_edit.setText("angle")
+    reference.search_edit.setText("angle bottom")
     app.processEvents()
     assert reference.parameter_tree.topLevelItemCount() == 6
     assert reference.calculation_label.text()
     assert reference.views_label.text() == "Bottom view"
+    assert reference.identifier_label.text().startswith(("LB__", "RB__"))
+
+    runway.documentation_back_button.click()
+    app.processEvents()
+    assert runway.workspace_stack.currentIndex() == 0
+    assert runway.parameter_reference_button.text() == "Parameter documentation"
+    assert not runway.documentation_back_button.isVisible()
+    runway.close()
+
+
+def test_figure_creator_and_parameters_have_separate_full_width_documentation_pages():
+    figures = gait_figure_catalog()
+    assert len(figures) == 26
+    assert sum(figure.source == "ALMA" for figure in figures) == 8
+    assert sum(figure.source == "RustLab1" for figure in figures) == 18
+    assert all(figure.asset_path.is_file() for figure in figures)
+    assert all(figure.asset_path.suffix == ".svg" for figure in figures)
+    assert all(figure.purpose and figure.shows and figure.interpretation for figure in figures)
+    excluded_text = " ".join(f"{figure.filename} {figure.title}" for figure in figures).casefold()
+    assert "pca" not in excluded_text
+    assert "random forest" not in excluded_text
+
+    app = QApplication.instance() or QApplication([])
+    runway = AlmaKinematicsWidget()
+    runway.resize(1440, 900)
+    runway.show()
+    runway.figure_reference_button.click()
+    app.processEvents()
+    reference = runway.parameter_reference
+
+    assert runway.workspace_stack.currentWidget() is reference
+    assert reference.documentation_stack.currentWidget() is reference.figure_documentation
+    assert reference.parameter_documentation.isHidden()
+    assert runway.documentation_back_button.isVisible()
+    assert reference.figure_list.count() == 26
+    assert reference.figure_preview.renderer().isValid()
+    assert reference.figure_preview.width() >= 700
+    assert reference.figure_preview.height() >= 210
+    preview_bottom = reference.figure_preview.mapTo(reference.figure_documentation, QPoint(0, 0)).y() + reference.figure_preview.height()
+    action_top = reference.open_figure_button.mapTo(reference.figure_documentation, QPoint(0, 0)).y()
+    explanation = reference.findChild(QScrollArea, "FigureExplanationScroll")
+    explanation_top = explanation.mapTo(reference.figure_documentation, QPoint(0, 0)).y()
+    assert preview_bottom <= action_top
+    assert action_top + reference.open_figure_button.height() <= explanation_top
+    assert reference.figure_title_label.text() == "Gait-cycle timing"
+    assert reference.figure_provenance_label.text().startswith("Generated by DLC Gait Assembler")
+
+    reference.figure_source_filter.setCurrentText("RustLab1")
+    app.processEvents()
+    assert reference.figure_list.count() == 18
+    assert reference.figure_source_badge.text() == "RustLab1"
+    assert reference.figure_preview.renderer().isValid()
+    assert "official RustLab1" in reference.figure_provenance_label.text()
+
+    reference.figure_preview.clicked.emit()
+    app.processEvents()
+    assert reference._large_figure_dialog is not None
+    assert reference._large_figure_dialog.figures[0].renderer().isValid()
+    reference._large_figure_dialog.close()
 
     runway.parameter_reference_button.click()
     app.processEvents()
-    assert runway.workspace_stack.currentIndex() == 0
-    assert runway.parameter_reference_button.text() == "Parameter reference"
+    assert reference.documentation_stack.currentWidget() is reference.parameter_documentation
+    assert reference.figure_documentation.isHidden()
+    assert reference.parameter_tree.width() > 700
     runway.close()
 
 
@@ -390,6 +489,44 @@ def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings()
     assert not any(name.startswith(("left__", "right__")) for name in single_names)
     assert selection.count_label.text() == "44 of 44 parameters enabled"
     runway.close()
+
+
+def test_manual_navigation_creates_named_profile_and_summarizes_available_manifests(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    processing_manifest = tmp_path / "video_settings_manifest.json"
+    processing_manifest.write_text('{"operations": {"crop_regions": []}}', encoding="utf-8")
+
+    window = MainWindow()
+    editor = window._main_menu.automated_profiles
+    editor._store = AutomatedProfileStore(tmp_path / "profiles")
+    editor._refresh_profiles()
+    assert window._manual_preset_profile_button.text() == "Create\nprofile"
+    assert not window._manual_preset_profile_button.icon().isNull()
+    video_tool = QWidget()
+    video_tool.profile_manifest_path = lambda: processing_manifest
+    window._tool_widgets["video_processing"] = video_tool
+    messages = []
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("Treadmill preset", True))
+    monkeypatch.setattr(QMessageBox, "information", lambda _parent, title, body: messages.append((title, body)))
+
+    window._create_profile_from_manual_presets()
+    app.processEvents()
+
+    profile = editor._store.list_profiles()[0]
+    assert profile.name == "Treadmill preset"
+    assert editor.workspace_stack.currentWidget() is editor.configuration_page
+    assert profile.processing_manifest is not None
+    assert profile.processing_manifest.read_text(encoding="utf-8") == processing_manifest.read_text(encoding="utf-8")
+    assert editor._calibration_source is None
+    assert editor._analysis_manifest_source is None
+    assert editor._knee_manifest_source is None
+    assert not editor.include_gait_analysis_button.isChecked()
+    assert not editor.include_knee_correction_button.isChecked()
+    assert messages[0][0] == "Profile created"
+    assert "✓  Video settings manifest" in messages[0][1]
+    assert "—  Calibration map" in messages[0][1]
+    assert "—  DeepLabCut models" in messages[0][1]
+    window.close()
 
 
 def test_gait_settings_rows_accept_repeated_cross_row_clicks():
@@ -537,6 +674,7 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert all(button.iconSize() == QSize(20, 20) for button in window._manual_stage_buttons.values())
     assert all(not button.icon().isNull() for button in window._manual_stage_buttons.values())
     assert [label.text() for label in window._manual_stage_frame.findChildren(QLabel, "ManualStageSeparator")] == [
+        ">",
         ">",
         ">",
         ">",
@@ -690,6 +828,43 @@ def test_pipeline_geometry_stays_constant_through_stickplot_review():
     assert widget.automation_console_panel.geometry() == initial_geometry["console"]
     assert widget.pipeline_stickplot_preview.sizeHint() == preview_hint
     window.close()
+
+
+def test_pipeline_stickplot_preserves_aspect_ratio_and_opens_on_click():
+    app = QApplication.instance() or QApplication([])
+    widget = AutomatedPipelineProfilesWidget()
+    preview = widget.pipeline_stickplot_preview
+    preview.resize(360, 240)
+    widget._populate_pipeline_review_preview(4)
+    app.processEvents()
+
+    assert widget._pipeline_stickplot_path.name == "alma_reference_stickplot.svg"
+    assert widget.pipeline_review_layout.stretch(0) == 2
+    assert widget.pipeline_review_layout.stretch(1) == 1
+    svg_text = widget._pipeline_stickplot_path.read_text(encoding="utf-8")
+    assert "matplotlib.axis_1" in svg_text
+    assert "Demo stickplot preview" not in svg_text
+    rendered = preview.pixmap()
+    assert preview._source_svg_data is not None
+    assert rendered.size() == preview.contentsRect().size()
+
+    high_dpi = render_svg_pixmap(
+        preview._source_svg_data,
+        QSize(360, 240),
+        device_pixel_ratio=2.0,
+    )
+    assert high_dpi.size() == QSize(720, 480)
+    assert high_dpi.devicePixelRatio() == 2.0
+
+    QTest.mouseClick(preview, Qt.LeftButton, pos=preview.rect().center())
+    app.processEvents()
+    assert widget._large_review_dialog is not None
+    assert widget._large_review_dialog.image_loaded
+    assert widget._large_review_dialog.preview._source_svg_data is not None
+
+    widget._large_review_dialog.close()
+    widget.close()
+    app.processEvents()
 
 
 def test_partner_logos_use_pixel_outlines_only_in_dark_mode():
@@ -1028,6 +1203,33 @@ def test_runway_previews_generated_svg_figures_and_csv_tables(tmp_path):
 
     preview.close()
     runway.close()
+    app.processEvents()
+
+
+def test_gait_stickplots_use_full_width_tabs_and_click_to_expand():
+    app = QApplication.instance() or QApplication([])
+    svg = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="800" height="300">'
+        b'<rect width="800" height="300" fill="white"/></svg>'
+    )
+    preview = StickPlotPairPreviewWidget()
+    preview.load_plots((("Left", svg), ("Right", svg)))
+    preview.resize(700, 360)
+    preview.show()
+    app.processEvents()
+
+    assert preview.tabs.count() == 2
+    assert preview.tabs.tabText(0) == "Left"
+    assert preview.tabs.tabText(1) == "Right"
+    assert preview._panels[0][1].renderer().aspectRatioMode() == Qt.KeepAspectRatio
+
+    QTest.mouseClick(preview._panels[0][1], Qt.LeftButton)
+    app.processEvents()
+    assert preview._large_preview_dialog is not None
+    assert preview._large_preview_dialog.tabs.count() == 2
+
+    preview._large_preview_dialog.close()
+    preview.close()
     app.processEvents()
 
 

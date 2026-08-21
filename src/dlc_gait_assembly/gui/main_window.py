@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import (
+    Property,
     QEasingCurve,
     QParallelAnimationGroup,
     QPauseAnimation,
     QPoint,
     QPointF,
-    Property,
     QPropertyAnimation,
     QRect,
     QRectF,
@@ -33,6 +33,7 @@ from PySide6.QtGui import (
     QPixmap,
     QRegion,
 )
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
@@ -40,9 +41,11 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -102,6 +105,35 @@ PARTNER_WEBSITES = {
     "choforcelab.png": "https://www.choforcelab.ca",
     "NERVES_Logo.png": "https://nerves.bme.utah.edu",
 }
+CREDIT_LINKS = (
+    (
+        "Mouse artwork — SciDraw",
+        "Mouse illustration from SciDraw",
+        "https://scidraw.io/drawing/mouse-09d7b739",
+    ),
+    (
+        "ALMA — Aljović et al. (2022)",
+        "A deep learning-based toolbox for Automated Limb Motion Analysis (ALMA) "
+        "in murine models of neurological disorders",
+        "https://doi.org/10.1038/s42003-022-03077-6",
+    ),
+    (
+        "RustLab1 — Weber et al. (2022)",
+        "Deep learning-based behavioral profiling of rodent stroke recovery",
+        "https://doi.org/10.1186/s12915-022-01434-9",
+    ),
+    (
+        "SingleBehaviorLab — Aljović et al. (2026)",
+        "SingleBehavior Lab: behavioral sequencing and phenotyping with lightweight "
+        "task specific adaptation (bioRxiv preprint)",
+        "https://doi.org/10.64898/2026.04.15.718696",
+    ),
+    (
+        "DeepLabCut — Mathis et al. (2018)",
+        "DeepLabCut: markerless pose estimation of user-defined body parts with deep learning",
+        "https://doi.org/10.1038/s41593-018-0209-y",
+    ),
+)
 MINIMUM_WINDOW_SIZE = QSize(1100, 640)
 DEFAULT_WINDOW_SIZE = QSize(1440, 900)
 WINDOW_SCREEN_MARGIN = 64
@@ -167,10 +199,84 @@ def _navigation_icon(icon_name: str, color: str) -> QIcon:
 
 def _menu_asset_pixmap(name: str, size: int) -> QPixmap:
     """Load a reference-derived main-menu illustration at a crisp UI size."""
-    source = QPixmap(str(MAIN_MENU_ICON_ASSET_DIR / f"{name}.png"))
+    source = _load_menu_asset_pixmap(name)
     if source.isNull():
         return source
     return source.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+
+def _load_menu_asset_pixmap(name: str) -> QPixmap:
+    """Load either a raster menu asset or an SVG at its native dimensions."""
+    if name == "ladder-mouse":
+        return _ladder_menu_pixmap()
+    if name == "runway-mouse":
+        return _runway_menu_pixmap()
+    svg_path = MAIN_MENU_ICON_ASSET_DIR / f"{name}.svg"
+    if svg_path.is_file():
+        renderer = QSvgRenderer(str(svg_path))
+        if not renderer.isValid():
+            return QPixmap()
+        source_size = renderer.defaultSize()
+        pixmap = QPixmap(source_size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return pixmap
+    return QPixmap(str(MAIN_MENU_ICON_ASSET_DIR / f"{name}.png"))
+
+
+def _ladder_menu_pixmap() -> QPixmap:
+    """Composite the replacement mouse over the original ladder perspective."""
+    ladder = QPixmap(str(MAIN_MENU_ICON_ASSET_DIR / "ladder-runway.png"))
+    mouse = QSvgRenderer(str(MAIN_MENU_ICON_ASSET_DIR / "ladder-mouse.svg"))
+    if ladder.isNull() or not mouse.isValid():
+        return QPixmap()
+
+    canvas = QPixmap(ladder.size())
+    canvas.fill(Qt.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    painter.drawPixmap(0, 0, ladder)
+
+    mouse_width = round(canvas.width() * 0.47)
+    mouse_height = round(mouse_width * mouse.defaultSize().height() / mouse.defaultSize().width())
+    # Centre the torso rather than the full silhouette; the long tail otherwise
+    # makes the animal look left-heavy.
+    mouse_left = round((canvas.width() - mouse_width) / 2 + canvas.width() * 0.03)
+    mouse_top = round(canvas.height() * 0.15)
+    mouse.render(painter, QRectF(mouse_left, mouse_top, mouse_width, mouse_height))
+    painter.end()
+
+    # Remove the oversized transparent margins from the source artwork. This
+    # keeps the visible ladder centered and gives it the same menu scale as the
+    # runway illustration without distorting its perspective.
+    return canvas.copy(QRect(0, 25, canvas.width(), 570))
+
+
+def _runway_menu_pixmap() -> QPixmap:
+    """Composite the replacement mouse onto the original runway artwork."""
+    runway = QPixmap(str(MAIN_MENU_ICON_ASSET_DIR / "runway-enclosure.png"))
+    mouse = QSvgRenderer(str(MAIN_MENU_ICON_ASSET_DIR / "ladder-mouse.svg"))
+    if runway.isNull() or not mouse.isValid():
+        return QPixmap()
+
+    canvas = QPixmap(runway.size())
+    canvas.fill(Qt.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    painter.drawPixmap(0, 0, runway)
+
+    mouse_width = round(canvas.width() * 0.47)
+    mouse_height = round(mouse_width * mouse.defaultSize().height() / mouse.defaultSize().width())
+    # Visually centre the torso rather than including the tail in the balance.
+    mouse_left = round((canvas.width() - mouse_width) / 2 + canvas.width() * 0.05)
+    mouse_top = round(canvas.height() * 0.135)
+    mouse.render(painter, QRectF(mouse_left, mouse_top, mouse_width, mouse_height))
+    painter.end()
+    return canvas
 
 
 class MenuIllustrationLabel(QLabel):
@@ -183,11 +289,51 @@ class MenuIllustrationLabel(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setFixedHeight(178)
-        self._source_pixmap = QPixmap(str(MAIN_MENU_ICON_ASSET_DIR / f"{asset_name}.png"))
+        self._source_pixmap = _load_menu_asset_pixmap(asset_name)
+        self.setPixmap(self._source_pixmap)
         self._zoom = 1.0
 
     def sizeHint(self) -> QSize:
         return QSize(360, 178)
+
+    def paintEvent(self, event) -> None:
+        if self._source_pixmap.isNull():
+            super().paintEvent(event)
+            return
+        viewport = self.contentsRect()
+        fitted = self._source_pixmap.size().scaled(viewport.size(), Qt.KeepAspectRatio)
+        draw_size = QSize(
+            round(fitted.width() * self._zoom),
+            round(fitted.height() * self._zoom),
+        )
+        target = QRect(QPoint(), draw_size)
+        target.moveCenter(viewport.center())
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setClipRect(viewport)
+        painter.drawPixmap(target, self._source_pixmap)
+
+    def _get_zoom(self) -> float:
+        return self._zoom
+
+    def _set_zoom(self, zoom: float) -> None:
+        self._zoom = max(1.0, min(float(zoom), 1.025))
+        self.update()
+
+    zoom = Property(float, _get_zoom, _set_zoom)
+
+
+class HoverPixmapLabel(QLabel):
+    """A compact pixmap label that shares the menu-card hover zoom."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._source_pixmap = QPixmap()
+        self._zoom = 1.0
+
+    def setPixmap(self, pixmap: QPixmap) -> None:
+        self._source_pixmap = pixmap
+        super().setPixmap(pixmap)
 
     def paintEvent(self, event) -> None:
         if self._source_pixmap.isNull():
@@ -250,21 +396,24 @@ class WorkspaceChoiceCard(QFrame):
         self.setAccessibleName(accessible_name)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.PointingHandCursor)
-        self._hover_animation: QPropertyAnimation | None = None
+        self._hover_animation: QParallelAnimationGroup | None = None
 
     def _animate_illustration(self, zoom: float, duration: int) -> None:
-        illustration = self.findChild(MenuIllustrationLabel)
-        if illustration is None:
+        illustrations = self.findChildren(MenuIllustrationLabel) + self.findChildren(HoverPixmapLabel)
+        if not illustrations:
             return
         if self._hover_animation is not None:
             self._hover_animation.stop()
-        animation = QPropertyAnimation(illustration, b"zoom", self)
-        animation.setDuration(duration)
-        animation.setStartValue(illustration.zoom)
-        animation.setEndValue(zoom)
-        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._hover_animation = animation
-        animation.start()
+        group = QParallelAnimationGroup(self)
+        for illustration in illustrations:
+            animation = QPropertyAnimation(illustration, b"zoom", group)
+            animation.setDuration(duration)
+            animation.setStartValue(illustration.zoom)
+            animation.setEndValue(zoom)
+            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            group.addAnimation(animation)
+        self._hover_animation = group
+        group.start()
 
     def enterEvent(self, event) -> None:
         previous = WorkspaceChoiceCard._active_hover_card
@@ -283,8 +432,8 @@ class WorkspaceChoiceCard(QFrame):
     def _reset_hover_immediately(self) -> None:
         if self._hover_animation is not None:
             self._hover_animation.stop()
-        illustration = self.findChild(MenuIllustrationLabel)
-        if illustration is not None:
+        illustrations = self.findChildren(MenuIllustrationLabel) + self.findChildren(HoverPixmapLabel)
+        for illustration in illustrations:
             illustration.zoom = 1.0
 
     def make_decorations_mouse_transparent(self, action_button: QPushButton) -> None:
@@ -623,7 +772,7 @@ class MainWindow(QMainWindow):
             button.setObjectName("ManualStageButton")
             button.setProperty("manualStage", spec.id)
             button.setProperty("activeStage", False)
-            button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.setEnabled(spec.enabled)
             button.setCursor(Qt.PointingHandCursor)
             button.setToolTip(spec.label)
@@ -632,12 +781,27 @@ class MainWindow(QMainWindow):
             if spec.enabled:
                 button.clicked.connect(lambda _checked=False, tool_id=spec.id: self._open_tool(tool_id))
             self._manual_stage_buttons[spec.id] = button
-            manual_stage_layout.addWidget(button)
+            manual_stage_layout.addWidget(button, 1)
             if index < len(TOOL_SPECS) - 1:
                 separator = QLabel(">")
                 separator.setObjectName("ManualStageSeparator")
                 separator.setAlignment(Qt.AlignCenter)
                 manual_stage_layout.addWidget(separator)
+        profile_separator = QLabel(">", manual_stage_frame)
+        profile_separator.setObjectName("ManualStageSeparator")
+        profile_separator.setAlignment(Qt.AlignCenter)
+        manual_stage_layout.addWidget(profile_separator)
+        create_profile_button = QPushButton("Create\nprofile", manual_stage_frame)
+        create_profile_button.setObjectName("ManualPresetProfileButton")
+        create_profile_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        create_profile_button.setCursor(Qt.PointingHandCursor)
+        create_profile_button.setToolTip(
+            "Create a profile draft from manifests exported in the manual pipeline. "
+            "Settings without a manifest are left blank."
+        )
+        create_profile_button.clicked.connect(self._create_profile_from_manual_presets)
+        manual_stage_layout.addWidget(create_profile_button, 1)
+        self._manual_preset_profile_button = create_profile_button
         manual_stage_highlight = QFrame(manual_stage_frame)
         manual_stage_highlight.setObjectName("ManualStageHighlight")
         manual_stage_highlight.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -672,6 +836,21 @@ class MainWindow(QMainWindow):
         self._toolbar_max_height_animation.setEasingCurve(QEasingCurve.Type.OutQuart)
 
         primary_layout.addStretch(1)
+
+        credits_button = QToolButton()
+        credits_button.setObjectName("CreditsButton")
+        credits_button.setText("Credits")
+        credits_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        credits_button.setAccessibleName("Artwork credits and software citations")
+        credits_button.setCursor(Qt.PointingHandCursor)
+        credits_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        credits_menu = QMenu(credits_button)
+        credits_menu.setToolTipsVisible(True)
+        self._build_credit_actions(credits_menu)
+        credits_button.setMenu(credits_menu)
+        self._credits_button = credits_button
+        self._credits_menu = credits_menu
+        primary_layout.addWidget(credits_button)
 
         settings_button = QToolButton()
         settings_button.setObjectName("SettingsButton")
@@ -939,7 +1118,23 @@ class MainWindow(QMainWindow):
                     font-weight: 600;
                     padding: 0 1px;
                 }
-                QToolButton#SettingsButton {
+                QPushButton#ManualPresetProfileButton {
+                    background: transparent;
+                    border: 0;
+                    border-radius: 0;
+                    color: {theme.TOOL_2};
+                    font-size: 11px;
+                    font-weight: 600;
+                    min-height: 34px;
+                    max-height: 34px;
+                    padding: 0 5px;
+                }
+                QPushButton#ManualPresetProfileButton:hover {
+                    background: transparent;
+                    color: {theme.TEXT};
+                }
+                QToolButton#SettingsButton,
+                QToolButton#CreditsButton {
                     background: transparent;
                     border: 1px solid {theme.BORDER};
                     border-radius: 6px;
@@ -949,7 +1144,9 @@ class MainWindow(QMainWindow):
                     padding: 1px 11px;
                 }
                 QToolButton#SettingsButton:hover,
-                QToolButton#SettingsButton:open {
+                QToolButton#SettingsButton:open,
+                QToolButton#CreditsButton:hover,
+                QToolButton#CreditsButton:open {
                     background: {theme.SURFACE};
                     border-color: {theme.CONNECTOR};
                 }
@@ -999,8 +1196,12 @@ class MainWindow(QMainWindow):
         for stage_id, button in self._manual_stage_buttons.items():
             button.setIcon(QIcon(_menu_asset_pixmap(MANUAL_STAGE_MENU_ASSETS[stage_id], 20)))
             button.setIconSize(QSize(20, 20))
+        self._manual_preset_profile_button.setIcon(interface_icon("stack", theme.TOOL_2))
+        self._manual_preset_profile_button.setIconSize(QSize(15, 15))
         self._settings_button.setIcon(interface_icon("gear", theme.TEXT))
         self._settings_button.setIconSize(QSize(16, 16))
+        self._credits_button.setIcon(interface_icon("external", theme.TEXT))
+        self._credits_button.setIconSize(QSize(16, 16))
 
     def _apply_brand_logo(self) -> None:
         logo_theme = "dark" if theme.IS_DARK else "light"
@@ -1042,6 +1243,16 @@ class MainWindow(QMainWindow):
             theme_group.addAction(action)
             self._theme_actions[mode] = action
         self._theme_action_group = theme_group
+
+    @staticmethod
+    def _build_credit_actions(credits_menu: QMenu) -> None:
+        for label, citation, url in CREDIT_LINKS:
+            action = credits_menu.addAction(label)
+            action.setToolTip(citation)
+            action.setStatusTip(citation)
+            action.triggered.connect(
+                lambda _checked=False, destination=url: QDesktopServices.openUrl(QUrl(destination))
+            )
 
     def _request_theme_mode(self, mode: str, checked: bool) -> None:
         if checked:
@@ -1368,6 +1579,57 @@ class MainWindow(QMainWindow):
         self._refresh_stage_navigation()
         self._show_widget(self._main_menu)
 
+    def _create_profile_from_manual_presets(self) -> None:
+        presets = {
+            "processing_manifest": self._manual_preset_path("video_processing", "profile_manifest_path"),
+            "calibration_map": self._manual_preset_path("manual_calibration", "profile_calibration_map_path"),
+            "analysis_manifest": self._manual_preset_path(
+                "gait_parameter_analysis", "profile_analysis_manifest_path"
+            ),
+            "knee_manifest": self._manual_preset_path("knee_correction", "profile_knee_manifest_path"),
+        }
+        name, accepted = QInputDialog.getText(
+            self,
+            "Create profile from manual settings",
+            "Profile name:",
+            text="Manual settings profile",
+        )
+        name = name.strip()
+        if not accepted or not name:
+            return
+        try:
+            profile = self._main_menu.automated_profiles.create_profile_from_manual_presets(name, **presets)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Could not create profile", str(exc))
+            return
+
+        self._show_automated_profiles()
+        labels = {
+            "processing_manifest": "Video settings manifest",
+            "calibration_map": "Calibration map",
+            "analysis_manifest": "Gait analysis manifest",
+            "knee_manifest": "Knee correction manifest",
+        }
+        saved = [label for key, label in labels.items() if presets[key] is not None]
+        missing = [label for key, label in labels.items() if presets[key] is None]
+        missing.append("DeepLabCut models (assign one per video region)")
+        summary = [f'Profile "{profile.name}" was created.', "", "Saved:"]
+        summary.extend(f"✓  {label}" for label in saved)
+        if not saved:
+            summary.append("—  No manual manifests were available")
+        summary.extend(("", "Not saved:"))
+        summary.extend(f"—  {label}" for label in missing)
+        QMessageBox.information(self, "Profile created", "\n".join(summary))
+
+    def _manual_preset_path(self, tool_id: str, accessor_name: str) -> Path | None:
+        tool = self._tool_widgets.get(tool_id)
+        accessor = getattr(tool, accessor_name, None) if tool is not None else None
+        path = accessor() if callable(accessor) else None
+        if path is None:
+            return None
+        resolved = Path(path).expanduser().resolve()
+        return resolved if resolved.exists() else None
+
     def _automated_workspace_changed(self, page: str) -> None:
         self._automated_workspace_page = page
         if not self._automation_menu_active:
@@ -1686,6 +1948,7 @@ class MainMenuWidget(QWidget):
         runway_choices.setAlignment(Qt.AlignTop)
         manual_card, manual_button = self._manual_choice_card()
         manual_button.clicked.connect(self.manual_requested.emit)
+        manual_card.clicked.connect(self.manual_requested.emit)
         runway_choices.addWidget(manual_card, 9)
 
         handoff = QFrame()
@@ -1713,6 +1976,7 @@ class MainMenuWidget(QWidget):
 
         automated_card, automated_button, profiles_button = self._automated_choice_card()
         automated_button.clicked.connect(self.automated_requested.emit)
+        automated_card.clicked.connect(self.automated_requested.emit)
         profiles_button.clicked.connect(self.profiles_requested.emit)
         runway_choices.addWidget(automated_card, 4)
         runway_home_layout.addLayout(runway_choices)
@@ -1737,6 +2001,7 @@ class MainMenuWidget(QWidget):
         manual_pipeline_layout.addWidget(manual_pipeline_title)
         expanded_manual_card, start_manual_button = self._manual_choice_card(expanded=True)
         start_manual_button.clicked.connect(lambda: self.tool_requested.emit(self._tools[0].id))
+        expanded_manual_card.clicked.connect(lambda: self.tool_requested.emit(self._tools[0].id))
         manual_pipeline_layout.addWidget(expanded_manual_card)
         manual_pipeline_layout.addStretch(1)
         self._expanded_manual_card_widget = expanded_manual_card
@@ -1817,8 +2082,8 @@ class MainMenuWidget(QWidget):
         header.addLayout(copy, 1)
         return header
 
-    def _automated_choice_card(self) -> tuple[QFrame, QPushButton, QPushButton]:
-        card = QFrame()
+    def _automated_choice_card(self) -> tuple[WorkspaceChoiceCard, QPushButton, QPushButton]:
+        card = WorkspaceChoiceCard("Run automated pipeline")
         card.setObjectName("PipelineChoiceCard")
         card.setProperty("pipelineRole", "automated")
         layout = QVBoxLayout(card)
@@ -1841,7 +2106,7 @@ class MainMenuWidget(QWidget):
             step_layout = QVBoxLayout(step)
             step_layout.setContentsMargins(0, 0, 0, 0)
             step_layout.setSpacing(3)
-            icon = QLabel()
+            icon = HoverPixmapLabel()
             icon.setObjectName("AutomationFlowIcon")
             icon.setPixmap(_menu_asset_pixmap(asset_name, 58))
             icon.setAlignment(Qt.AlignCenter)
@@ -1882,10 +2147,11 @@ class MainMenuWidget(QWidget):
         button.setCursor(Qt.PointingHandCursor)
         button.setToolTip("Select a profile and process a batch of videos.")
         layout.addWidget(button)
+        card.make_decorations_mouse_transparent(button)
         return card, button, profiles_button
 
-    def _manual_choice_card(self, *, expanded: bool = False) -> tuple[QFrame, QPushButton]:
-        card = QFrame()
+    def _manual_choice_card(self, *, expanded: bool = False) -> tuple[WorkspaceChoiceCard, QPushButton]:
+        card = WorkspaceChoiceCard("Open manual pipeline")
         card.setObjectName("PipelineChoiceCard")
         card.setProperty("pipelineRole", "manual")
         layout = QVBoxLayout(card)
@@ -1924,7 +2190,7 @@ class MainMenuWidget(QWidget):
             stage_layout = QVBoxLayout(stage)
             stage_layout.setContentsMargins(0, 0, 0, 0)
             stage_layout.setSpacing(3)
-            icon = QLabel()
+            icon = HoverPixmapLabel()
             icon.setObjectName("ManualMiniStageIcon")
             icon.setAlignment(Qt.AlignCenter)
             icon.setPixmap(_menu_asset_pixmap(MANUAL_STAGE_MENU_ASSETS[spec.id], 58))
@@ -1962,6 +2228,8 @@ class MainMenuWidget(QWidget):
         button.setProperty("pipelineRole", "manual")
         button.setCursor(Qt.PointingHandCursor)
         layout.addWidget(button)
+        if not expanded:
+            card.make_decorations_mouse_transparent(button)
         return card, button
 
     def _runway_choice_card(self) -> tuple[WorkspaceChoiceCard, QPushButton]:
@@ -2262,6 +2530,9 @@ class MainMenuWidget(QWidget):
             }
             QFrame#PipelineChoiceCard[pipelineRole="manual"] {
                 background: {theme.SURFACE};
+            }
+            QFrame#PipelineChoiceCard:hover {
+                background: {theme.PANEL};
             }
             QFrame#RunwayChoiceCard,
             QFrame#LadderChoiceCard {

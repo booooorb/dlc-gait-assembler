@@ -6,6 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from dlc_gait_assembly.services.analysis_manifests import (
+    read_analysis_manifest,
+    read_knee_analysis_manifest,
+)
 from dlc_gait_assembly.services.pipeline.deeplabcut import (
     DLC_MODEL_FOLDER_NAMES,
     DLC_TRAINING_DATASET_FOLDER_NAME,
@@ -47,7 +51,7 @@ class AutomatedProfileStore:
     def save(
         self,
         name: str,
-        processing_manifest: str | Path,
+        processing_manifest: str | Path | None,
         calibration_map: str | Path | None,
         deeplabcut_models: dict[str, str | Path],
         profile_id: str | None = None,
@@ -55,23 +59,22 @@ class AutomatedProfileStore:
         knee_manifest: str | Path | None = None,
         gait_analysis_enabled: bool = True,
         knee_correction_enabled: bool | None = None,
+        *,
+        allow_incomplete: bool = False,
     ) -> AutomatedPipelineProfile:
-        draft = validate_profile_draft(
-            ProfileDraft(
-                name=name,
-                processing_manifest=Path(processing_manifest),
-                calibration_map=Path(calibration_map) if calibration_map is not None else None,
-                deeplabcut_models={region: Path(path) for region, path in deeplabcut_models.items()},
-                analysis_manifest=Path(analysis_manifest) if analysis_manifest is not None else None,
-                knee_manifest=Path(knee_manifest) if knee_manifest is not None else None,
-                gait_analysis_enabled=bool(gait_analysis_enabled),
-                knee_correction_enabled=(
-                    knee_manifest is not None
-                    if knee_correction_enabled is None
-                    else bool(knee_correction_enabled)
-                ),
-            )
+        draft = ProfileDraft(
+            name=name,
+            processing_manifest=Path(processing_manifest) if processing_manifest is not None else None,
+            calibration_map=Path(calibration_map) if calibration_map is not None else None,
+            deeplabcut_models={region: Path(path) for region, path in deeplabcut_models.items()},
+            analysis_manifest=Path(analysis_manifest) if analysis_manifest is not None else None,
+            knee_manifest=Path(knee_manifest) if knee_manifest is not None else None,
+            gait_analysis_enabled=bool(gait_analysis_enabled),
+            knee_correction_enabled=(
+                knee_manifest is not None if knee_correction_enabled is None else bool(knee_correction_enabled)
+            ),
         )
+        draft = self._normalize_incomplete_draft(draft) if allow_incomplete else validate_profile_draft(draft)
         clean_name = draft.name
         manifest_source = draft.processing_manifest
         calibration_source = draft.calibration_map
@@ -93,7 +96,11 @@ class AutomatedProfileStore:
 
         try:
             staging_dir.mkdir(parents=False, exist_ok=False)
-            stored_manifest = self._copy_asset(manifest_source, staging_dir / "processing_manifest")
+            stored_manifest = (
+                self._copy_asset(manifest_source, staging_dir / "processing_manifest")
+                if manifest_source is not None
+                else None
+            )
             stored_calibration = (
                 self._copy_asset(calibration_source, staging_dir / "calibration_map")
                 if calibration_source is not None
@@ -116,9 +123,9 @@ class AutomatedProfileStore:
                     staging_dir / "deeplabcut_models" / f"{index:02d}",
                 )
 
-            assets = {
-                "processing_manifest": str(stored_manifest.relative_to(staging_dir)),
-            }
+            assets = {}
+            if stored_manifest is not None:
+                assets["processing_manifest"] = str(stored_manifest.relative_to(staging_dir))
             if stored_calibration is not None:
                 assets["calibration_map"] = str(stored_calibration.relative_to(staging_dir))
             if stored_analysis is not None:
@@ -161,6 +168,40 @@ class AutomatedProfileStore:
             raise
 
         return self.load(profile_id)
+
+    def _normalize_incomplete_draft(self, draft: ProfileDraft) -> ProfileDraft:
+        clean_name = draft.name.strip()
+        if not clean_name:
+            raise ValueError("Enter a profile name.")
+        manifest = draft.processing_manifest.expanduser().resolve() if draft.processing_manifest else None
+        calibration = draft.calibration_map.expanduser().resolve() if draft.calibration_map else None
+        analysis = draft.analysis_manifest.expanduser().resolve() if draft.analysis_manifest else None
+        knee = draft.knee_manifest.expanduser().resolve() if draft.knee_manifest else None
+        models = {region: path.expanduser().resolve() for region, path in draft.deeplabcut_models.items()}
+        sources = tuple(path for path in (manifest, calibration, analysis, knee, *models.values()) if path is not None)
+        missing = [path for path in sources if not path.exists()]
+        if missing:
+            raise FileNotFoundError(f"The selected file or folder no longer exists: {missing[0]}")
+        if manifest is not None:
+            regions = regions_from_processing_manifest(manifest)
+            if not set(models).issubset(regions):
+                raise ValueError("A DeepLabCut model does not match a region in the video manifest.")
+        elif models:
+            raise ValueError("A video settings manifest is required before DeepLabCut models can be assigned.")
+        if analysis is not None:
+            read_analysis_manifest(analysis)
+        if knee is not None:
+            read_knee_analysis_manifest(knee)
+        return ProfileDraft(
+            name=clean_name,
+            processing_manifest=manifest,
+            calibration_map=calibration,
+            deeplabcut_models=models,
+            analysis_manifest=analysis,
+            knee_manifest=knee,
+            gait_analysis_enabled=bool(draft.gait_analysis_enabled),
+            knee_correction_enabled=bool(draft.knee_correction_enabled),
+        )
 
     def delete(self, profile_id: str) -> None:
         profile_dir = self._profile_dir(profile_id)
@@ -212,7 +253,8 @@ class AutomatedProfileStore:
         if format_version not in (1, 2, 3, 4, PROFILE_FORMAT_VERSION):
             raise ValueError("Unsupported automated profile format.")
         profile_dir = metadata_path.parent.resolve()
-        manifest = self._stored_path(profile_dir, data["assets"]["processing_manifest"])
+        manifest_relative = data["assets"].get("processing_manifest")
+        manifest = self._stored_path(profile_dir, manifest_relative) if manifest_relative else None
         calibration_relative = data["assets"].get("calibration_map")
         calibration = (
             self._stored_path(profile_dir, calibration_relative)
@@ -234,7 +276,7 @@ class AutomatedProfileStore:
                 for item in data["deeplabcut_models"]
             }
         if (
-            not manifest.exists()
+            (manifest is not None and not manifest.exists())
             or (calibration is not None and not calibration.exists())
             or (analysis_manifest is not None and not analysis_manifest.exists())
             or (knee_manifest is not None and not knee_manifest.exists())

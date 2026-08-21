@@ -701,6 +701,7 @@ class AutomatedPipelineProfilesWidget(
         self.pipeline_review_panel = QFrame()
         self.pipeline_review_panel.setObjectName("PipelineReviewPanel")
         review_layout = QHBoxLayout(self.pipeline_review_panel)
+        self.pipeline_review_layout = review_layout
         review_layout.setContentsMargins(6, 6, 6, 6)
         review_layout.setSpacing(6)
         self.pipeline_review_preview_stack = QStackedWidget()
@@ -730,7 +731,8 @@ class AutomatedPipelineProfilesWidget(
         self.pipeline_stickplot_preview = DoubleClickLabel()
         self.pipeline_stickplot_preview.setObjectName("PipelineStickplotPreview")
         self.pipeline_stickplot_preview.setAlignment(Qt.AlignCenter)
-        self.pipeline_stickplot_preview.setScaledContents(True)
+        self.pipeline_stickplot_preview.setCursor(Qt.PointingHandCursor)
+        self.pipeline_stickplot_preview.setToolTip("Click to open the full-size stickplot preview.")
         self.pipeline_review_preview_stack.addWidget(self.pipeline_stickplot_preview)
         review_layout.addWidget(self.pipeline_review_preview_stack, 1)
         review_copy = QVBoxLayout()
@@ -819,6 +821,9 @@ class AutomatedPipelineProfilesWidget(
             self._open_pipeline_review_video
         )
         self.pipeline_stickplot_preview.double_clicked.connect(
+            self._open_large_stickplot_preview
+        )
+        self.pipeline_stickplot_preview.clicked.connect(
             self._open_large_stickplot_preview
         )
 

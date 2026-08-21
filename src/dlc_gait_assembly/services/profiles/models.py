@@ -25,7 +25,7 @@ class ProfileDraft:
     """Editable profile inputs before the store owns copies of their assets."""
 
     name: str
-    processing_manifest: Path
+    processing_manifest: Path | None
     calibration_map: Path | None
     deeplabcut_models: dict[str, Path]
     analysis_manifest: Path | None = None

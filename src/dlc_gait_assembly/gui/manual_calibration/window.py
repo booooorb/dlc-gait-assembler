@@ -60,6 +60,7 @@ class ManualCalibrationWidget(QWidget):
         super().__init__()
         self.setObjectName("ManualCalibrationWidget")
         self._project_root = find_project_root(__file__)
+        self._profile_calibration_map_path: Path | None = None
         self._capture = None
         self._current_media: Path | None = None
         self._calibration_sticks_by_media: dict[str, tuple[CalibrationStick, ...]] = {}
@@ -673,11 +674,17 @@ class ManualCalibrationWidget(QWidget):
             QMessageBox.critical(self, "Export failed", str(exc))
             return
 
+        self._profile_calibration_map_path = Path(paths["map"]).expanduser().resolve()
+
         QMessageBox.information(
             self,
             "Conversion map exported",
             f"Output folder:\n{session_dir}\n\nMap:\n{paths['map'].name}\nReport:\n{paths['report'].name}",
         )
+
+    def profile_calibration_map_path(self) -> Path | None:
+        """Return the conversion map most recently exported in this workspace."""
+        return self._profile_calibration_map_path
 
     def _default_output_root(self) -> Path:
         output_root = self._project_root / "outputs" / "calibration"

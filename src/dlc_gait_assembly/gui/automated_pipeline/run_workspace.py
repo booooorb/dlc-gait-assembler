@@ -34,6 +34,7 @@ from dlc_gait_assembly.gui.automated_pipeline.previews import (
 from dlc_gait_assembly.gui.automated_pipeline.worker import AutomatedPipelineWorker
 from dlc_gait_assembly.services.automated_profiles import (
     AutomatedPipelineProfile,
+    regions_from_processing_manifest,
 )
 from dlc_gait_assembly.services.domain.videos import VIDEO_EXTENSIONS
 from dlc_gait_assembly.services.pipeline.automated import (
@@ -44,6 +45,29 @@ try:
     import cv2
 except ImportError:
     cv2 = None
+
+
+def _profile_missing_requirements(profile: AutomatedPipelineProfile) -> list[str]:
+    missing: list[str] = []
+    if profile.processing_manifest is None:
+        missing.append("Video settings manifest")
+    else:
+        try:
+            regions = regions_from_processing_manifest(profile.processing_manifest)
+        except (OSError, ValueError):
+            regions = ()
+            missing.append("Valid video settings manifest")
+        unassigned = [region for region in regions if region not in profile.deeplabcut_models]
+        if unassigned:
+            missing.append("DeepLabCut models for: " + ", ".join(unassigned))
+    if profile.gait_analysis_enabled:
+        if profile.calibration_map is None:
+            missing.append("Calibration map")
+        if profile.analysis_manifest is None:
+            missing.append("Gait analysis manifest")
+    if profile.knee_correction_enabled and profile.knee_manifest is None:
+        missing.append("Knee correction manifest")
+    return missing
 
 
 class RunWorkspacePage(QWidget):
@@ -187,6 +211,15 @@ class RunWorkspaceMixin:
         profile = self._profiles.get(self._current_profile_id or "")
         if profile is None or not self._video_paths:
             self._toggle_pipeline_demo()
+            return
+        missing = _profile_missing_requirements(profile)
+        if missing:
+            QMessageBox.warning(
+                self,
+                "Profile setup incomplete",
+                "Complete these profile settings before running:\n• " + "\n• ".join(missing),
+            )
+            self._show_profile_configuration()
             return
         self._start_pipeline(profile)
 

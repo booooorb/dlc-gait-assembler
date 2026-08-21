@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QSplitter,
     QSpinBox,
+    QSplitter,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -89,6 +89,7 @@ class VideoEditorWidget(QWidget):
         self._processing_video_paths: list[Path] = []
         self._processing_trim_ranges_by_path: dict[str, tuple[TrimRange, ...]] = {}
         self._project_root = find_project_root(__file__)
+        self._profile_manifest_path: Path | None = None
         self._trim_ranges_by_video: dict[str, list[TrimRange]] = {}
         self._active_trim_range_by_video: dict[str, int] = {}
 
@@ -977,6 +978,7 @@ class VideoEditorWidget(QWidget):
         except OSError as exc:
             QMessageBox.critical(self, "Could not export video settings manifest", str(exc))
             return
+        self._profile_manifest_path = Path(saved).expanduser().resolve()
         QMessageBox.information(self, "Video settings manifest exported", f"Saved:\n{saved}")
 
     def _import_video_manifest(self) -> None:
@@ -993,6 +995,7 @@ class VideoEditorWidget(QWidget):
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not upload video settings manifest", str(exc))
             return
+        self._profile_manifest_path = Path(source).expanduser().resolve()
         self.preview.set_crop_regions(options.crop_regions)
         self.preview.set_invert_regions(options.invert_rects)
         self.preview.set_enhancements(options.enhancements)
@@ -1003,6 +1006,10 @@ class VideoEditorWidget(QWidget):
         self._refresh_trim_context()
         self._update_process_state()
         QMessageBox.information(self, "Video settings manifest uploaded", "Video settings were applied.")
+
+    def profile_manifest_path(self) -> Path | None:
+        """Return the manifest most recently imported or exported in this workspace."""
+        return self._profile_manifest_path
 
     def _apply_imported_trim_ranges(self, trim_ranges_by_video: dict[str, tuple[TrimRange, ...]]) -> None:
         self._trim_ranges_by_video.clear()

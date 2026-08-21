@@ -36,6 +36,32 @@ class ProfileEditorPage(QWidget):
 
 
 class ProfileEditorMixin:
+    def create_profile_from_manual_presets(
+        self,
+        name: str,
+        *,
+        processing_manifest: Path | None = None,
+        calibration_map: Path | None = None,
+        analysis_manifest: Path | None = None,
+        knee_manifest: Path | None = None,
+    ) -> AutomatedPipelineProfile:
+        """Save a named profile containing every available manual-workspace preset."""
+        profile = self._store.save(
+            name,
+            processing_manifest,
+            calibration_map,
+            {},
+            analysis_manifest=analysis_manifest,
+            knee_manifest=knee_manifest,
+            gait_analysis_enabled=analysis_manifest is not None,
+            knee_correction_enabled=knee_manifest is not None,
+            allow_incomplete=True,
+        )
+        self._refresh_profiles(profile.id)
+        self._show_profile_configuration()
+        self.status_label.setText(f'Profile "{profile.name}" created from the available manual settings.')
+        return profile
+
     def _refresh_profiles(self, selected_id: str | None = None) -> None:
         profiles = self._store.list_profiles()
         self._profiles = {profile.id: profile for profile in profiles}
@@ -108,6 +134,7 @@ class ProfileEditorMixin:
                 knee_manifest=source.knee_manifest,
                 gait_analysis_enabled=source.gait_analysis_enabled,
                 knee_correction_enabled=source.knee_correction_enabled,
+                allow_incomplete=True,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Could not duplicate profile", str(exc))
@@ -132,7 +159,6 @@ class ProfileEditorMixin:
         self._knee_manifest_source = None
         self._regions = ()
         self._model_sources = {}
-        self._saved_snapshot = None
         blockers = (
             QSignalBlocker(self.include_gait_analysis_button),
             QSignalBlocker(self.include_knee_correction_button),
@@ -147,6 +173,7 @@ class ProfileEditorMixin:
         self.duplicate_profile_button.setEnabled(False)
         self.save_profile_button.setText("Save new profile")
         self.status_label.setText("Start with the video processing manifest in step 1.")
+        self._saved_snapshot = self._snapshot()
 
     def _load_profile(self, profile: AutomatedPipelineProfile) -> None:
         self._current_profile_id = profile.id
@@ -155,7 +182,11 @@ class ProfileEditorMixin:
         self._calibration_source = profile.calibration_map
         self._analysis_manifest_source = profile.analysis_manifest
         self._knee_manifest_source = profile.knee_manifest
-        self._regions = regions_from_processing_manifest(profile.processing_manifest)
+        self._regions = (
+            regions_from_processing_manifest(profile.processing_manifest)
+            if profile.processing_manifest is not None
+            else ()
+        )
         self._model_sources = {region: profile.deeplabcut_models.get(region) for region in self._regions}
         blockers = (
             QSignalBlocker(self.include_gait_analysis_button),

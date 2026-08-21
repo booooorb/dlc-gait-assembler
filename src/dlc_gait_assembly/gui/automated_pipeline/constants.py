@@ -32,7 +32,7 @@ PIPELINE_REVIEW_GATES = {
     },
     4: {
         "title": "Review stickplot",
-        "description": "Verify the stickplot. Double-click to enlarge.",
+        "description": "Verify the stickplot. Click to enlarge.",
         "preview": "The generated stickplot preview appears here.",
         "setting": "gait analysis manifest",
         "tab": 2,

@@ -16,6 +16,7 @@ class GaitParameterDefinition:
     views: str
     markers: str
     calculation: str
+    display_name: str = ""
 
 
 ALMA_PARAMETER_NAMES = (
@@ -160,6 +161,7 @@ def _rustlab1_definition(name: str) -> GaitParameterDefinition:
             "Bottom view",
             f"Bottom {side} hindpaw and center back",
             f"{statistic} absolute hindpaw-to-center-back angle within the ALMA gait-cycle window",
+            f"{side.title()} hindpaw angle — {statistic} (deg)",
         )
     side = "Left" if name.startswith(("l-", "left__")) else "Right"
     if "Average_Height" in name:
@@ -182,7 +184,39 @@ def _rustlab1_definition(name: str) -> GaitParameterDefinition:
         }.get(name.rsplit("__", 1)[-1], "summary")
         calculation = f"{statistic} toe x-position minus hip x-position, converted to millimetres"
         markers = f"{side} hind toe and hip"
-    return GaitParameterDefinition(name, "RustLab1", "Multi-view", f"{side} side view", markers, calculation)
+    return GaitParameterDefinition(
+        name,
+        "RustLab1",
+        "Multi-view",
+        f"{side} side view",
+        markers,
+        calculation,
+        _rustlab1_display_name(name),
+    )
+
+
+def _rustlab1_display_name(name: str) -> str:
+    side = "Left" if name.startswith(("l-", "left__")) else "Right"
+    if name.startswith(("l-back-", "r-back-")):
+        marker_name = name.split("__", 1)[0]
+        bodypart = "hindpaw" if marker_name.endswith("back-toe") else marker_name.rsplit("-", 1)[-1]
+        measure = "average height" if name.endswith("Average_Height") else "vertical excursion"
+        return f"{side} {bodypart} {measure} (mm)"
+    if name.startswith(("l-hip__", "r-hip__", "l-iliac-crest__", "r-iliac-crest__")):
+        marker_name = name.split("__", 1)[0]
+        bodypart = "iliac crest" if marker_name.endswith("iliac-crest") else "hip"
+        measure = "average height" if name.endswith("Average_Height") else "vertical excursion"
+        return f"{side} {bodypart} {measure} (mm)"
+    if name.endswith("movement_per_step"):
+        return f"{side} hip displacement per step (cm)"
+    statistic = name.rsplit("__", 1)[-1]
+    measure = {
+        "average": "mean position",
+        "median": "median position",
+        "protraction": "protraction",
+        "retraction": "retraction",
+    }[statistic]
+    return f"{side} hindpaw {measure} relative to hip (mm)"
 
 
 def _custom_definition(name: str) -> GaitParameterDefinition:

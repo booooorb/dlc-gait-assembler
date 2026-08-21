@@ -198,6 +198,9 @@ QLabel#PipelineStickplotPreview {
     color: {theme.CANVAS_TEXT};
     font-size: 10px;
 }
+QLabel#PipelineStickplotPreview {
+    background: white;
+}
 QListWidget#PipelineReviewVideoList::item {
     background: {theme.CANVAS};
     color: {theme.CANVAS_TEXT};

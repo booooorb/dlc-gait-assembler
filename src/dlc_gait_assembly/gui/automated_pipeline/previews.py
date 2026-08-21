@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QImage, QPainter, QPen, QPixmap
+from PySide6.QtCore import QByteArray, QRectF, QSignalBlocker, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QImage, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -40,6 +42,10 @@ class ReviewVideoSource:
     view_name: str
 
 class AutomationVideoPreviewDialog(QDialog):
+    _SEEK_DEBOUNCE_MS = 40
+    _READ_AHEAD_FRAMES = 12
+    _FRAME_CACHE_BYTES = 96 * 1024 * 1024
+
     def __init__(
         self,
         path: Path,
@@ -64,6 +70,21 @@ class AutomationVideoPreviewDialog(QDialog):
         self._frame_count = 1
         self._fps = 0.0
         self._source_pixmap = QPixmap()
+        self._frame_cache: OrderedDict[int, QImage] = OrderedDict()
+        self._frame_cache_bytes = 0
+        self._capture_next_frame_index = 0
+        self._pending_frame_index: int | None = None
+        self._buffer_next_frame_index: int | None = None
+        self._buffer_frames_remaining = 0
+
+        self._seek_timer = QTimer(self)
+        self._seek_timer.setSingleShot(True)
+        self._seek_timer.setInterval(self._SEEK_DEBOUNCE_MS)
+        self._seek_timer.timeout.connect(self._load_pending_frame)
+        self._buffer_timer = QTimer(self)
+        self._buffer_timer.setSingleShot(True)
+        self._buffer_timer.setInterval(1)
+        self._buffer_timer.timeout.connect(self._buffer_next_frame)
 
         self.setWindowTitle("Video preview")
         self.setMinimumSize(720, 500)
@@ -127,7 +148,9 @@ class AutomationVideoPreviewDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
-        self.frame_slider.valueChanged.connect(self._load_frame)
+        self.frame_slider.valueChanged.connect(self._queue_frame)
+        self.frame_slider.sliderPressed.connect(self._pause_buffering)
+        self.frame_slider.sliderReleased.connect(self._flush_pending_frame)
         self.source_selector.currentIndexChanged.connect(self._select_review_source)
         self.previous_video_button.clicked.connect(
             lambda _checked=False: self._select_review_source(self._source_index - 1)
@@ -180,6 +203,12 @@ class AutomationVideoPreviewDialog(QDialog):
         self._select_review_source(self._source_index)
 
     def _select_review_source(self, index: int) -> None:
+        self._seek_timer.stop()
+        self._buffer_timer.stop()
+        self._pending_frame_index = None
+        self._buffer_next_frame_index = None
+        self._buffer_frames_remaining = 0
+        self._clear_frame_cache()
         index = max(0, min(index, len(self._review_sources) - 1))
         source = self._review_sources[index]
         capture = cv2.VideoCapture(str(source.path))
@@ -189,6 +218,7 @@ class AutomationVideoPreviewDialog(QDialog):
         if self._capture is not None:
             self._capture.release()
         self._capture = capture
+        self._capture_next_frame_index = 0
         self._source_index = index
         self._path = source.path
         frame_count_value = capture.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -214,24 +244,127 @@ class AutomationVideoPreviewDialog(QDialog):
         del slider_blocker
         self._load_frame(0)
 
+    def _queue_frame(self, frame_index: int) -> None:
+        frame_index = max(0, min(int(frame_index), self._frame_count - 1))
+        self._pending_frame_index = frame_index
+        self._pause_buffering()
+        if frame_index in self._frame_cache:
+            self._seek_timer.stop()
+            self._load_pending_frame()
+            return
+        self._seek_timer.start(
+            self._SEEK_DEBOUNCE_MS if self.frame_slider.isSliderDown() else 0
+        )
+
+    def _flush_pending_frame(self) -> None:
+        self._seek_timer.stop()
+        self._load_pending_frame()
+
+    def _load_pending_frame(self) -> None:
+        if self._pending_frame_index is None:
+            return
+        frame_index = self._pending_frame_index
+        self._pending_frame_index = None
+        self._load_frame(frame_index)
+
     def _load_frame(self, frame_index: int) -> None:
         if self._capture is None:
             return
-        self._capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        cached = self._frame_cache.get(frame_index)
+        if cached is not None:
+            self._frame_cache.move_to_end(frame_index)
+            self._show_frame(frame_index, cached)
+            self._start_buffering(frame_index + 1)
+            return
+        if self._capture_next_frame_index != frame_index:
+            self._capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            self._capture_next_frame_index = frame_index
         success, frame = self._capture.read()
+        self._capture_next_frame_index = frame_index + 1
         if not success or frame is None:
             self.preview.setPixmap(QPixmap())
             self.preview.setText("Could not read this frame")
             return
+        image = self._frame_image(frame)
+        self._cache_frame(frame_index, image)
+        self._show_frame(frame_index, image)
+        self._start_buffering(frame_index + 1)
+
+    @staticmethod
+    def _frame_image(frame) -> QImage:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         height, width, channels = rgb.shape
-        image = QImage(rgb.data, width, height, channels * width, QImage.Format_RGB888).copy()
+        return QImage(
+            rgb.data,
+            width,
+            height,
+            channels * width,
+            QImage.Format_RGB888,
+        ).copy()
+
+    def _show_frame(self, frame_index: int, image: QImage) -> None:
         self._source_pixmap = QPixmap.fromImage(image)
         self._render_frame()
         seconds = frame_index / self._fps if self._fps > 0 else 0.0
         self.frame_label.setText(
             f"{frame_index + 1:,} / {self._frame_count:,}   {seconds:.2f} s"
         )
+
+    def _cache_frame(self, frame_index: int, image: QImage) -> None:
+        image_bytes = int(image.sizeInBytes())
+        previous = self._frame_cache.pop(frame_index, None)
+        if previous is not None:
+            self._frame_cache_bytes -= int(previous.sizeInBytes())
+        if image_bytes > self._FRAME_CACHE_BYTES:
+            return
+        self._frame_cache[frame_index] = image
+        self._frame_cache_bytes += image_bytes
+        while self._frame_cache_bytes > self._FRAME_CACHE_BYTES and self._frame_cache:
+            _old_index, old_image = self._frame_cache.popitem(last=False)
+            self._frame_cache_bytes -= int(old_image.sizeInBytes())
+
+    def _clear_frame_cache(self) -> None:
+        self._frame_cache.clear()
+        self._frame_cache_bytes = 0
+
+    def _pause_buffering(self) -> None:
+        self._buffer_timer.stop()
+        self._buffer_next_frame_index = None
+        self._buffer_frames_remaining = 0
+
+    def _start_buffering(self, frame_index: int) -> None:
+        if self.frame_slider.isSliderDown() or frame_index >= self._frame_count:
+            return
+        self._buffer_next_frame_index = frame_index
+        self._buffer_frames_remaining = min(
+            self._READ_AHEAD_FRAMES,
+            self._frame_count - frame_index,
+        )
+        if self._buffer_frames_remaining:
+            self._buffer_timer.start()
+
+    def _buffer_next_frame(self) -> None:
+        frame_index = self._buffer_next_frame_index
+        if (
+            self._capture is None
+            or frame_index is None
+            or self._pending_frame_index is not None
+            or self.frame_slider.isSliderDown()
+            or self._capture_next_frame_index != frame_index
+            or self._buffer_frames_remaining <= 0
+        ):
+            self._pause_buffering()
+            return
+        success, frame = self._capture.read()
+        if not success or frame is None:
+            self._pause_buffering()
+            return
+        self._capture_next_frame_index = frame_index + 1
+        self._cache_frame(frame_index, self._frame_image(frame))
+        self._buffer_next_frame_index = frame_index + 1
+        self._buffer_frames_remaining -= 1
+        if self._buffer_frames_remaining:
+            self._buffer_timer.start()
 
     def _render_frame(self) -> None:
         if self._source_pixmap.isNull():
@@ -250,13 +383,108 @@ class AutomationVideoPreviewDialog(QDialog):
         self._render_frame()
 
     def closeEvent(self, event) -> None:
+        self._seek_timer.stop()
+        self._buffer_timer.stop()
+        self._clear_frame_cache()
         if self._capture is not None:
             self._capture.release()
             self._capture = None
         super().closeEvent(event)
 
 
-class DoubleClickLabel(QLabel):
+class AspectRatioImageLabel(QLabel):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._source_pixmap = QPixmap()
+        self._source_svg_data: bytes | None = None
+
+    def setPixmap(self, pixmap: QPixmap) -> None:
+        self._source_svg_data = None
+        self._source_pixmap = pixmap
+        self._render_pixmap()
+
+    def load_image_path(self, path: Path) -> bool:
+        path = Path(path)
+        if path.suffix.casefold() == ".svg":
+            try:
+                svg_data = qt_safe_svg_bytes(path.read_bytes())
+            except OSError:
+                return False
+            renderer = QSvgRenderer(QByteArray(svg_data))
+            if not renderer.isValid():
+                return False
+            renderer.setAspectRatioMode(Qt.KeepAspectRatio)
+            self._source_svg_data = svg_data
+            self._source_pixmap = QPixmap()
+        else:
+            pixmap = QPixmap(str(path))
+            if pixmap.isNull():
+                return False
+            self._source_svg_data = None
+            self._source_pixmap = pixmap
+        self._render_pixmap()
+        return True
+
+    def _render_pixmap(self) -> None:
+        target = self.contentsRect().size()
+        if target.isEmpty():
+            return
+        if self._source_svg_data is not None:
+            rendered = render_svg_pixmap(
+                self._source_svg_data,
+                target,
+                device_pixel_ratio=max(1.0, self.devicePixelRatioF()),
+            )
+            QLabel.setPixmap(self, rendered)
+            return
+        if self._source_pixmap.isNull():
+            QLabel.setPixmap(self, QPixmap())
+            return
+        QLabel.setPixmap(
+            self,
+            self._source_pixmap.scaled(
+                target,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            ),
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._render_pixmap()
+
+
+def render_svg_pixmap(
+    svg_data: bytes,
+    target_size: QSize,
+    *,
+    device_pixel_ratio: float = 1.0,
+) -> QPixmap:
+    """Render SVG at the requested logical size and display pixel ratio."""
+
+    ratio = max(1.0, float(device_pixel_ratio))
+    physical_size = QSize(
+        max(1, round(target_size.width() * ratio)),
+        max(1, round(target_size.height() * ratio)),
+    )
+    pixmap = QPixmap(physical_size)
+    pixmap.fill(Qt.transparent)
+    renderer = QSvgRenderer(QByteArray(qt_safe_svg_bytes(svg_data)))
+    renderer.setAspectRatioMode(Qt.KeepAspectRatio)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    renderer.render(
+        painter,
+        QRectF(0, 0, physical_size.width(), physical_size.height()),
+    )
+    painter.end()
+    pixmap.setDevicePixelRatio(ratio)
+    return pixmap
+
+
+class DoubleClickLabel(AspectRatioImageLabel):
+    clicked = Signal()
     double_clicked = Signal()
 
     def sizeHint(self) -> QSize:
@@ -268,15 +496,26 @@ class DoubleClickLabel(QLabel):
     def minimumSizeHint(self) -> QSize:
         return QSize(0, 0)
 
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
     def mouseDoubleClickEvent(self, event) -> None:
         self.double_clicked.emit()
         event.accept()
 
 
 class PipelineImagePreviewDialog(QDialog):
-    def __init__(self, title: str, pixmap: QPixmap, parent: QWidget | None = None):
+    def __init__(
+        self,
+        title: str,
+        image_path: Path,
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
-        self._source_pixmap = pixmap
         self.setWindowTitle(title)
         self.setMinimumSize(720, 500)
         self.resize(960, 680)
@@ -284,9 +523,9 @@ class PipelineImagePreviewDialog(QDialog):
         heading = QLabel(title)
         heading.setObjectName("LargeVideoPreviewTitle")
         layout.addWidget(heading)
-        self.preview = QLabel()
+        self.preview = AspectRatioImageLabel()
         self.preview.setAlignment(Qt.AlignCenter)
-        self.preview.setObjectName("LargeVideoPreview")
+        self.preview.setObjectName("LargeImagePreview")
         layout.addWidget(self.preview, 1)
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
@@ -299,27 +538,16 @@ class PipelineImagePreviewDialog(QDialog):
                     font-size: 14px;
                     font-weight: 650;
                 }
-                QLabel#LargeVideoPreview {
-                    background: {theme.CANVAS};
+                QLabel#LargeImagePreview {
+                    background: white;
                     border: 1px solid {theme.BORDER};
                 }
                 """
             )
         )
-        self._render_preview()
-
-    def _render_preview(self) -> None:
-        self.preview.setPixmap(
-            self._source_pixmap.scaled(
-                self.preview.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-        )
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._render_preview()
+        self.image_loaded = self.preview.load_image_path(image_path)
+        if not self.image_loaded:
+            self.preview.setText("Could not render this generated image.")
 
 
 class PipelineTextPreviewDialog(QDialog):
@@ -356,56 +584,6 @@ class PipelineTextPreviewDialog(QDialog):
                 """
             )
         )
-
-
-def pixmap_from_image_file(path: Path, width: int, height: int) -> QPixmap | None:
-    try:
-        if path.suffix.casefold() == ".svg":
-            data = qt_safe_svg_bytes(path.read_bytes())
-            pixmap = QPixmap()
-            if not pixmap.loadFromData(data, "SVG"):
-                return None
-        else:
-            pixmap = QPixmap(str(path))
-    except OSError:
-        return None
-    if pixmap.isNull():
-        return None
-    return pixmap.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
-
-def demo_stickplot_pixmap(width: int, height: int) -> QPixmap:
-    pixmap = QPixmap(width, height)
-    pixmap.fill(QColor("white"))
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    margin = max(18, width // 28)
-    baseline = height - margin * 2
-    painter.setPen(QPen(QColor("#b9b2a8"), max(1, width // 600)))
-    painter.drawLine(margin, baseline, width - margin, baseline)
-    painter.setPen(QPen(QColor(theme.PRIMARY), max(2, width // 300)))
-    pose_count = 6
-    spacing = (width - margin * 2) / pose_count
-    scale = max(0.7, min(width / 900, height / 420))
-    for pose in range(pose_count):
-        x = int(margin + spacing * (pose + 0.5))
-        phase = (pose - 2.5) / 2.5
-        hip = (x, int(baseline - 115 * scale))
-        knee = (int(x + phase * 24 * scale), int(baseline - 70 * scale))
-        ankle = (int(x - phase * 30 * scale), int(baseline - 24 * scale))
-        toe = (int(ankle[0] + 25 * scale), baseline)
-        crest = (int(x - 8 * scale), int(baseline - 155 * scale))
-        shoulder = (int(x + 12 * scale), int(baseline - 195 * scale))
-        joints = (shoulder, crest, hip, knee, ankle, toe)
-        for start, end in zip(joints, joints[1:], strict=False):
-            painter.drawLine(start[0], start[1], end[0], end[1])
-        radius = max(2, int(4 * scale))
-        for joint_x, joint_y in joints:
-            painter.drawEllipse(joint_x - radius, joint_y - radius, radius * 2, radius * 2)
-    painter.setPen(QColor("#5f5a54"))
-    painter.drawText(margin, margin, "Demo stickplot preview — double-click for large view")
-    painter.end()
-    return pixmap
 
 
 class VideoDropList(QListWidget):

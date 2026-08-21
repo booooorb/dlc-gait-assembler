@@ -24,8 +24,6 @@ from dlc_gait_assembly.gui.automated_pipeline.previews import (
     PipelineImagePreviewDialog,
     PipelineTextPreviewDialog,
     ReviewVideoSource,
-    demo_stickplot_pixmap,
-    pixmap_from_image_file,
 )
 from dlc_gait_assembly.services.pipeline.automated import (
     ReviewArtifact,
@@ -76,14 +74,35 @@ class PipelineReviewMixin:
         stage_index: int,
         artifacts: StageReview | None = None,
     ) -> None:
+        if stage_index == 4:
+            self.pipeline_review_layout.setStretch(0, 2)
+            self.pipeline_review_layout.setStretch(1, 1)
+        else:
+            self.pipeline_review_layout.setStretch(0, 1)
+            self.pipeline_review_layout.setStretch(1, 2)
         if artifacts is not None:
             self._populate_real_pipeline_review_preview(stage_index, artifacts)
             return
         if stage_index == 4:
-            self.pipeline_stickplot_preview.setPixmap(demo_stickplot_pixmap(640, 240))
+            self._pipeline_stickplot_path = (
+                self._project_root
+                / "assets"
+                / "analysis_previews"
+                / "alma_reference_stickplot.svg"
+            )
+            self.pipeline_stickplot_preview.setText("")
+            loaded = self.pipeline_stickplot_preview.load_image_path(
+                self._pipeline_stickplot_path
+            )
+            if not loaded:
+                self.pipeline_stickplot_preview.setPixmap(QPixmap())
+                self.pipeline_stickplot_preview.setText(
+                    "The real ALMA reference stickplot is unavailable."
+                )
+            self._pipeline_stickplot_pixmap = self.pipeline_stickplot_preview.pixmap()
             self.pipeline_stickplot_preview.setToolTip(
-                "Inspect the generated gait stickplot for obvious tracking or stride "
-                "errors. Double-click it to open a larger viewer."
+                "Actual ALMA stickplot generated from the bundled reference DLC coordinate "
+                "dataset. Click it to open a larger viewer."
             )
             self.pipeline_review_preview_stack.setCurrentWidget(
                 self.pipeline_stickplot_preview
@@ -166,18 +185,18 @@ class PipelineReviewMixin:
         if stage_index == 4:
             image_paths = [item.path for item in items if item.path.is_file()]
             self._pipeline_stickplot_path = image_paths[0] if image_paths else None
-            pixmap = (
-                pixmap_from_image_file(self._pipeline_stickplot_path, 640, 240)
+            self.pipeline_stickplot_preview.setText("")
+            loaded = (
+                self.pipeline_stickplot_preview.load_image_path(
+                    self._pipeline_stickplot_path
+                )
                 if self._pipeline_stickplot_path is not None
-                else None
+                else False
             )
-            self._pipeline_stickplot_pixmap = pixmap
-            if pixmap is None or pixmap.isNull():
+            if not loaded:
                 self.pipeline_stickplot_preview.setPixmap(QPixmap())
                 self.pipeline_stickplot_preview.setText("No stickplot image was produced")
-            else:
-                self.pipeline_stickplot_preview.setText("")
-                self.pipeline_stickplot_preview.setPixmap(pixmap)
+            self._pipeline_stickplot_pixmap = self.pipeline_stickplot_preview.pixmap()
             self.pipeline_review_preview_stack.setCurrentWidget(
                 self.pipeline_stickplot_preview
             )
@@ -312,15 +331,22 @@ class PipelineReviewMixin:
         return tuple(sources), selected_index
 
     def _open_large_stickplot_preview(self) -> None:
-        pixmap = None
-        if self._pipeline_stickplot_path is not None:
-            pixmap = pixmap_from_image_file(self._pipeline_stickplot_path, 1200, 700)
-        if pixmap is None or pixmap.isNull():
-            pixmap = demo_stickplot_pixmap(1200, 700)
+        if (
+            self._pipeline_stickplot_path is None
+            or not self._pipeline_stickplot_path.is_file()
+        ):
+            self._show_large_review_dialog(
+                PipelineTextPreviewDialog(
+                    "Generated stickplot preview",
+                    "No ALMA or RustLab1 stickplot has been generated for this review.",
+                    self,
+                )
+            )
+            return
         self._show_large_review_dialog(
             PipelineImagePreviewDialog(
                 "Generated stickplot preview",
-                pixmap,
+                self._pipeline_stickplot_path,
                 self,
             )
         )

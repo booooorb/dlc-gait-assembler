@@ -434,7 +434,6 @@ def _selected_parameter_names(settings: AlmaSettings, available: tuple[str, ...]
     if selected is None:
         return available
     selected_set = set(selected)
-    has_side_selection = any(name.startswith(("left__", "right__")) for name in selected_set)
     return tuple(name for name in available if name in selected_set)
 
 
@@ -443,6 +442,7 @@ def _selected_alma_parameters(parameters, settings: AlmaSettings, side: str | No
     if selected is None:
         return parameters
     selected_set = set(selected)
+    has_side_selection = any(name.startswith(("left__", "right__")) for name in selected_set)
     gait_columns = set(ALMA_PARAMETER_NAMES)
     columns = [
         column

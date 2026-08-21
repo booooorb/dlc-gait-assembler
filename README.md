@@ -67,7 +67,12 @@ Depending on the selected workflow, the app can generate:
 - synchronized multi-view session summaries;
 - PCA, Random Forest, and repeated-measures outputs.
 
+Generated files follow the layout documented in [outputs/README.md](outputs/README.md).
+
 Detailed scientific definitions are available in [SOP.tex](SOP.tex).
+
+The in-app parameter and figure documentation describes the generated measurements,
+required markers, calculations, and real ALMA/RustLab1 preview provenance.
 
 ## Troubleshooting
 

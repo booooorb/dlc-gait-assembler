@@ -3,7 +3,7 @@ from __future__ import annotations
 from math import hypot
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap
+from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QPushButton
 
 from dlc_gait_assembly.gui import theme
@@ -567,12 +567,12 @@ class CalibrationStickItem(QGraphicsItem):
 
     def _cursor_for_hit(self, hit: str | int):
         if hit in {"start", "end"}:
-            return Qt.CrossCursor
+            return QCursor(Qt.CrossCursor)
         if hit == "move":
-            return Qt.SizeAllCursor
+            return QCursor(Qt.SizeAllCursor)
         if isinstance(hit, int):
-            return Qt.PointingHandCursor
-        return Qt.ArrowCursor
+            return QCursor(Qt.PointingHandCursor)
+        return QCursor(Qt.ArrowCursor)
 
     def _stick_for_drag(self, mode: str | int, delta: QPointF) -> CalibrationStick:
         stick = self._press_stick

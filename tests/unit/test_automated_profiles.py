@@ -218,6 +218,28 @@ def test_profile_store_persists_video_and_dlc_only_profile(tmp_path):
     assert reloaded.knee_correction_enabled is False
 
 
+def test_profile_store_persists_incomplete_manual_settings_snapshot(tmp_path):
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    calibration = tmp_path / "conversion_factor_map.json"
+    calibration.write_text('{"pixels_per_cm": 42}', encoding="utf-8")
+
+    profile = store.save(
+        "Partial manual settings",
+        None,
+        calibration,
+        {},
+        gait_analysis_enabled=False,
+        knee_correction_enabled=False,
+        allow_incomplete=True,
+    )
+    reloaded = store.load(profile.id)
+
+    assert reloaded.processing_manifest is None
+    assert reloaded.calibration_map is not None
+    assert reloaded.calibration_map.read_text(encoding="utf-8") == '{"pixels_per_cm": 42}'
+    assert reloaded.deeplabcut_models == {}
+
+
 def test_manifest_regions_define_ordered_model_requirements(tmp_path):
     sources = _profile_sources(tmp_path)
 
@@ -334,6 +356,47 @@ def test_large_video_preview_opens_with_seek_slider(tmp_path):
     app.processEvents()
 
 
+def test_large_video_preview_coalesces_dragging_and_buffers_nearby_frames(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    widget = AutomatedPipelineProfilesWidget(AutomatedProfileStore(tmp_path / "profiles"))
+    video = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "video"
+        / "2019_09_19_RW_DRUGS_23.2099782.20190919151537.mp4"
+    )
+    widget._add_video_paths([video])
+    widget.video_list.itemDoubleClicked.emit(widget.video_list.item(0))
+    dialog = widget._large_preview_dialog
+    assert dialog is not None
+
+    target = min(30, dialog.frame_slider.maximum())
+    dialog.frame_slider.setSliderDown(True)
+    for frame_index in range(1, target + 1):
+        dialog.frame_slider.setValue(frame_index)
+    QTest.qWait(15)
+
+    assert dialog._seek_timer.isActive()
+    assert dialog._pending_frame_index == target
+    assert dialog.frame_label.text().startswith("1 / ")
+
+    dialog.frame_slider.setSliderDown(False)
+    assert dialog._pending_frame_index is None
+    assert dialog.frame_label.text().startswith(f"{target + 1:,} / ")
+
+    QTest.qWait(120)
+    next_frame = min(target + 1, dialog.frame_slider.maximum())
+    assert target in dialog._frame_cache
+    assert next_frame in dialog._frame_cache
+    dialog.frame_slider.setValue(next_frame)
+    assert dialog._pending_frame_index is None
+    assert dialog.frame_label.text().startswith(f"{next_frame + 1:,} / ")
+
+    dialog.close()
+    widget.close()
+    app.processEvents()
+
+
 def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
     app = QApplication.instance() or QApplication([])
     widget = AutomatedPipelineProfilesWidget(AutomatedProfileStore(tmp_path / "profiles"))
@@ -439,6 +502,7 @@ def test_run_button_plays_pipeline_ui_without_processing(tmp_path):
                     widget.pipeline_stickplot_preview
                 )
                 assert not widget.pipeline_stickplot_preview.pixmap().isNull()
+                assert widget._pipeline_stickplot_path.name == "alma_reference_stickplot.svg"
                 widget.pipeline_stickplot_preview.double_clicked.emit()
                 assert widget._large_review_dialog is not None
                 widget._large_review_dialog.close()

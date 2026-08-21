@@ -96,6 +96,7 @@ class AlmaKinematicsWidget(QWidget):
         super().__init__()
         self.setObjectName("GaitAnalysisWidget")
         self._project_root = find_project_root(__file__)
+        self._profile_analysis_manifest_path: Path | None = None
         self._alma_root = default_alma_root(self._project_root)
         self._selected_files: list[Path] = []
         self._view_sets: list[AlmaViewCsvSet] = []
@@ -151,9 +152,16 @@ class AlmaKinematicsWidget(QWidget):
         header_layout.addWidget(title)
         self.workspace_title = title
         header_layout.addStretch(1)
-        self.parameter_reference_button = QPushButton("Parameter reference")
+        self.figure_reference_button = QPushButton("Figure documentation")
+        self.figure_reference_button.setObjectName("FigureReferenceButton")
+        header_layout.addWidget(self.figure_reference_button)
+        self.parameter_reference_button = QPushButton("Parameter documentation")
         self.parameter_reference_button.setObjectName("ParameterReferenceButton")
         header_layout.addWidget(self.parameter_reference_button)
+        self.documentation_back_button = QPushButton("Back to analysis")
+        self.documentation_back_button.setObjectName("DocumentationBackButton")
+        self.documentation_back_button.hide()
+        header_layout.addWidget(self.documentation_back_button)
         root.addWidget(header, 0)
 
         self.workspace_stack = QStackedWidget()
@@ -767,7 +775,9 @@ class AlmaKinematicsWidget(QWidget):
         self._wheel_value_guard = install_wheel_value_guard(self)
 
     def _connect_signals(self) -> None:
-        self.parameter_reference_button.clicked.connect(self._toggle_parameter_reference)
+        self.figure_reference_button.clicked.connect(self._show_figure_documentation)
+        self.parameter_reference_button.clicked.connect(self._show_parameter_documentation)
+        self.documentation_back_button.clicked.connect(self._close_documentation)
         self.add_file_button.clicked.connect(self._add_file)
         self.add_folder_button.clicked.connect(self._add_folder)
         self.clear_files_button.clicked.connect(self._clear_files)
@@ -827,17 +837,24 @@ class AlmaKinematicsWidget(QWidget):
         for combo in self._bodypart_combos.values():
             combo.currentTextChanged.connect(self._invalidate_stickplot_preview)
 
-    def _toggle_parameter_reference(self) -> None:
-        showing_reference = self.workspace_stack.currentWidget() is self.parameter_reference
-        if showing_reference:
-            self.workspace_stack.setCurrentIndex(0)
-            self.workspace_title.setText("Runway analysis")
-            self.parameter_reference_button.setText("Parameter reference")
-        else:
-            self.parameter_reference.set_multiside(self._is_three_view_mode())
-            self.workspace_stack.setCurrentWidget(self.parameter_reference)
-            self.workspace_title.setText("Gait parameter reference")
-            self.parameter_reference_button.setText("Back to analysis")
+    def _show_figure_documentation(self) -> None:
+        self.parameter_reference.show_figure_documentation()
+        self._show_documentation("Figure creator documentation")
+
+    def _show_parameter_documentation(self) -> None:
+        self.parameter_reference.set_multiside(self._is_three_view_mode())
+        self.parameter_reference.show_parameter_documentation()
+        self._show_documentation("Gait parameter documentation")
+
+    def _show_documentation(self, title: str) -> None:
+        self.workspace_stack.setCurrentWidget(self.parameter_reference)
+        self.workspace_title.setText(title)
+        self.documentation_back_button.show()
+
+    def _close_documentation(self) -> None:
+        self.workspace_stack.setCurrentIndex(0)
+        self.workspace_title.setText("Runway analysis")
+        self.documentation_back_button.hide()
 
     def _add_file(self) -> None:
         filenames, _ = QFileDialog.getOpenFileNames(
@@ -1063,6 +1080,7 @@ class AlmaKinematicsWidget(QWidget):
             QMessageBox.critical(self, "Could not export analysis manifest", str(exc))
             return
 
+        self._profile_analysis_manifest_path = Path(exported).expanduser().resolve()
         self.status_label.setText("Analysis manifest exported.")
         self._append_log(f"Analysis manifest exported to {exported}")
         QMessageBox.information(
@@ -1070,6 +1088,10 @@ class AlmaKinematicsWidget(QWidget):
             "Analysis manifest exported",
             f"Saved the current gait-analysis settings to:\n{exported}",
         )
+
+    def profile_analysis_manifest_path(self) -> Path | None:
+        """Return the analysis manifest most recently exported in this workspace."""
+        return self._profile_analysis_manifest_path
 
     def _load_bodypart_mapping_from_first_file(self) -> None:
         if not self._selected_files:
@@ -1736,6 +1758,101 @@ class AlmaKinematicsWidget(QWidget):
                 background: {theme.BACKGROUND};
                 background-image: url({theme.BACKGROUND_TEXTURE});
             }
+            QLabel#ParameterReferenceTitle {
+                color: {theme.TEXT};
+                font-size: 22px;
+                font-weight: 700;
+            }
+            QLabel#ParameterReferenceSubtitle {
+                color: {theme.CONNECTOR};
+                font-size: 13px;
+                padding-bottom: 6px;
+            }
+            QFrame#FigureCreatorIndex,
+            QFrame#FigureCreatorDetails {
+                background: {theme.SURFACE};
+                border: 1px solid {theme.BORDER};
+                border-radius: 6px;
+            }
+            QLabel#FigureCreatorTitle {
+                color: {theme.TEXT};
+                font-size: 20px;
+                font-weight: 700;
+                border: 0;
+            }
+            QLabel#FigureCreatorIntro {
+                color: {theme.CONNECTOR};
+                font-size: 12px;
+                border: 0;
+            }
+            QLabel#FigureCountLabel {
+                color: {theme.CONNECTOR};
+                font-size: 11px;
+                border: 0;
+            }
+            QLabel#FigureIndexHeading {
+                color: {theme.TEXT};
+                font-size: 13px;
+                font-weight: 700;
+                border: 0;
+            }
+            QListWidget#FigureCreatorList {
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+                border-radius: 4px;
+                padding: 3px;
+            }
+            QListWidget#FigureCreatorList::item {
+                color: {theme.TEXT};
+                padding: 6px 7px;
+                border-radius: 3px;
+            }
+            QListWidget#FigureCreatorList::item:selected {
+                background: {theme.PRIMARY};
+                color: white;
+            }
+            QSvgWidget#FigureCreatorPreview {
+                background: white;
+                border: 1px solid {theme.BORDER};
+                border-radius: 4px;
+            }
+            QLabel#FigureSourceBadge {
+                color: {theme.PRIMARY};
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
+                border-radius: 9px;
+                font-size: 10px;
+                font-weight: 700;
+                padding: 2px 8px;
+            }
+            QLabel#FigurePreviewNote {
+                color: {theme.CONNECTOR};
+                font-size: 11px;
+                border: 0;
+            }
+            QScrollArea#FigureExplanationScroll,
+            QScrollArea#FigureExplanationScroll > QWidget,
+            QScrollArea#FigureExplanationScroll > QWidget > QWidget {
+                background: transparent;
+                border: 0;
+            }
+            QLabel#FigureExplanationTitle {
+                color: {theme.TEXT};
+                font-size: 16px;
+                font-weight: 700;
+                border: 0;
+            }
+            QLabel#FigureDetailHeading {
+                color: {theme.TEXT};
+                font-size: 11px;
+                font-weight: 700;
+                border: 0;
+            }
+            QLabel#FigureDetailValue {
+                color: {theme.CONNECTOR};
+                font-size: 11px;
+                border: 0;
+            }
             QTreeWidget#GaitParameterTree {
                 background: {theme.SURFACE};
                 alternate-background-color: {theme.PANEL};
@@ -1752,13 +1869,6 @@ class AlmaKinematicsWidget(QWidget):
                 font-size: 17px;
                 font-weight: 700;
             }
-            QLabel#ParameterBadge {
-                background: {theme.PANEL};
-                border: 1px solid {theme.BORDER};
-                border-radius: 3px;
-                color: {theme.CONNECTOR};
-                padding: 6px 8px;
-            }
             QLabel#ParameterDetailHeading {
                 color: {theme.TEXT};
                 font-size: 12px;
@@ -1770,9 +1880,9 @@ class AlmaKinematicsWidget(QWidget):
             }
             QLabel#ParameterCalculationFocus {
                 color: {theme.TEXT};
-                font-size: 18px;
-                font-weight: 650;
-                padding: 8px 0 12px 0;
+                font-size: 15px;
+                font-weight: 600;
+                padding: 6px 0 10px 0;
             }
             QTreeWidget#GaitParameterSelectionTree {
                 background: {theme.SURFACE};
@@ -1792,7 +1902,9 @@ class AlmaKinematicsWidget(QWidget):
             (self.export_manifest_button, "download", theme.TEXT),
             (self.preview_button, "eye", theme.TEXT),
             (self.run_button, "play", theme.PRIMARY_TEXT),
+            (self.figure_reference_button, "chart", theme.TEXT),
             (self.parameter_reference_button, "document", theme.TEXT),
+            (self.documentation_back_button, "arrow-left", theme.TEXT),
         )
         for button, icon_name, color in icon_specs:
             button.setIcon(interface_icon(icon_name, color))
@@ -1818,6 +1930,9 @@ class GaitAnalysisWidget(QWidget):
 
     def _apply_style(self) -> None:
         self.kinematics_widget._apply_style()
+
+    def profile_analysis_manifest_path(self) -> Path | None:
+        return self.kinematics_widget.profile_analysis_manifest_path()
 
 
 def _double_spin(minimum: float, maximum: float, value: float, decimals: int) -> QDoubleSpinBox:

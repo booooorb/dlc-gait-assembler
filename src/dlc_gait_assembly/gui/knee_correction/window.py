@@ -63,6 +63,7 @@ class KneeCorrectionWidget(QWidget):
         super().__init__()
         self.setObjectName("KneeCorrectionWidget")
         self._project_root = find_project_root(__file__)
+        self._profile_knee_manifest_path: Path | None = None
         self._selected_paths: list[Path] = []
         self._pairs: list[CoordinateFilePair] = []
         self._calibration_map_path: Path | None = None
@@ -825,8 +826,13 @@ class KneeCorrectionWidget(QWidget):
         except OSError as exc:
             QMessageBox.critical(self, "Could not export knee analysis manifest", str(exc))
             return
+        self._profile_knee_manifest_path = Path(saved).expanduser().resolve()
         self.log.appendPlainText(f"[Manifest] Exported {saved}")
         QMessageBox.information(self, "Knee analysis manifest exported", f"Saved:\n{saved}")
+
+    def profile_knee_manifest_path(self) -> Path | None:
+        """Return the knee manifest most recently exported in this workspace."""
+        return self._profile_knee_manifest_path
 
     def _run(self) -> None:
         if not self._pairs or not all(pair.is_paired for pair in self._pairs):
