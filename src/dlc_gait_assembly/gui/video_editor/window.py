@@ -131,13 +131,13 @@ class VideoEditorWidget(QWidget):
 
         left_panel = QWidget()
         left_panel.setObjectName("WorkspaceSidebar")
-        left_panel.setMinimumWidth(350)
+        left_panel.setMinimumWidth(420)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(16, 16, 16, 16)
         left_layout.setSpacing(12)
 
         videos_box = QGroupBox("Uploaded videos")
-        videos_box.setMinimumHeight(150)
+        videos_box.setMinimumHeight(190)
         videos_layout = QVBoxLayout(videos_box)
         videos_layout.setSpacing(8)
         button_row = QHBoxLayout()
@@ -169,46 +169,10 @@ class VideoEditorWidget(QWidget):
         list_font.setPointSize(9)
         self.video_list.setFont(list_font)
         videos_layout.addWidget(self.video_list, 1)
-        left_layout.addWidget(videos_box, 3)
+        left_layout.addWidget(videos_box, 4)
 
         self.settings_panel = OperationSettingsPanel(self.preview)
-        left_layout.addWidget(self.settings_panel, 4)
-
-        quality_box = QGroupBox("Export quality")
-        quality_layout = QHBoxLayout(quality_box)
-        quality_layout.setContentsMargins(8, 6, 8, 6)
-        quality_layout.setSpacing(8)
-        quality_layout.addWidget(QLabel("CRF"))
-        self.crf_spin = QSpinBox()
-        self.crf_spin.setObjectName("VideoCrfSpin")
-        self.crf_spin.setRange(0, 51)
-        self.crf_spin.setValue(18)
-        self.crf_spin.setToolTip(
-            "Constant Rate Factor: lower values preserve more detail and create larger files."
-        )
-        quality_layout.addWidget(self.crf_spin)
-        quality_layout.addWidget(QLabel("Preset"))
-        self.preset_combo = QComboBox()
-        self.preset_combo.setObjectName("VideoPresetCombo")
-        self.preset_combo.addItems(
-            [
-                "ultrafast",
-                "superfast",
-                "veryfast",
-                "faster",
-                "fast",
-                "medium",
-                "slow",
-                "slower",
-                "veryslow",
-            ]
-        )
-        self.preset_combo.setCurrentText("slow")
-        self.preset_combo.setToolTip(
-            "Encoding speed preset: slower presets take longer but generally compress better."
-        )
-        quality_layout.addWidget(self.preset_combo, 1)
-        left_layout.addWidget(quality_box)
+        left_layout.addWidget(self.settings_panel, 6)
 
         manifest_row = QHBoxLayout()
         self.import_video_manifest_button = QPushButton("Upload settings manifest")
@@ -274,6 +238,51 @@ class VideoEditorWidget(QWidget):
         tool_row.addWidget(self.enhancements_tool_button)
         tool_row.addWidget(self.trim_tool_button)
         tool_row.addStretch(1)
+
+        quality_separator = QFrame()
+        quality_separator.setFrameShape(QFrame.VLine)
+        quality_separator.setFrameShadow(QFrame.Plain)
+        tool_row.addWidget(quality_separator)
+        self.export_quality_controls = QWidget()
+        self.export_quality_controls.setObjectName("ExportQualityControls")
+        quality_layout = QHBoxLayout(self.export_quality_controls)
+        quality_layout.setContentsMargins(2, 0, 0, 0)
+        quality_layout.setSpacing(6)
+        quality_layout.addWidget(QLabel("Export quality"))
+        quality_layout.addWidget(QLabel("CRF"))
+        self.crf_spin = QSpinBox()
+        self.crf_spin.setObjectName("VideoCrfSpin")
+        self.crf_spin.setRange(0, 51)
+        self.crf_spin.setValue(18)
+        self.crf_spin.setFixedWidth(62)
+        self.crf_spin.setToolTip(
+            "Constant Rate Factor: lower values preserve more detail and create larger files."
+        )
+        quality_layout.addWidget(self.crf_spin)
+        quality_layout.addWidget(QLabel("Preset"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.setObjectName("VideoPresetCombo")
+        self.preset_combo.addItems(
+            [
+                "ultrafast",
+                "superfast",
+                "veryfast",
+                "faster",
+                "fast",
+                "medium",
+                "slow",
+                "slower",
+                "veryslow",
+            ]
+        )
+        self.preset_combo.setCurrentText("slow")
+        self.preset_combo.setMinimumWidth(96)
+        self.preset_combo.setMaximumWidth(120)
+        self.preset_combo.setToolTip(
+            "Encoding speed preset: slower presets take longer but generally compress better."
+        )
+        quality_layout.addWidget(self.preset_combo)
+        tool_row.addWidget(self.export_quality_controls)
         operations_layout.addLayout(tool_row)
         right_layout.addWidget(operations_bar)
 
@@ -288,11 +297,12 @@ class VideoEditorWidget(QWidget):
         timeline_row.addWidget(self.timeline, 1)
         right_layout.addLayout(timeline_row)
 
+        self.workspace_splitter = splitter
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([455, 825])
+        splitter.setSizes([520, 760])
 
     def _connect_signals(self) -> None:
         self.add_videos_button.clicked.connect(self._add_videos)
@@ -1010,6 +1020,14 @@ class VideoEditorWidget(QWidget):
     def profile_manifest_path(self) -> Path | None:
         """Return the manifest most recently imported or exported in this workspace."""
         return self._profile_manifest_path
+
+    def export_profile_preset(self, output_dir: Path) -> Path:
+        """Serialize the current controls for profile creation without opening a dialog."""
+        return write_video_settings_manifest(
+            Path(output_dir) / "video_settings_manifest.json",
+            self._current_processing_options(),
+            self._trim_ranges_for_manifest(),
+        )
 
     def _apply_imported_trim_ranges(self, trim_ranges_by_video: dict[str, tuple[TrimRange, ...]]) -> None:
         self._trim_ranges_by_video.clear()

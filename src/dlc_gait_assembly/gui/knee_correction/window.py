@@ -834,6 +834,18 @@ class KneeCorrectionWidget(QWidget):
         """Return the knee manifest most recently exported in this workspace."""
         return self._profile_knee_manifest_path
 
+    def profile_calibration_map_path(self) -> Path | None:
+        return self._calibration_map_path
+
+    def export_profile_preset(self, output_dir: Path) -> Path | None:
+        """Serialize current knee-correction controls when calibration is available."""
+        if self._pixels_per_cm is None:
+            return None
+        return write_knee_analysis_manifest(
+            Path(output_dir) / "knee_analysis_manifest.json",
+            self._settings(),
+        )
+
     def _run(self) -> None:
         if not self._pairs or not all(pair.is_paired for pair in self._pairs):
             QMessageBox.warning(

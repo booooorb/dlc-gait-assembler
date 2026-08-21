@@ -686,6 +686,21 @@ class ManualCalibrationWidget(QWidget):
         """Return the conversion map most recently exported in this workspace."""
         return self._profile_calibration_map_path
 
+    def export_profile_preset(self, output_dir: Path) -> Path | None:
+        """Serialize the current calibration controls when a valid conversion is available."""
+        sticks = self._all_calibration_sticks()
+        report = calculate_calibration_report(
+            sticks,
+            self.tau_spin.value(),
+            self.euclidean_lengths_checkbox.isChecked(),
+            self.marker_interval_spin.value(),
+            self.marker_unit_combo.currentText(),
+        )
+        if not report.view_axis:
+            return None
+        paths = write_calibration_conversion_export(Path(output_dir) / "calibration", sticks, report)
+        return paths["map"]
+
     def _default_output_root(self) -> Path:
         output_root = self._project_root / "outputs" / "calibration"
         output_root.mkdir(parents=True, exist_ok=True)

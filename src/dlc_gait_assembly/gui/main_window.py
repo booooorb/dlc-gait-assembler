@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from PySide6.QtCore import (
     Property,
@@ -1580,14 +1581,6 @@ class MainWindow(QMainWindow):
         self._show_widget(self._main_menu)
 
     def _create_profile_from_manual_presets(self) -> None:
-        presets = {
-            "processing_manifest": self._manual_preset_path("video_processing", "profile_manifest_path"),
-            "calibration_map": self._manual_preset_path("manual_calibration", "profile_calibration_map_path"),
-            "analysis_manifest": self._manual_preset_path(
-                "gait_parameter_analysis", "profile_analysis_manifest_path"
-            ),
-            "knee_manifest": self._manual_preset_path("knee_correction", "profile_knee_manifest_path"),
-        }
         name, accepted = QInputDialog.getText(
             self,
             "Create profile from manual settings",
@@ -1597,11 +1590,36 @@ class MainWindow(QMainWindow):
         name = name.strip()
         if not accepted or not name:
             return
-        try:
-            profile = self._main_menu.automated_profiles.create_profile_from_manual_presets(name, **presets)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Could not create profile", str(exc))
-            return
+
+        with TemporaryDirectory(prefix="dlc-gait-profile-") as temporary_directory:
+            export_root = Path(temporary_directory)
+            presets = {
+                "processing_manifest": self._manual_preset_snapshot(
+                    "video_processing", "profile_manifest_path", export_root
+                ),
+                "calibration_map": self._manual_preset_snapshot(
+                    "manual_calibration", "profile_calibration_map_path", export_root
+                ),
+                "analysis_manifest": self._manual_preset_snapshot(
+                    "gait_parameter_analysis", "profile_analysis_manifest_path", export_root
+                ),
+                "knee_manifest": self._manual_preset_snapshot(
+                    "knee_correction", "profile_knee_manifest_path", export_root
+                ),
+            }
+            if presets["calibration_map"] is None:
+                presets["calibration_map"] = self._manual_preset_path(
+                    "gait_parameter_analysis", "profile_calibration_map_path"
+                )
+            if presets["calibration_map"] is None:
+                presets["calibration_map"] = self._manual_preset_path(
+                    "knee_correction", "profile_calibration_map_path"
+                )
+            try:
+                profile = self._main_menu.automated_profiles.create_profile_from_manual_presets(name, **presets)
+            except (OSError, ValueError) as exc:
+                QMessageBox.critical(self, "Could not create profile", str(exc))
+                return
 
         self._show_automated_profiles()
         labels = {
@@ -1620,6 +1638,25 @@ class MainWindow(QMainWindow):
         summary.extend(("", "Not saved:"))
         summary.extend(f"—  {label}" for label in missing)
         QMessageBox.information(self, "Profile created", "\n".join(summary))
+
+    def _manual_preset_snapshot(
+        self,
+        tool_id: str,
+        fallback_accessor_name: str,
+        output_dir: Path,
+    ) -> Path | None:
+        tool = self._tool_widgets.get(tool_id)
+        exporter = getattr(tool, "export_profile_preset", None) if tool is not None else None
+        if callable(exporter):
+            try:
+                exported = exporter(output_dir)
+            except (OSError, ValueError):
+                exported = None
+            if exported is not None:
+                path = Path(exported).expanduser().resolve()
+                if path.exists():
+                    return path
+        return self._manual_preset_path(tool_id, fallback_accessor_name)
 
     def _manual_preset_path(self, tool_id: str, accessor_name: str) -> Path | None:
         tool = self._tool_widgets.get(tool_id)

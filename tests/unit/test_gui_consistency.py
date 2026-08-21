@@ -63,6 +63,8 @@ from dlc_gait_assembly.gui.video_editor.window import VideoEditorWidget
 from dlc_gait_assembly.services.pipeline.alma import AlmaRunResult, AlmaSettings
 from dlc_gait_assembly.services.pipeline.gait_parameter_catalog import ALMA_PARAMETER_NAMES
 from dlc_gait_assembly.services.profiles import AutomatedProfileStore
+from dlc_gait_assembly.services.analysis_manifests import write_analysis_manifest, write_knee_analysis_manifest
+from dlc_gait_assembly.services.knee_correction import KneeCorrectionSettings
 from dlc_gait_assembly.services.domain.calibration import CalibrationPoint, CalibrationStick
 
 
@@ -114,6 +116,20 @@ def test_application_uses_bundled_noto_sans_universally():
     assert interface_font.family() == "Noto Sans"
     assert fixed_width_font.family() == "Noto Sans"
     assert all((theme.NOTO_SANS_FONT_DIR / filename).is_file() for filename in theme.NOTO_SANS_FONT_FILES)
+
+
+def test_video_export_quality_shares_operations_bar_and_sidebar_has_room():
+    app = QApplication.instance() or QApplication([])
+    editor = VideoEditorWidget()
+    editor.resize(1440, 900)
+    editor.show()
+    app.processEvents()
+
+    assert editor.export_quality_controls.parent().objectName() == "OperationsBar"
+    assert editor.workspace_splitter.sizes()[0] >= 500
+    assert editor.video_list.height() >= 180
+    assert editor.settings_panel.height() >= 300
+    editor.close()
 
 
 def test_every_tool_workspace_uses_the_shared_workspace_contract(monkeypatch):
@@ -491,10 +507,8 @@ def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings()
     runway.close()
 
 
-def test_manual_navigation_creates_named_profile_and_summarizes_available_manifests(tmp_path, monkeypatch):
+def test_manual_navigation_exports_current_settings_and_summarizes_saved_profile(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
-    processing_manifest = tmp_path / "video_settings_manifest.json"
-    processing_manifest.write_text('{"operations": {"crop_regions": []}}', encoding="utf-8")
 
     window = MainWindow()
     editor = window._main_menu.automated_profiles
@@ -502,9 +516,36 @@ def test_manual_navigation_creates_named_profile_and_summarizes_available_manife
     editor._refresh_profiles()
     assert window._manual_preset_profile_button.text() == "Create\nprofile"
     assert not window._manual_preset_profile_button.icon().isNull()
+
     video_tool = QWidget()
-    video_tool.profile_manifest_path = lambda: processing_manifest
+    def export_video(output_dir):
+        path = Path(output_dir) / "video_settings_manifest.json"
+        path.write_text('{"operations": {"crop_regions": []}}', encoding="utf-8")
+        return path
+    video_tool.export_profile_preset = export_video
+    video_tool.profile_manifest_path = lambda: None
     window._tool_widgets["video_processing"] = video_tool
+
+    calibration_tool = QWidget()
+    def export_calibration(output_dir):
+        path = Path(output_dir) / "conversion_factor_map.json"
+        path.write_text('{"pixels_per_cm": 42}', encoding="utf-8")
+        return path
+    calibration_tool.export_profile_preset = export_calibration
+    window._tool_widgets["manual_calibration"] = calibration_tool
+
+    gait_tool = QWidget()
+    gait_tool.export_profile_preset = lambda output_dir: write_analysis_manifest(
+        Path(output_dir) / "analysis_manifest.json", AlmaSettings(frame_rate=240.0)
+    )
+    window._tool_widgets["gait_parameter_analysis"] = gait_tool
+
+    knee_tool = QWidget()
+    knee_tool.export_profile_preset = lambda output_dir: write_knee_analysis_manifest(
+        Path(output_dir) / "knee_analysis_manifest.json",
+        KneeCorrectionSettings(hip_knee_length_cm=1.5, knee_ankle_length_cm=1.7, pixels_per_cm=42.0),
+    )
+    window._tool_widgets["knee_correction"] = knee_tool
     messages = []
     monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("Treadmill preset", True))
     monkeypatch.setattr(QMessageBox, "information", lambda _parent, title, body: messages.append((title, body)))
@@ -516,15 +557,16 @@ def test_manual_navigation_creates_named_profile_and_summarizes_available_manife
     assert profile.name == "Treadmill preset"
     assert editor.workspace_stack.currentWidget() is editor.configuration_page
     assert profile.processing_manifest is not None
-    assert profile.processing_manifest.read_text(encoding="utf-8") == processing_manifest.read_text(encoding="utf-8")
-    assert editor._calibration_source is None
-    assert editor._analysis_manifest_source is None
-    assert editor._knee_manifest_source is None
-    assert not editor.include_gait_analysis_button.isChecked()
-    assert not editor.include_knee_correction_button.isChecked()
+    assert profile.calibration_map is not None
+    assert profile.analysis_manifest is not None
+    assert profile.knee_manifest is not None
+    assert editor.include_gait_analysis_button.isChecked()
+    assert editor.include_knee_correction_button.isChecked()
     assert messages[0][0] == "Profile created"
     assert "✓  Video settings manifest" in messages[0][1]
-    assert "—  Calibration map" in messages[0][1]
+    assert "✓  Calibration map" in messages[0][1]
+    assert "✓  Gait analysis manifest" in messages[0][1]
+    assert "✓  Knee correction manifest" in messages[0][1]
     assert "—  DeepLabCut models" in messages[0][1]
     window.close()
 

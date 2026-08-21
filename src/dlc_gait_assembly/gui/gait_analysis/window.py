@@ -1093,6 +1093,16 @@ class AlmaKinematicsWidget(QWidget):
         """Return the analysis manifest most recently exported in this workspace."""
         return self._profile_analysis_manifest_path
 
+    def export_profile_preset(self, output_dir: Path) -> Path:
+        """Serialize the current gait-analysis controls without opening a dialog."""
+        return write_analysis_manifest(
+            Path(output_dir) / "analysis_manifest.json",
+            self._collect_settings(),
+        )
+
+    def profile_calibration_map_path(self) -> Path | None:
+        return self._calibration_map_path
+
     def _load_bodypart_mapping_from_first_file(self) -> None:
         if not self._selected_files:
             QMessageBox.information(
@@ -1933,6 +1943,12 @@ class GaitAnalysisWidget(QWidget):
 
     def profile_analysis_manifest_path(self) -> Path | None:
         return self.kinematics_widget.profile_analysis_manifest_path()
+
+    def export_profile_preset(self, output_dir: Path) -> Path:
+        return self.kinematics_widget.export_profile_preset(output_dir)
+
+    def profile_calibration_map_path(self) -> Path | None:
+        return self.kinematics_widget.profile_calibration_map_path()
 
 
 def _double_spin(minimum: float, maximum: float, value: float, decimals: int) -> QDoubleSpinBox:
