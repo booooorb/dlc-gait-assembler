@@ -2507,8 +2507,11 @@ default rule classifies a frame as stance when the absolute frame-to-frame
 horizontal paw displacement is no greater than $7$ pixels per frame. A stride
 starts at a transition into stance and ends immediately before the next stance
 onset. The interface also exposes minimum consecutive stance and swing lengths
-to suppress short tracking artifacts. At least two stance onsets are required
-to produce one complete stride.
+to suppress short tracking artifacts. Candidate strides containing a paw speed
+of $100$ pixels per frame or more are rejected by default, matching the
+upstream tracking-jump filter. At least two stance onsets are required to
+produce one complete stride, and the minimum number of accepted strides per
+trial is configurable.
 
 Before stride detection and parameter extraction, all three views use the same
 configured confidence rejection, bidirectional interpolation, and Butterworth
@@ -2518,6 +2521,11 @@ threshold of $7$ pixels per frame. These settings may be changed when the
 recording frame rate or tracking characteristics require it. Changing any
 setting invalidates the preview and requires a new
 \textbf{RustLab1 stride preview}.
+
+Side-view distances use the selected reference-body-segment or manual
+pixel-to-centimetre calibration. The optional bottom-view horizontal
+pixels-per-centimetre setting converts standalone stride length to centimetres;
+when it is not supplied, bottom-view stride length remains available in pixels.
 
 \begin{tcolorbox}[output file box,title=\textbf{Standalone RustLab1 Output Files}]
 \begin{tabularx}{\linewidth}{

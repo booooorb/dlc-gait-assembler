@@ -112,8 +112,18 @@ def _rustlab1_figure_context(
         "parameters": alma_parameters.reset_index(drop=True),
         "rustlab": extraction.dataframe.reset_index(drop=True),
         "pixels_per_cm": extraction.pixels_per_cm,
+        "bottom_pixels_per_cm": _bottom_x_pixels_per_cm(
+            settings,
+            extraction.pixels_per_cm,
+        ),
         "frame_rate": float(settings.frame_rate),
         "likelihood_threshold": float(getattr(settings, "likelihood_threshold", 0.0) or 0.0),
+        "stance_speed_threshold_px_frame": float(
+            getattr(settings, "stance_speed_threshold_px_frame", 7.0)
+        ),
+        "maximum_tracking_speed_px_frame": float(
+            getattr(settings, "maximum_tracking_speed_px_frame", 100.0)
+        ),
         "include_forelimb": getattr(settings, "limb_scope", "Hindlimb") == "Hindlimb + Forelimb",
     }
 
@@ -254,7 +264,7 @@ def _plot_normalized_marker_overview(context, plt):
 
 def _plot_down_paw_speed(context, plt):
     figure, axis = plt.subplots(figsize=(8.5, 4.5))
-    pixels_per_cm = context["pixels_per_cm"] or 49.143
+    pixels_per_cm = context["bottom_pixels_per_cm"] or 49.143
     plotted = False
     series = [
         ("d-back-left", "#ef4444"),
@@ -273,8 +283,24 @@ def _plot_down_paw_speed(context, plt):
             continue
         axis.hist(speed, bins=30, alpha=0.42, label=marker, color=color)
         plotted = True
-    threshold = 7.0 * context["frame_rate"] / pixels_per_cm
-    axis.axvline(threshold, color="#111827", linestyle="--", linewidth=1.2, label="7 px/frame phase threshold")
+    threshold_px = context["stance_speed_threshold_px_frame"]
+    threshold = threshold_px * context["frame_rate"] / pixels_per_cm
+    axis.axvline(
+        threshold,
+        color="#111827",
+        linestyle="--",
+        linewidth=1.2,
+        label=f"{threshold_px:g} px/frame stance threshold",
+    )
+    tracking_limit_px = context["maximum_tracking_speed_px_frame"]
+    tracking_limit = tracking_limit_px * context["frame_rate"] / pixels_per_cm
+    axis.axvline(
+        tracking_limit,
+        color="#dc2626",
+        linestyle=":",
+        linewidth=1.2,
+        label=f"{tracking_limit_px:g} px/frame tracking limit",
+    )
     if plotted:
         axis.legend(fontsize=8)
     else:
@@ -284,6 +310,17 @@ def _plot_down_paw_speed(context, plt):
     axis.set_title("Down-view paw speed quality control")
     _style_axes(axis)
     return figure
+
+
+def _bottom_x_pixels_per_cm(settings, fallback):
+    configured = (getattr(settings, "view_calibration", None) or {}).get("bottom")
+    if isinstance(configured, (int, float)) and float(configured) > 0:
+        return float(configured)
+    if isinstance(configured, dict):
+        value = configured.get("x_pixels_per_cm", configured.get("pixels_per_cm"))
+        if value and float(value) > 0:
+            return float(value)
+    return fallback
 
 
 def _plot_cycle_summary(context, plt):

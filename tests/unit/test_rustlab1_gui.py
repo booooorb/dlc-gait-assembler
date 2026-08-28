@@ -37,6 +37,16 @@ def _write_minimal_dlc_csv(path: Path) -> None:
     )
 
 
+def _write_dlc_labels(path: Path, labels: tuple[str, ...]) -> None:
+    scorer = ["scorer", *("model" for _label in labels for _coord in range(3))]
+    bodyparts = ["bodyparts", *(label for label in labels for _coord in range(3))]
+    coords = ["coords", *(coord for _label in labels for coord in ("x", "y", "likelihood"))]
+    path.write_text(
+        "\n".join(",".join(row) for row in (scorer, bodyparts, coords)) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_gait_analysis_exposes_separate_three_view_rustlab1_workflow():
     app = QApplication.instance() or QApplication([])
     widget = AlmaKinematicsWidget()
@@ -47,13 +57,26 @@ def test_gait_analysis_exposes_separate_three_view_rustlab1_workflow():
     assert widget.input_mode_combo.currentText() == MULTI_SIDE_VIEW_MODE_LABEL
     assert not widget.input_mode_combo.isEnabled()
     assert not widget.analysis_type_combo.isEnabled()
+    assert widget.input_mode_combo.isHidden()
+    assert widget.input_mode_label.isHidden()
+    assert widget.analysis_type_combo.isHidden()
+    assert widget.analysis_type_label.isHidden()
+    assert widget.setup_box.title() == "RustLab1 recording"
+    assert widget.speed_box.title() == "Recording timing"
+    assert not widget.settings_tabs.isTabVisible(2)
+    assert not widget.settings_tabs.isTabVisible(4)
+    assert widget.settings_tabs.tabText(3) == "Stride QC"
     assert not widget.rustlab_detector_box.isHidden()
     assert widget.filter_box.isHidden()
     assert widget.stroke_filter_box.isHidden()
     assert widget.output_options_box.isHidden()
     assert widget.preview_button.text() == "1. Generate RustLab1 stride preview"
     assert widget.run_button.text() == "2. Run RustLab1 analysis"
-    assert not widget.export_manifest_button.isEnabled()
+    assert widget.export_manifest_button.isHidden()
+    assert widget.rustlab1_checkbox.isHidden()
+    assert not widget.rustlab_standalone_figures_checkbox.isHidden()
+    assert widget.bottom_y_pixels_per_cm_spin.isHidden()
+    assert not widget.bottom_x_pixels_per_cm_spin.isHidden()
     visible_sources = {
         definition.source
         for definition, item in widget.parameter_selection._items
@@ -63,17 +86,53 @@ def test_gait_analysis_exposes_separate_three_view_rustlab1_workflow():
     settings = widget._collect_rustlab1_settings()
     assert settings.reference_paw == "d-back-left"
     assert settings.stance_speed_threshold_px_frame == 7.0
+    assert settings.maximum_tracking_speed_px_frame == 100.0
     assert settings.likelihood_threshold == 0.95
+    assert settings.minimum_complete_strides == 1
+
+    widget.rustlab_filter_cutoff_spin.setValue(8.0)
+    widget.filter_cutoff_spin.setValue(3.0)
+    widget.rustlab_max_tracking_speed_spin.setValue(125.0)
+    widget.rustlab_min_stance_spin.setValue(2)
+    widget.rustlab_min_swing_spin.setValue(3)
+    widget.rustlab_min_strides_spin.setValue(4)
+    widget.bottom_x_pixels_per_cm_spin.setValue(31.367)
+    widget.rustlab_standalone_figures_checkbox.setChecked(False)
+    configured = widget._collect_rustlab1_settings()
+    assert configured.filter_cutoff == 8.0
+    assert configured.maximum_tracking_speed_px_frame == 125.0
+    assert configured.minimum_stance_frames == 2
+    assert configured.minimum_swing_frames == 3
+    assert configured.minimum_complete_strides == 4
+    assert configured.view_calibration == {
+        "bottom": {"x_pixels_per_cm": pytest.approx(31.367)}
+    }
+    assert configured.generate_figures is False
+
+    widget.frame_rate_spin.setValue(20.0)
+    assert widget.rustlab_filter_cutoff_spin.maximum() == pytest.approx(9.9)
+    assert widget.rustlab_filter_cutoff_spin.value() <= 9.9
+    widget.rustlab_stance_speed_spin.setValue(15.0)
+    assert widget.rustlab_max_tracking_speed_spin.minimum() == pytest.approx(15.1)
 
     widget.workflow_combo.setCurrentText(ALMA_WORKFLOW_LABEL)
     app.processEvents()
 
     assert widget.input_mode_combo.isEnabled()
     assert widget.analysis_type_combo.isEnabled()
+    assert not widget.input_mode_combo.isHidden()
+    assert not widget.analysis_type_combo.isHidden()
+    assert widget.settings_tabs.isTabVisible(2)
+    assert widget.settings_tabs.isTabVisible(4)
+    assert widget.settings_tabs.tabText(3) == "Filters"
     assert widget.rustlab_detector_box.isHidden()
     assert not widget.filter_box.isHidden()
     assert not widget.output_options_box.isHidden()
     assert widget.run_button.text() == "2. Run gait analysis"
+    assert not widget.export_manifest_button.isHidden()
+    assert not widget.rustlab1_checkbox.isHidden()
+    assert widget.rustlab_standalone_figures_checkbox.isHidden()
+    assert not widget.bottom_y_pixels_per_cm_spin.isHidden()
     assert any(
         definition.source == "ALMA" and not item.isHidden()
         for definition, item in widget.parameter_selection._items
@@ -159,6 +218,35 @@ def test_standalone_gui_routes_preview_and_run_only_to_rustlab1(
     assert [view_set.name for view_set in captured["run_view_sets"]] == ["mouse"]
     assert captured["output_folder"] == (tmp_path / "rustlab-results").resolve()
     assert captured["run_settings"].reference_paw == "d-back-right"
+    widget.close()
+    app.processEvents()
+
+
+def test_rustlab1_reference_calibration_requires_segment_on_either_side(
+    tmp_path,
+):
+    app = QApplication.instance() or QApplication([])
+    widget = AlmaKinematicsWidget()
+    left = tmp_path / "mouse_left.csv"
+    right = tmp_path / "mouse_right.csv"
+    bottom = tmp_path / "mouse_bottom.csv"
+    side_labels = ("ankle", "toe", "hip", "iliac crest")
+    _write_dlc_labels(left, side_labels)
+    _write_dlc_labels(right, side_labels)
+    _write_dlc_labels(bottom, ("center back", "back left", "back right"))
+    view_set = AlmaViewCsvSet("mouse", left, right, bottom)
+    settings = RustLab1StandaloneSettings(
+        limb_scope="Hindlimb",
+        calibration_method="reference",
+        reference_segment="hip_knee",
+    )
+
+    missing = widget._missing_rustlab1_bodyparts(view_set, settings)
+    assert "left or right reference segment hip_knee" in missing
+
+    _write_dlc_labels(right, (*side_labels, "knee"))
+    missing = widget._missing_rustlab1_bodyparts(view_set, settings)
+    assert "left or right reference segment hip_knee" not in missing
     widget.close()
     app.processEvents()
 

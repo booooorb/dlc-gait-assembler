@@ -76,6 +76,68 @@ def test_standalone_rustlab1_does_not_invent_frame_zero_stance_during_swing():
     assert 0 not in strides["stride_start (frame)"].tolist()
 
 
+def test_standalone_rustlab1_rejects_strides_with_upstream_tracking_speed_qc():
+    preprocessed = _preprocessed_reference_paw(
+        [
+            0,
+            0,
+            0,
+            120,
+            140,
+            140,
+            140,
+            140,
+            160,
+            180,
+            180,
+            180,
+            180,
+            200,
+            220,
+            220,
+            220,
+        ]
+    )
+
+    strides = detect_rustlab1_strides(
+        preprocessed,
+        RustLab1StandaloneSettings(maximum_tracking_speed_px_frame=100.0),
+        pd,
+        np,
+    )
+
+    assert strides["stride_start (frame)"].tolist() == [5, 10]
+    assert strides["gait_cycle"].tolist() == [1, 2]
+    assert strides.attrs["rejected_tracking_jump_strides"] == 1
+    assert strides["maximum paw speed (px/frame)"].tolist() == [20.0, 20.0]
+
+
+def test_standalone_rustlab1_enforces_minimum_accepted_stride_count():
+    preprocessed = _preprocessed_reference_paw(
+        [0, 0, 0, 20, 40, 40, 40, 40, 60, 80, 80, 80, 80]
+    )
+
+    with pytest.raises(ValueError, match="accepted 2 complete stride.*3 are required"):
+        detect_rustlab1_strides(
+            preprocessed,
+            RustLab1StandaloneSettings(minimum_complete_strides=3),
+            pd,
+            np,
+        )
+
+
+def test_standalone_rustlab1_rejects_filter_cutoff_at_or_above_nyquist():
+    preprocessed = _preprocessed_reference_paw([0, 0, 20, 40, 40, 40])
+
+    with pytest.raises(ValueError, match="below the Nyquist frequency"):
+        detect_rustlab1_strides(
+            preprocessed,
+            RustLab1StandaloneSettings(frame_rate=60.0, filter_cutoff=30.0),
+            pd,
+            np,
+        )
+
+
 def test_standalone_stride_preview_marks_detected_windows(tmp_path):
     import matplotlib
 

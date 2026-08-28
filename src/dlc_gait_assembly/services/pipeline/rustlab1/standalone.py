@@ -41,8 +41,10 @@ class RustLab1StandaloneSettings:
     filter_cutoff: float = 6.0
     likelihood_threshold: float = 0.95
     stance_speed_threshold_px_frame: float = 7.0
+    maximum_tracking_speed_px_frame: float = 100.0
     minimum_stance_frames: int = 1
     minimum_swing_frames: int = 1
+    minimum_complete_strides: int = 1
     reference_paw: RustLab1ReferencePaw = "d-back-left"
     limb_scope: str = "Hindlimb + Forelimb"
     calibration_method: str = "manual"
@@ -69,6 +71,7 @@ def detect_rustlab1_strides(
     np,
 ):
     """Detect stance-onset strides using RustLab1's bottom-paw speed rule."""
+    _validate_rustlab1_settings(settings)
     marker = settings.reference_paw
     x = preprocessed.series.get(marker, {}).get("x")
     if x is None:
@@ -109,10 +112,15 @@ def detect_rustlab1_strides(
         )
 
     rows = []
+    rejected_tracking_jumps = 0
     pixels_per_cm = _bottom_pixels_per_cm(settings)
-    for index, (start, next_start) in enumerate(zip(onsets[:-1], onsets[1:], strict=True), start=1):
+    for start, next_start in zip(onsets[:-1], onsets[1:], strict=True):
         start = int(start)
         next_start = int(next_start)
+        maximum_speed = float(np.nanmax(speed[start:next_start]))
+        if maximum_speed >= float(settings.maximum_tracking_speed_px_frame):
+            rejected_tracking_jumps += 1
+            continue
         end = next_start - 1
         stance_end = _phase_end(stance, start, end, expected=True)
         swing_start = stance_end + 1 if stance_end < end else None
@@ -121,7 +129,7 @@ def detect_rustlab1_strides(
         stride_length_px = float(np.nanmax(x[start:next_start]) - np.nanmin(x[start:next_start]))
         rows.append(
             {
-                "gait_cycle": index,
+                "gait_cycle": len(rows) + 1,
                 "limb (hind left / right)": _limb_label(marker),
                 "reference_paw": marker,
                 "stride_start (frame)": start,
@@ -140,12 +148,30 @@ def detect_rustlab1_strides(
                     if pixels_per_cm is not None and pixels_per_cm > 0
                     else np.nan
                 ),
+                "maximum paw speed (px/frame)": maximum_speed,
                 "stance speed threshold (px/frame)": float(
                     settings.stance_speed_threshold_px_frame
                 ),
+                "maximum tracking speed (px/frame)": float(
+                    settings.maximum_tracking_speed_px_frame
+                ),
             }
         )
-    return pd.DataFrame(rows)
+    if len(rows) < int(settings.minimum_complete_strides):
+        rejection = (
+            f" {rejected_tracking_jumps} candidate stride(s) met or exceeded the "
+            f"{settings.maximum_tracking_speed_px_frame:g} px/frame tracking-speed limit."
+            if rejected_tracking_jumps
+            else ""
+        )
+        raise ValueError(
+            f"RustLab1 accepted {len(rows)} complete stride(s), but "
+            f"{settings.minimum_complete_strides} are required.{rejection} "
+            "Check tracking, the reference paw, phase durations, or stride QC settings."
+        )
+    dataframe = pd.DataFrame(rows)
+    dataframe.attrs["rejected_tracking_jump_strides"] = rejected_tracking_jumps
+    return dataframe
 
 
 def run_rustlab1_analysis(
@@ -158,10 +184,7 @@ def run_rustlab1_analysis(
     """Run RustLab1 only on paired left/right/bottom coordinate CSVs."""
     if not view_sets:
         raise ValueError("Standalone RustLab1 analysis requires at least one three-view CSV set.")
-    if settings.frame_rate <= 0:
-        raise ValueError("RustLab1 frame rate must be greater than zero.")
-    if settings.stance_speed_threshold_px_frame < 0:
-        raise ValueError("RustLab1 stance speed threshold cannot be negative.")
+    _validate_rustlab1_settings(settings)
 
     import matplotlib
     import numpy as np
@@ -232,6 +255,15 @@ def run_rustlab1_analysis(
             f"RustLab1: detected {len(strides)} stride(s) from {settings.reference_paw}.",
             f"RustLab1: calculated {len(extraction.available_parameters)} selected parameter(s).",
         ]
+        rejected_tracking_jumps = int(
+            strides.attrs.get("rejected_tracking_jump_strides", 0)
+        )
+        if rejected_tracking_jumps:
+            messages.append(
+                "RustLab1 stride QC: rejected "
+                f"{rejected_tracking_jumps} candidate stride(s) at or above "
+                f"{settings.maximum_tracking_speed_px_frame:g} px/frame."
+            )
         if extraction.missing_markers:
             messages.append("RustLab1 missing markers: " + ", ".join(extraction.missing_markers))
         results.append(
@@ -331,6 +363,30 @@ def _bottom_pixels_per_cm(settings: RustLab1StandaloneSettings) -> float | None:
     if settings.pixels_per_cm and settings.pixels_per_cm > 0:
         return float(settings.pixels_per_cm)
     return None
+
+
+def _validate_rustlab1_settings(settings: RustLab1StandaloneSettings) -> None:
+    if settings.frame_rate <= 0:
+        raise ValueError("RustLab1 frame rate must be greater than zero.")
+    if settings.filter_cutoff <= 0 or settings.filter_cutoff >= settings.frame_rate / 2.0:
+        raise ValueError(
+            "RustLab1 filter cutoff must be greater than zero and below the "
+            "Nyquist frequency (half the frame rate)."
+        )
+    if not 0.0 <= settings.likelihood_threshold <= 1.0:
+        raise ValueError("RustLab1 likelihood threshold must be between 0 and 1.")
+    if settings.stance_speed_threshold_px_frame < 0:
+        raise ValueError("RustLab1 stance speed threshold cannot be negative.")
+    if settings.maximum_tracking_speed_px_frame <= settings.stance_speed_threshold_px_frame:
+        raise ValueError(
+            "RustLab1 maximum tracking speed must be greater than the stance speed threshold."
+        )
+    if settings.minimum_stance_frames < 1 or settings.minimum_swing_frames < 1:
+        raise ValueError("RustLab1 minimum stance and swing durations must be at least one frame.")
+    if settings.minimum_complete_strides < 1:
+        raise ValueError("RustLab1 minimum complete strides must be at least one.")
+    if settings.reference_paw not in RUSTLAB1_REFERENCE_PAWS:
+        raise ValueError(f"Unsupported RustLab1 reference paw: {settings.reference_paw}")
 
 
 __all__ = [

@@ -60,7 +60,7 @@ For standalone RustLab1:
 
 1. Add a matched left-side, right-side, and bottom-view coordinate CSV set.
 2. Match the three views' body-part labels and choose the bottom-view reference paw.
-3. Review the likelihood, smoothing, stance-speed, and minimum-phase settings.
+3. Review frame rate, calibration, likelihood, smoothing, stance-speed, tracking-speed, minimum-phase, and minimum-stride QC settings.
 4. Generate and review the RustLab1 stride preview.
 5. Run RustLab1 to write stride, parameter, summary, preview, and optional figure outputs. This path does not run ALMA gait-cycle analysis, custom SOP features, or synchronized stroke outputs.
 

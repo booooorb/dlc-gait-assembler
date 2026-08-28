@@ -429,12 +429,18 @@ def test_rustlab1_generates_complete_runway_figure_bundle(tmp_path):
             "swing duration (s)": [0.04, 0.05],
         }
     )
-    settings = AlmaSettings(
+    settings_data = AlmaSettings(
         calibration_method="manual",
         pixels_per_cm=10.0,
         frame_rate=120.0,
         generate_stickplot=False,
+    ).__dict__.copy()
+    settings_data.update(
+        stance_speed_threshold_px_frame=5.0,
+        maximum_tracking_speed_px_frame=90.0,
+        view_calibration={"bottom": {"x_pixels_per_cm": 20.0}},
     )
+    settings = SimpleNamespace(**settings_data)
     identity_kinematics = SimpleNamespace(butterworth_filter=lambda values, _fps, _cutoff: values)
     extraction = extract_rustlab1_parameters(raw, alma_parameters, settings, identity_kinematics)
 
@@ -451,6 +457,11 @@ def test_rustlab1_generates_complete_runway_figure_bundle(tmp_path):
     assert tuple(path.name for path in output_paths) == RUSTLAB1_FIGURE_FILENAMES
     assert all(path.exists() for path in output_paths)
     assert all("<svg" in path.read_text(encoding="utf-8") for path in output_paths)
+    speed_qc_svg = (tmp_path / "mouse_rustlab1_figures" / "6_1_PLOT_DOWN_Analysis_Speed_QC.svg").read_text(
+        encoding="utf-8"
+    )
+    assert "5 px/frame stance threshold" in speed_qc_svg
+    assert "90 px/frame tracking limit" in speed_qc_svg
     assert plt.get_fignums() == []
 
 

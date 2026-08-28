@@ -141,6 +141,8 @@ class AlmaKinematicsWidget(QWidget):
         self._update_limb_scope()
         self._update_analysis_mode()
         self._update_calibration_method()
+        self._update_rustlab_filter_range()
+        self._update_rustlab_speed_range()
         self._update_run_state()
 
     def can_close(self, parent=None) -> bool:
@@ -349,6 +351,7 @@ class AlmaKinematicsWidget(QWidget):
         self.parameter_selection = parameters_tab
 
         setup_box = QGroupBox("Experimental setup")
+        self.setup_box = setup_box
         setup_layout = QGridLayout(setup_box)
         self.input_mode_combo = QComboBox()
         self.input_mode_combo.addItems([MULTI_SIDE_VIEW_MODE_LABEL, SINGLE_SIDE_VIEW_MODE_LABEL])
@@ -369,15 +372,19 @@ class AlmaKinematicsWidget(QWidget):
             self.limb_scope_combo,
             "Choose the established hindlimb output or add RustLab1 forelimb and interlimb parameters and plots.",
         )
-        setup_layout.addWidget(QLabel("Input mode"), 0, 0)
+        self.input_mode_label = QLabel("Input mode")
+        self.analysis_type_label = QLabel("Analysis type")
+        self.limb_scope_label = QLabel("Limb analysis")
+        setup_layout.addWidget(self.input_mode_label, 0, 0)
         setup_layout.addWidget(self.input_mode_combo, 0, 1)
-        setup_layout.addWidget(QLabel("Analysis type"), 1, 0)
+        setup_layout.addWidget(self.analysis_type_label, 1, 0)
         setup_layout.addWidget(self.analysis_type_combo, 1, 1)
-        setup_layout.addWidget(QLabel("Limb analysis"), 2, 0)
+        setup_layout.addWidget(self.limb_scope_label, 2, 0)
         setup_layout.addWidget(self.limb_scope_combo, 2, 1)
         setup_tab_layout.addWidget(setup_box)
 
         speed_box = QGroupBox("Treadmill speed and calibration")
+        self.speed_box = speed_box
         speed_layout = QGridLayout(speed_box)
         speed_layout.setHorizontalSpacing(12)
         speed_layout.setVerticalSpacing(4)
@@ -390,13 +397,15 @@ class AlmaKinematicsWidget(QWidget):
         set_tooltip(self.load_fps_button, "Load frame rate from a video file.", "Ctrl+F")
         speed_layout.addWidget(self.treadmill_speed_label, 0, 0)
         speed_layout.addWidget(self.treadmill_speed_spin, 0, 1, 1, 2)
-        speed_layout.addWidget(QLabel("Frame rate (fps)"), 1, 0)
+        self.frame_rate_label = QLabel("Frame rate (fps)")
+        speed_layout.addWidget(self.frame_rate_label, 1, 0)
         speed_layout.addWidget(self.frame_rate_spin, 1, 1)
         speed_layout.addWidget(self.load_fps_button, 1, 2)
         setup_tab_layout.addWidget(speed_box)
         setup_tab_layout.addStretch(1)
 
         calibration_box = QGroupBox("Spatial calibration")
+        self.calibration_box = calibration_box
         calibration_layout = QVBoxLayout(calibration_box)
         self.calibration_method_combo = QComboBox()
         self.calibration_method_combo.addItems(["Reference body segment", "Manual pixel-to-cm ratio"])
@@ -442,6 +451,7 @@ class AlmaKinematicsWidget(QWidget):
         calibration_layout.addWidget(self.manual_settings_widget)
 
         stroke_calibration_widget = QWidget()
+        self.stroke_calibration_widget = stroke_calibration_widget
         stroke_calibration_layout = QGridLayout(stroke_calibration_widget)
         stroke_calibration_layout.setContentsMargins(16, 4, 0, 0)
         configured_bottom = (self._defaults.view_calibration or {}).get("bottom", {})
@@ -458,6 +468,8 @@ class AlmaKinematicsWidget(QWidget):
             bottom_x_default = bottom_y_default = 0.0
         self.bottom_x_pixels_per_cm_spin = _double_spin(0.0, 2000.0, bottom_x_default, 3)
         self.bottom_y_pixels_per_cm_spin = _double_spin(0.0, 2000.0, bottom_y_default, 3)
+        self.bottom_x_pixels_per_cm_spin.setSpecialValueText("Not set (px only)")
+        self.bottom_y_pixels_per_cm_spin.setSpecialValueText("Not set")
         set_tooltip(
             self.bottom_x_pixels_per_cm_spin,
             "Bottom-view horizontal calibration. Set both bottom values; zero disables synchronized stroke outputs.",
@@ -466,9 +478,11 @@ class AlmaKinematicsWidget(QWidget):
             self.bottom_y_pixels_per_cm_spin,
             "Bottom-view vertical calibration. Axis-specific values account for mirror distortion.",
         )
-        stroke_calibration_layout.addWidget(QLabel("Bottom X pixels per cm"), 0, 0)
+        self.bottom_x_pixels_per_cm_label = QLabel("Bottom X pixels per cm")
+        self.bottom_y_pixels_per_cm_label = QLabel("Bottom Y pixels per cm")
+        stroke_calibration_layout.addWidget(self.bottom_x_pixels_per_cm_label, 0, 0)
         stroke_calibration_layout.addWidget(self.bottom_x_pixels_per_cm_spin, 0, 1)
-        stroke_calibration_layout.addWidget(QLabel("Bottom Y pixels per cm"), 1, 0)
+        stroke_calibration_layout.addWidget(self.bottom_y_pixels_per_cm_label, 1, 0)
         stroke_calibration_layout.addWidget(self.bottom_y_pixels_per_cm_spin, 1, 1)
         calibration_layout.addWidget(stroke_calibration_widget)
         calibration_tab_layout.addWidget(calibration_box)
@@ -589,13 +603,23 @@ class AlmaKinematicsWidget(QWidget):
         self.rustlab_reference_paw_combo.addItems(tuple(RUSTLAB1_PAW_LABELS))
         self.rustlab_likelihood_spin = _double_spin(0.0, 1.0, 0.95, 2)
         self.rustlab_likelihood_spin.setSingleStep(0.01)
+        self.rustlab_filter_cutoff_spin = _double_spin(
+            0.1,
+            50.0,
+            self._defaults.filter_cutoff,
+            1,
+        )
         self.rustlab_stance_speed_spin = _double_spin(0.0, 100.0, 7.0, 1)
+        self.rustlab_max_tracking_speed_spin = _double_spin(0.1, 1000.0, 100.0, 1)
         self.rustlab_min_stance_spin = QSpinBox()
         self.rustlab_min_stance_spin.setRange(1, 120)
         self.rustlab_min_stance_spin.setValue(1)
         self.rustlab_min_swing_spin = QSpinBox()
         self.rustlab_min_swing_spin.setRange(1, 120)
         self.rustlab_min_swing_spin.setValue(1)
+        self.rustlab_min_strides_spin = QSpinBox()
+        self.rustlab_min_strides_spin.setRange(1, 1000)
+        self.rustlab_min_strides_spin.setValue(1)
         set_tooltip(
             self.rustlab_reference_paw_combo,
             "Bottom-view paw whose stance onsets define standalone RustLab1 strides.",
@@ -605,8 +629,16 @@ class AlmaKinematicsWidget(QWidget):
             "Minimum DLC likelihood for standalone RustLab1 coordinates. The upstream notebook uses 0.95.",
         )
         set_tooltip(
+            self.rustlab_filter_cutoff_spin,
+            "Butterworth low-pass cutoff used for all three coordinate views; it must be below half the frame rate.",
+        )
+        set_tooltip(
             self.rustlab_stance_speed_spin,
             "RustLab1 stance rule in pixels per frame. The upstream notebook uses 7.",
+        )
+        set_tooltip(
+            self.rustlab_max_tracking_speed_spin,
+            "Reject candidate strides containing implausible paw speeds. The upstream notebook rejects phases at 100 px/frame or more.",
         )
         set_tooltip(
             self.rustlab_min_stance_spin,
@@ -616,16 +648,26 @@ class AlmaKinematicsWidget(QWidget):
             self.rustlab_min_swing_spin,
             "Minimum consecutive swing frames between stance periods.",
         )
+        set_tooltip(
+            self.rustlab_min_strides_spin,
+            "Minimum number of complete, QC-accepted strides required for each trial.",
+        )
         rustlab_detector_layout.addWidget(QLabel("Reference paw"), 0, 0)
         rustlab_detector_layout.addWidget(self.rustlab_reference_paw_combo, 0, 1)
         rustlab_detector_layout.addWidget(QLabel("Likelihood min"), 1, 0)
         rustlab_detector_layout.addWidget(self.rustlab_likelihood_spin, 1, 1)
-        rustlab_detector_layout.addWidget(QLabel("Stance speed max (px/frame)"), 2, 0)
-        rustlab_detector_layout.addWidget(self.rustlab_stance_speed_spin, 2, 1)
-        rustlab_detector_layout.addWidget(QLabel("Minimum stance frames"), 3, 0)
-        rustlab_detector_layout.addWidget(self.rustlab_min_stance_spin, 3, 1)
-        rustlab_detector_layout.addWidget(QLabel("Minimum swing frames"), 4, 0)
-        rustlab_detector_layout.addWidget(self.rustlab_min_swing_spin, 4, 1)
+        rustlab_detector_layout.addWidget(QLabel("Low-pass cutoff (Hz)"), 2, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_filter_cutoff_spin, 2, 1)
+        rustlab_detector_layout.addWidget(QLabel("Stance speed max (px/frame)"), 3, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_stance_speed_spin, 3, 1)
+        rustlab_detector_layout.addWidget(QLabel("Tracking speed max (px/frame)"), 4, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_max_tracking_speed_spin, 4, 1)
+        rustlab_detector_layout.addWidget(QLabel("Minimum stance frames"), 5, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_min_stance_spin, 5, 1)
+        rustlab_detector_layout.addWidget(QLabel("Minimum swing frames"), 6, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_min_swing_spin, 6, 1)
+        rustlab_detector_layout.addWidget(QLabel("Minimum complete strides"), 7, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_min_strides_spin, 7, 1)
         rustlab_detector_box.hide()
         self.rustlab_detector_box = rustlab_detector_box
         filters_tab_layout.addWidget(rustlab_detector_box)
@@ -646,6 +688,11 @@ class AlmaKinematicsWidget(QWidget):
         self.alma_representations_checkbox.setChecked(self._defaults.generate_alma_representations)
         self.rustlab1_checkbox = QCheckBox("Generate RustLab1 and custom SOP parameters, merged CSV, and figures")
         self.rustlab1_checkbox.setChecked(self._defaults.generate_rustlab1_parameters)
+        self.rustlab_standalone_figures_checkbox = QCheckBox(
+            "Generate the 18 RustLab1 runway figures"
+        )
+        self.rustlab_standalone_figures_checkbox.setChecked(True)
+        self.rustlab_standalone_figures_checkbox.hide()
         self.stroke_analysis_checkbox = QCheckBox("Generate synchronized stroke-pilot outputs (hindlimb-focused)")
         self.stroke_analysis_checkbox.setChecked(self._defaults.stroke_analysis_enabled)
         set_tooltip(self.continuous_strides_spin, "Number of continuous strides used for ALMA outputs.")
@@ -670,6 +717,7 @@ class AlmaKinematicsWidget(QWidget):
         rustlab_layout = QVBoxLayout(rustlab_box)
         rustlab_layout.setSpacing(6)
         rustlab_layout.addWidget(self.rustlab1_checkbox)
+        rustlab_layout.addWidget(self.rustlab_standalone_figures_checkbox)
         self.rustlab_status_label = QLabel("RustLab1 needs paired left, right, and bottom CSVs.")
         self.rustlab_status_label.setObjectName("MutedLabel")
         self.rustlab_status_label.setWordWrap(True)
@@ -934,15 +982,22 @@ class AlmaKinematicsWidget(QWidget):
             self.stride_length_max_spin,
             self.likelihood_threshold_spin,
             self.rustlab_likelihood_spin,
+            self.rustlab_filter_cutoff_spin,
             self.rustlab_stance_speed_spin,
+            self.rustlab_max_tracking_speed_spin,
             self.rustlab_min_stance_spin,
             self.rustlab_min_swing_spin,
+            self.rustlab_min_strides_spin,
         )
         for spin in preview_spins:
             spin.valueChanged.connect(self._invalidate_stickplot_preview)
 
         self.rustlab_reference_paw_combo.currentTextChanged.connect(
             self._invalidate_stickplot_preview
+        )
+        self.frame_rate_spin.valueChanged.connect(self._update_rustlab_filter_range)
+        self.rustlab_stance_speed_spin.valueChanged.connect(
+            self._update_rustlab_speed_range
         )
 
         for checkbox in (
@@ -1385,12 +1440,37 @@ class AlmaKinematicsWidget(QWidget):
     def _is_rustlab1_workflow(self) -> bool:
         return self.workflow_combo.currentText() == RUSTLAB1_WORKFLOW_LABEL
 
+    def _set_settings_tab_visible(self, index: int, visible: bool) -> None:
+        self.settings_tabs.setTabVisible(index, visible)
+        row_index = 0 if index < 4 else 1
+        local_index = index if index < 4 else index - 4
+        self.settings_section_rows[row_index].setTabVisible(local_index, visible)
+
+    def _set_settings_tab_text(self, index: int, text: str) -> None:
+        self.settings_tabs.setTabText(index, text)
+        row_index = 0 if index < 4 else 1
+        local_index = index if index < 4 else index - 4
+        self.settings_section_rows[row_index].setTabText(local_index, text)
+
     def _update_workflow(self) -> None:
         rustlab1_only = self._is_rustlab1_workflow()
         if rustlab1_only and self.input_mode_combo.currentText() != MULTI_SIDE_VIEW_MODE_LABEL:
             self.input_mode_combo.setCurrentText(MULTI_SIDE_VIEW_MODE_LABEL)
+        if rustlab1_only and self.settings_tabs.currentIndex() in {2, 4}:
+            self.settings_tabs.setCurrentIndex(0)
+        self._set_settings_tab_visible(2, not rustlab1_only)
+        self._set_settings_tab_visible(4, not rustlab1_only)
+        self._set_settings_tab_text(3, "Stride QC" if rustlab1_only else "Filters")
         self.input_mode_combo.setEnabled(not rustlab1_only)
         self.analysis_type_combo.setEnabled(not rustlab1_only)
+        self.input_mode_label.setVisible(not rustlab1_only)
+        self.input_mode_combo.setVisible(not rustlab1_only)
+        self.analysis_type_label.setVisible(not rustlab1_only)
+        self.analysis_type_combo.setVisible(not rustlab1_only)
+        self.setup_box.setTitle("RustLab1 recording" if rustlab1_only else "Experimental setup")
+        self.speed_box.setTitle(
+            "Recording timing" if rustlab1_only else "Treadmill speed and calibration"
+        )
         self.workspace_title.setText(
             "RustLab1 standalone analysis" if rustlab1_only else "Runway analysis"
         )
@@ -1398,11 +1478,6 @@ class AlmaKinematicsWidget(QWidget):
             "Three-view RustLab1 input and output"
             if rustlab1_only
             else "Multi-view ALMA input and output"
-        )
-        self.movement_box.setTitle(
-            "Coordinate smoothing (RustLab1)"
-            if rustlab1_only
-            else "Movement analysis settings"
         )
         for control in (self.direction_combo, self.drag_clearance_spin, self.drag_frames_spin):
             control.setEnabled(not rustlab1_only)
@@ -1414,20 +1489,11 @@ class AlmaKinematicsWidget(QWidget):
         self.rustlab_box.setTitle(
             "Standalone RustLab1 outputs" if rustlab1_only else "RustLab1 multi-view"
         )
-        self.rustlab1_checkbox.setText(
-            "Generate the 18 RustLab1 runway figures"
-            if rustlab1_only
-            else "Generate RustLab1 and custom SOP parameters, merged CSV, and figures"
-        )
-        self.rustlab1_checkbox.setEnabled(True)
-        self.rustlab1_checkbox.setChecked(True if rustlab1_only else self.rustlab1_checkbox.isChecked())
+        self.rustlab1_checkbox.setVisible(not rustlab1_only)
+        self.rustlab_standalone_figures_checkbox.setVisible(rustlab1_only)
         set_tooltip(
-            self.rustlab1_checkbox,
-            (
-                "Write the optional adapted 18-figure RustLab1 runway bundle."
-                if rustlab1_only
-                else "Calculate RustLab1 and custom SOP features on ALMA cycles and write the merged outputs."
-            ),
+            self.rustlab_standalone_figures_checkbox,
+            "Write the optional adapted 18-figure RustLab1 runway bundle.",
         )
         set_tooltip(
             self.output_folder_edit,
@@ -1443,6 +1509,22 @@ class AlmaKinematicsWidget(QWidget):
             else "RustLab1 needs paired left, right, and bottom CSVs."
         )
         self.export_manifest_button.setEnabled(not rustlab1_only)
+        self.export_manifest_button.setVisible(not rustlab1_only)
+        self.bottom_y_pixels_per_cm_label.setVisible(not rustlab1_only)
+        self.bottom_y_pixels_per_cm_spin.setVisible(not rustlab1_only)
+        self.bottom_x_pixels_per_cm_label.setText(
+            "Bottom X pixels per cm (optional)"
+            if rustlab1_only
+            else "Bottom X pixels per cm"
+        )
+        set_tooltip(
+            self.bottom_x_pixels_per_cm_spin,
+            (
+                "Optional bottom-view horizontal calibration override for standalone stride length."
+                if rustlab1_only
+                else "Bottom-view horizontal calibration. Set both bottom values for synchronized stroke outputs."
+            ),
+        )
         self.preview_button.setText(
             "1. Generate RustLab1 stride preview"
             if rustlab1_only
@@ -1512,6 +1594,27 @@ class AlmaKinematicsWidget(QWidget):
         reference = self.calibration_method_combo.currentText() == "Reference body segment"
         self.reference_settings_widget.setVisible(reference)
         self.manual_settings_widget.setVisible(not reference)
+
+    def _update_rustlab_filter_range(self, *_args) -> None:
+        nyquist_limit = max(0.1, self.frame_rate_spin.value() / 2.0 - 0.1)
+        maximum = min(50.0, nyquist_limit)
+        self.rustlab_filter_cutoff_spin.setMaximum(maximum)
+        set_tooltip(
+            self.rustlab_filter_cutoff_spin,
+            "Butterworth low-pass cutoff used for all three coordinate views. "
+            f"At {self.frame_rate_spin.value():g} fps, it must be at most {maximum:g} Hz.",
+        )
+
+    def _update_rustlab_speed_range(self, *_args) -> None:
+        minimum = self.rustlab_stance_speed_spin.value() + 0.1
+        self.rustlab_max_tracking_speed_spin.setMinimum(minimum)
+        set_tooltip(
+            self.rustlab_max_tracking_speed_spin,
+            "Reject candidate strides containing implausible paw speeds. "
+            "The upstream notebook rejects phases at 100 px/frame or more; "
+            f"this value must remain above the {self.rustlab_stance_speed_spin.value():g} "
+            "px/frame stance threshold.",
+        )
 
     def _update_run_state(self) -> None:
         has_files = self._has_valid_inputs()
@@ -1879,11 +1982,13 @@ class AlmaKinematicsWidget(QWidget):
     def _collect_rustlab1_settings(self) -> RustLab1StandaloneSettings:
         return RustLab1StandaloneSettings(
             frame_rate=self.frame_rate_spin.value(),
-            filter_cutoff=self.filter_cutoff_spin.value(),
+            filter_cutoff=self.rustlab_filter_cutoff_spin.value(),
             likelihood_threshold=self.rustlab_likelihood_spin.value(),
             stance_speed_threshold_px_frame=self.rustlab_stance_speed_spin.value(),
+            maximum_tracking_speed_px_frame=self.rustlab_max_tracking_speed_spin.value(),
             minimum_stance_frames=self.rustlab_min_stance_spin.value(),
             minimum_swing_frames=self.rustlab_min_swing_spin.value(),
+            minimum_complete_strides=self.rustlab_min_strides_spin.value(),
             reference_paw=RUSTLAB1_PAW_LABELS[self.rustlab_reference_paw_combo.currentText()],
             limb_scope=self.limb_scope_combo.currentText(),
             calibration_method=(
@@ -1902,16 +2007,14 @@ class AlmaKinematicsWidget(QWidget):
                 {
                     "bottom": {
                         "x_pixels_per_cm": self.bottom_x_pixels_per_cm_spin.value(),
-                        "y_pixels_per_cm": self.bottom_y_pixels_per_cm_spin.value(),
                     }
                 }
                 if self.bottom_x_pixels_per_cm_spin.value() > 0
-                and self.bottom_y_pixels_per_cm_spin.value() > 0
                 else None
             ),
             view_bodypart_mapping=self._collect_view_bodypart_mapping(),
             enabled_parameter_names=self.parameter_selection.enabled_parameter_names(),
-            generate_figures=self.rustlab1_checkbox.isChecked(),
+            generate_figures=self.rustlab_standalone_figures_checkbox.isChecked(),
         )
 
     def _collect_bodypart_mapping(self) -> dict[str, str] | None:
@@ -2013,6 +2116,29 @@ class AlmaKinematicsWidget(QWidget):
                     continue
                 if _auto_bodypart_label(raw_bodyparts, standard_bodypart) is None:
                     missing.append(f"{view} {standard_bodypart}")
+        if settings.calibration_method == "reference":
+            reference_labels = tuple(settings.reference_segment.split("_"))
+            reference_available = False
+            for view, csv_path in (
+                ("left", view_set.left_csv),
+                ("right", view_set.right_csv),
+            ):
+                try:
+                    raw_bodyparts = read_dlc_bodyparts(csv_path)
+                except Exception:
+                    continue
+                mapped_bodyparts = set((view_mapping.get(view) or {}).values())
+                if all(
+                    label in mapped_bodyparts
+                    or _auto_bodypart_label(raw_bodyparts, label) is not None
+                    for label in reference_labels
+                ):
+                    reference_available = True
+                    break
+            if not reference_available:
+                missing.append(
+                    "left or right reference segment " + settings.reference_segment
+                )
         return missing
 
     def _missing_required_bodyparts(self, settings: AlmaSettings) -> list[str]:

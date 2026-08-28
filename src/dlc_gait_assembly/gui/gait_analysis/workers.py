@@ -244,6 +244,13 @@ class RustLab1AnalysisThread(QThread):
                 "Stance threshold: "
                 f"{self._settings.stance_speed_threshold_px_frame:g} px/frame"
             )
+            self.log_message.emit(
+                "Tracking-speed QC maximum: "
+                f"{self._settings.maximum_tracking_speed_px_frame:g} px/frame"
+            )
+            self.log_message.emit(
+                f"Minimum complete strides: {self._settings.minimum_complete_strides}"
+            )
 
             def progress(index: int, total: int, message: str) -> None:
                 value = 10 + int((index - 1) * 80 / max(1, total))
