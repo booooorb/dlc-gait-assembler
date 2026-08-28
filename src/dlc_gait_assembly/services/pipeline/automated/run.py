@@ -64,14 +64,37 @@ class AutomatedPipelineRun:
         self.video_paths = tuple(Path(path).expanduser().resolve() for path in video_paths)
         if not self.video_paths:
             raise ValueError("Add at least one source video before running the pipeline.")
+        if len(set(self.video_paths)) != len(self.video_paths):
+            raise ValueError("Each source video may only be added to a pipeline run once.")
         missing = [path for path in self.video_paths if not path.is_file()]
         if missing:
             raise FileNotFoundError(f"Source video no longer exists: {missing[0]}")
+        if profile.processing_manifest is None:
+            raise ValueError("The selected profile needs a video settings manifest.")
+        if not Path(profile.processing_manifest).expanduser().is_file():
+            raise FileNotFoundError(
+                f"Video settings manifest no longer exists: {profile.processing_manifest}"
+            )
         gait_requested = self.enable_gait_analysis and profile.gait_analysis_enabled
         if gait_requested and profile.analysis_manifest is None:
             raise ValueError("The selected profile needs a gait analysis manifest.")
         if gait_requested and profile.calibration_map is None:
             raise ValueError("The selected profile needs a calibration map for gait analysis.")
+        if gait_requested and not Path(profile.analysis_manifest).expanduser().is_file():
+            raise FileNotFoundError(
+                f"Gait analysis manifest no longer exists: {profile.analysis_manifest}"
+            )
+        if gait_requested and not Path(profile.calibration_map).expanduser().is_file():
+            raise FileNotFoundError(
+                f"Calibration map no longer exists: {profile.calibration_map}"
+            )
+        knee_requested = self.enable_knee_correction and profile.knee_correction_enabled
+        if knee_requested and profile.knee_manifest is None:
+            raise ValueError("The selected profile needs a knee correction manifest.")
+        if knee_requested and not Path(profile.knee_manifest).expanduser().is_file():
+            raise FileNotFoundError(
+                f"Knee correction manifest no longer exists: {profile.knee_manifest}"
+            )
 
         self.project_root = Path(project_root).expanduser().resolve()
         base = (
@@ -107,6 +130,8 @@ class AutomatedPipelineRun:
         self.analysis_csvs_by_region: dict[str, list[Path]] = {}
         self.stickplot_results: list[AlmaRunResult] = []
         self.gait_results: list[AlmaRunResult] = []
+        self._completed_stages: set[AutomatedStage] = set()
+        self._skipped_stages: set[AutomatedStage] = set()
 
     def run_stage(
         self,
@@ -122,11 +147,29 @@ class AutomatedPipelineRun:
             self._generate_stickplots,
             self._run_gait_analysis,
         )
+        if stage in self._completed_stages:
+            raise RuntimeError(f"{stage.name.replace('_', ' ').title()} has already run.")
         if not self.stage_enabled(stage):
+            self._completed_stages.add(stage)
+            self._skipped_stages.add(stage)
             if progress_callback is not None:
                 progress_callback(1, 1, f"{self.stage_skip_reason(stage)}; skipped")
             return
+        missing_predecessors = [
+            predecessor
+            for predecessor in AutomatedStage
+            if predecessor < stage
+            and self.stage_enabled(predecessor)
+            and predecessor not in self._completed_stages
+        ]
+        if missing_predecessors:
+            predecessor = missing_predecessors[0]
+            raise RuntimeError(
+                f"Run {predecessor.name.replace('_', ' ').title()} before "
+                f"{stage.name.replace('_', ' ').title()}."
+            )
         stages[int(stage)](progress_callback)
+        self._completed_stages.add(stage)
 
     def stage_enabled(self, stage_index: int | AutomatedStage) -> bool:
         stage = coerce_automated_stage(stage_index)
@@ -287,15 +330,10 @@ class AutomatedPipelineRun:
             self.deeplabcut_folder,
             progress_callback,
         )
+        self.dlc_results = self._validate_dlc_results(self.dlc_results)
         self.analysis_csvs_by_region = {
             result.region: list(result.csv_paths) for result in self.dlc_results
         }
-        empty_regions = [region for region, paths in self.analysis_csvs_by_region.items() if not paths]
-        if empty_regions:
-            raise RuntimeError(
-                "DeepLabCut did not produce coordinate CSVs for: "
-                + ", ".join(empty_regions)
-            )
 
     def _correct_knees(self, progress_callback: ProgressCallback | None) -> None:
         if self.profile.knee_manifest is None:
@@ -328,30 +366,57 @@ class AutomatedPipelineRun:
             self.output_folder / "03_knee_correction",
         )
         work_folder = knee_output_folder / "work"
+        prepared = []
         replacement_records = []
-        for index, (region, pair) in enumerate(pair_jobs, start=1):
-            result = correct_knee_pair(
-                pair,
-                work_folder / _safe_name(region),
-                settings,
-            )
-            if pair.csv_path is None or pair.h5_path is None:
-                raise RuntimeError(f"Knee correction lost the coordinate pair for {pair.stem}.")
-            result.output_csv.replace(pair.csv_path)
-            result.output_h5.replace(pair.h5_path)
-            corrected.setdefault(region, []).append(pair.csv_path)
-            replacement_records.append(
-                {
-                    "region": region,
-                    "video": str(pair.video_path) if pair.video_path is not None else "",
-                    "csv": str(pair.csv_path),
-                    "h5": str(pair.h5_path),
-                }
-            )
-            if progress_callback is not None:
-                progress_callback(index, total, f"Corrected {pair.stem}")
-        if work_folder.exists():
-            shutil.rmtree(work_folder)
+        try:
+            for index, (region, pair) in enumerate(pair_jobs, start=1):
+                result = correct_knee_pair(
+                    pair,
+                    work_folder / _safe_name(region),
+                    settings,
+                )
+                if pair.csv_path is None or pair.h5_path is None:
+                    raise RuntimeError(f"Knee correction lost the coordinate pair for {pair.stem}.")
+                if not result.output_csv.is_file() or not result.output_h5.is_file():
+                    raise RuntimeError(f"Knee correction did not produce both outputs for {pair.stem}.")
+                prepared.append((region, pair, result))
+                if progress_callback is not None:
+                    progress_callback(index, total, f"Prepared correction for {pair.stem}")
+
+            backups = []
+            backup_folder = work_folder / "backups"
+            backup_folder.mkdir(parents=True, exist_ok=True)
+            for index, (_region, pair, _result) in enumerate(prepared, start=1):
+                backup_csv = backup_folder / f"{index:04d}.csv"
+                backup_h5 = backup_folder / f"{index:04d}.h5"
+                shutil.copy2(pair.csv_path, backup_csv)
+                shutil.copy2(pair.h5_path, backup_h5)
+                backups.append((pair, backup_csv, backup_h5))
+
+            try:
+                for region, pair, result in prepared:
+                    result.output_csv.replace(pair.csv_path)
+                    result.output_h5.replace(pair.h5_path)
+                    corrected.setdefault(region, []).append(pair.csv_path)
+                    replacement_records.append(
+                        {
+                            "region": region,
+                            "video": str(pair.video_path) if pair.video_path is not None else "",
+                            "csv": str(pair.csv_path),
+                            "h5": str(pair.h5_path),
+                        }
+                    )
+            except Exception:
+                for pair, backup_csv, backup_h5 in backups:
+                    try:
+                        shutil.copy2(backup_csv, pair.csv_path)
+                        shutil.copy2(backup_h5, pair.h5_path)
+                    except OSError:
+                        pass
+                raise
+        finally:
+            if work_folder.exists():
+                shutil.rmtree(work_folder)
         (knee_output_folder / "correction_manifest.json").write_text(
             json.dumps({"replaced_coordinates": replacement_records}, indent=2) + "\n",
             encoding="utf-8",
@@ -362,12 +427,25 @@ class AutomatedPipelineRun:
         self,
         progress_callback: ProgressCallback | None,
     ) -> None:
-        self.dlc_results = run_deeplabcut_labeled_video_creation(
+        coordinate_paths = {
+            result.region: (result.csv_paths, result.h5_paths)
+            for result in self.dlc_results
+        }
+        labeled_results = run_deeplabcut_labeled_video_creation(
             self.dlc_jobs,
             self.dlc_results,
             self.deeplabcut_folder,
             progress_callback,
         )
+        self.dlc_results = self._validate_dlc_results(
+            labeled_results,
+            require_labeled_videos=True,
+        )
+        for result in self.dlc_results:
+            if (result.csv_paths, result.h5_paths) != coordinate_paths[result.region]:
+                raise RuntimeError(
+                    f'DeepLabCut labeled-video creation changed the coordinate files for "{result.region}".'
+                )
 
     def _generate_stickplots(self, progress_callback: ProgressCallback | None) -> None:
         settings = alma_settings_from_manifest(
@@ -388,6 +466,7 @@ class AutomatedPipelineRun:
             default_alma_root(self.project_root),
             progress_callback,
         )
+        self._validate_alma_results(self.stickplot_results, inputs, require_stickplot=True)
 
     def _run_gait_analysis(self, progress_callback: ProgressCallback | None) -> None:
         settings = alma_settings_from_manifest(
@@ -402,13 +481,14 @@ class AutomatedPipelineRun:
             default_alma_root(self.project_root),
             progress_callback,
         )
+        self._validate_alma_results(self.gait_results, inputs)
 
     def _alma_inputs(self, input_mode: str) -> list[Path | AlmaViewCsvSet]:
         if "single" in input_mode.casefold():
             inputs = [
                 path
-                for region in self.analysis_csvs_by_region.values()
-                for path in sorted(region)
+                for region in self.analysis_csvs_by_region
+                for path in self._ordered_region_csvs(region)
             ]
             if not inputs:
                 raise RuntimeError("No coordinate CSVs are available for gait analysis.")
@@ -416,7 +496,7 @@ class AutomatedPipelineRun:
 
         roles = _view_regions(tuple(self.analysis_csvs_by_region))
         views = {
-            role: sorted(self.analysis_csvs_by_region[region])
+            role: self._ordered_region_csvs(region)
             for role, region in roles.items()
         }
         counts = {role: len(paths) for role, paths in views.items()}
@@ -436,6 +516,125 @@ class AutomatedPipelineRun:
             )
             for index in range(counts["left"])
         ]
+
+    def _ordered_region_csvs(self, region: str) -> list[Path]:
+        paths = list(self.analysis_csvs_by_region.get(region, ()))
+        job = next((item for item in self.dlc_jobs if item.region == region), None)
+        if job is None:
+            return sorted(paths)
+
+        remaining = set(paths)
+        ordered: list[Path] = []
+        for video_path in job.video_paths:
+            expected_stem = video_path.stem.casefold()
+            matches = [
+                path
+                for path in remaining
+                if _dlc_source_stem(path) == expected_stem
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    f'DeepLabCut coordinates for region "{region}" could not be matched '
+                    f'unambiguously to "{video_path.name}".'
+                )
+            ordered.append(matches[0])
+            remaining.remove(matches[0])
+        if remaining:
+            raise ValueError(
+                f'DeepLabCut returned coordinate CSVs for region "{region}" that do not '
+                "match the processed videos."
+            )
+        return ordered
+
+    def _validate_dlc_results(
+        self,
+        results: list[DlcAnalysisResult],
+        *,
+        require_labeled_videos: bool = False,
+    ) -> list[DlcAnalysisResult]:
+        jobs_by_region = {job.region: job for job in self.dlc_jobs}
+        result_regions = [result.region for result in results]
+        if len(set(result_regions)) != len(result_regions):
+            raise RuntimeError("DeepLabCut returned duplicate region results.")
+        if set(result_regions) != set(jobs_by_region):
+            missing = sorted(set(jobs_by_region) - set(result_regions))
+            unexpected = sorted(set(result_regions) - set(jobs_by_region))
+            details = []
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            if unexpected:
+                details.append("unexpected " + ", ".join(unexpected))
+            raise RuntimeError(
+                "DeepLabCut results do not match the configured regions: "
+                + "; ".join(details)
+                + "."
+            )
+
+        by_region = {result.region: result for result in results}
+        ordered_results = [by_region[job.region] for job in self.dlc_jobs]
+        for result in ordered_results:
+            job = jobs_by_region[result.region]
+            if result.video_paths != job.video_paths:
+                raise RuntimeError(
+                    f'DeepLabCut returned the wrong video list for region "{result.region}".'
+                )
+            if len(result.csv_paths) != len(job.video_paths) or len(result.h5_paths) != len(job.video_paths):
+                raise RuntimeError(
+                    f'DeepLabCut did not return exactly one CSV and H5 coordinate file per video '
+                    f'for region "{result.region}".'
+                )
+            missing_paths = [
+                path
+                for path in (*result.csv_paths, *result.h5_paths)
+                if not path.is_file()
+            ]
+            if missing_paths:
+                raise RuntimeError(f"DeepLabCut reported an output that does not exist: {missing_paths[0]}")
+            incomplete_pairs = [pair for pair in _pair_dlc_result(result) if not pair.is_paired]
+            if incomplete_pairs:
+                raise RuntimeError(
+                    f'DeepLabCut coordinate files could not be matched to every video for region '
+                    f'"{result.region}".'
+                )
+            if require_labeled_videos:
+                if len(result.labeled_video_paths) != len(job.video_paths):
+                    raise RuntimeError(
+                        f'DeepLabCut did not return exactly one labeled video per source video '
+                        f'for region "{result.region}".'
+                    )
+                missing_labeled = [path for path in result.labeled_video_paths if not path.is_file()]
+                if missing_labeled:
+                    raise RuntimeError(
+                        f"DeepLabCut reported a labeled video that does not exist: {missing_labeled[0]}"
+                    )
+        return ordered_results
+
+    @staticmethod
+    def _validate_alma_results(
+        results: list[AlmaRunResult],
+        inputs: list[Path | AlmaViewCsvSet],
+        *,
+        require_stickplot: bool = False,
+    ) -> None:
+        if len(results) != len(inputs):
+            raise RuntimeError("Gait analysis returned an incomplete set of results.")
+        missing_outputs = [
+            path
+            for result in results
+            for path in result.output_files
+            if not path.is_file()
+        ]
+        if missing_outputs:
+            raise RuntimeError(f"Gait analysis reported an output that does not exist: {missing_outputs[0]}")
+        if any(not result.output_files for result in results):
+            raise RuntimeError("Gait analysis did not produce outputs for every recording.")
+        if require_stickplot:
+            preview_suffixes = {".svg", ".png", ".jpg", ".jpeg"}
+            if any(
+                not any(path.suffix.casefold() in preview_suffixes for path in result.output_files)
+                for result in results
+            ):
+                raise RuntimeError("Stickplot generation did not produce a preview for every recording.")
 
 
 def _trim_ranges_for_video(trim_ranges: dict[str, tuple], video_path: Path) -> tuple:

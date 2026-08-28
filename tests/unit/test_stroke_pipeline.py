@@ -4,13 +4,25 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from dlc_gait_assembly.services.pipeline.alma import AlmaSettings, StrokeStudyMetadata
+from dlc_gait_assembly.services.pipeline.alma import (
+    AlmaSettings,
+    AlmaViewCsvSet,
+    StrokeStudyMetadata,
+)
+from dlc_gait_assembly.services.pipeline.rustlab1 import (
+    CUSTOM_SOP_PARAMETER_NAMES,
+    RUSTLAB1_PARAMETER_NAMES,
+)
+import dlc_gait_assembly.services.pipeline.stroke as stroke_module
 from dlc_gait_assembly.services.pipeline.stroke import (
     CANONICAL_CYCLE_COLUMNS,
     add_asymmetry_features,
+    align_feature_rows_to_cycles,
     align_parameters_to_cycles,
     calculate_stroke_features,
+    canonical_cycles_from_alma,
     detect_canonical_cycles,
+    generate_stroke_analysis_outputs,
     summarize_session,
 )
 from dlc_gait_assembly.services.pipeline.stroke_analysis import (
@@ -74,6 +86,49 @@ def test_canonical_cycles_use_left_onsets_and_pair_right_events():
     assert cycles["contralesional_side"].eq("left").all()
 
 
+def test_synchronized_cycles_keep_alma_stride_boundaries_authoritative():
+    alma_parameters = pd.DataFrame(
+        {
+            "stride_start (frame)": [1, 11, 21],
+            "stride_end (frame)": [9, 19, 29],
+        }
+    )
+
+    cycles = canonical_cycles_from_alma(
+        alma_parameters,
+        _trajectory_with_known_events(),
+        _metadata(),
+        pd,
+        np,
+    )
+
+    assert cycles["stride_start (frame)"].tolist() == [1, 11, 21]
+    assert cycles["stride_end (frame)"].tolist() == [9, 19, 29]
+    assert cycles["right_stance_start_frame"].tolist() == [3, 13, 23]
+
+
+def test_post_alma_features_cannot_change_stride_identity():
+    cycles = pd.DataFrame(
+        {"stride_start (frame)": [1], "stride_end (frame)": [9]}
+    )
+    feature_rows = pd.DataFrame(
+        {
+            "stride_start (frame)": [0],
+            "stride_end (frame)": [9],
+            "LB__avg_Angle": [12.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="changed authoritative ALMA stride_start"):
+        align_feature_rows_to_cycles(
+            cycles,
+            feature_rows,
+            ("LB__avg_Angle",),
+            pd,
+            np,
+        )
+
+
 def test_empty_canonical_cycle_table_preserves_output_schema():
     trajectory = _trajectory_with_known_events().iloc[:1]
 
@@ -126,6 +181,117 @@ def test_cycle_alignment_is_one_to_one_and_uses_frame_overlap():
     assert aligned["left__step height (cm)"].tolist() == [1.0, 2.0, 3.0]
     assert aligned["left__cycle_match_valid"].all()
     assert aligned["left__cycle_match_iou"].tolist() == pytest.approx([0.9] * 3)
+
+
+def test_forelimb_rustlab_features_merge_on_canonical_alma_stride_rows(tmp_path, monkeypatch):
+    frame_count = 40
+    block_angles = np.repeat([10.0, 30.0, 50.0, 70.0], 10)
+    radians = np.deg2rad(block_angles)
+    markers = (
+        "d-center-back",
+        "d-back-left",
+        "d-back-right",
+        "d-center-front",
+        "d-front-left",
+        "d-front-right",
+        "l-back-ankle",
+        "l-back-toe",
+        "l-hip",
+        "l-iliac-crest",
+        "r-back-ankle",
+        "r-back-toe",
+        "r-hip",
+        "r-iliac-crest",
+        "l-front-toe-tip",
+        "l-wrist",
+        "l-elbow",
+        "l-shoulder",
+        "r-front-toe-tip",
+        "r-wrist",
+        "r-elbow",
+        "r-shoulder",
+    )
+    coordinates: dict[tuple[str, str], object] = {}
+    for index, marker in enumerate(markers):
+        coordinates[(marker, "x")] = np.arange(frame_count, dtype=float) + index
+        coordinates[(marker, "y")] = np.sin(np.arange(frame_count) / 4.0 + index) * 3.0 + index
+        coordinates[(marker, "likelihood")] = np.ones(frame_count)
+    for marker in ("d-center-back", "d-center-front"):
+        coordinates[(marker, "x")] = np.zeros(frame_count)
+        coordinates[(marker, "y")] = np.zeros(frame_count)
+    coordinates[("d-front-left", "x")] = np.cos(radians)
+    coordinates[("d-front-left", "y")] = np.sin(radians)
+    merged = pd.DataFrame(coordinates)
+
+    trajectories = _trajectory_with_known_events()
+    trajectory_qc = {
+        "marker_coordinate_coverage": {},
+        "interpolated_samples": {},
+        "required_tracking_coverage": 1.0,
+    }
+    monkeypatch.setattr(stroke_module, "merge_multiview_rustlab1_dataframe", lambda *_args: merged)
+    monkeypatch.setattr(
+        stroke_module,
+        "_bottom_trajectories",
+        lambda *_args: (trajectories, trajectory_qc),
+    )
+
+    metadata = _metadata()
+    view_set = AlmaViewCsvSet(
+        name="mouse-01_7dpi",
+        left_csv=tmp_path / "left.csv",
+        right_csv=tmp_path / "right.csv",
+        bottom_csv=tmp_path / "bottom.csv",
+        metadata=metadata,
+    )
+    left_parameters = pd.DataFrame(
+        {
+            "stride_start (frame)": [1, 11, 21],
+            "stride_end (frame)": [9, 19, 29],
+            "step height (cm)": [1.0, 2.0, 3.0],
+        }
+    )
+    right_parameters = pd.DataFrame(
+        {
+            "stride_start (frame)": [1, 11, 21],
+            "stride_end (frame)": [9, 19, 29],
+            "step height (cm)": [4.0, 5.0, 6.0],
+        }
+    )
+    settings = AlmaSettings(
+        limb_scope="Hindlimb + Forelimb",
+        calibration_method="manual",
+        pixels_per_cm=10.0,
+        minimum_synchronized_cycles=3,
+    )
+    identity_kinematics = type(
+        "IdentityKinematics",
+        (),
+        {"butterworth_filter": staticmethod(lambda values, _fps, _cutoff: values)},
+    )()
+
+    bundle = generate_stroke_analysis_outputs(
+        view_set,
+        tmp_path,
+        settings,
+        left_parameters,
+        right_parameters,
+        None,
+        identity_kinematics,
+        pd,
+    )
+    merged_features = pd.read_csv(bundle.stride_features)
+
+    assert len(merged_features) == 3
+    assert merged_features.columns.is_unique
+    assert set(RUSTLAB1_PARAMETER_NAMES).issubset(merged_features.columns)
+    assert set(CUSTOM_SOP_PARAMETER_NAMES).issubset(merged_features.columns)
+    assert merged_features["left__step height (cm)"].tolist() == [1.0, 2.0, 3.0]
+    assert merged_features["right__step height (cm)"].tolist() == [4.0, 5.0, 6.0]
+    assert merged_features["left__cycle_match_valid"].all()
+    assert merged_features["right__cycle_match_valid"].all()
+    assert merged_features["LF__avg_Angle"].tolist() == pytest.approx([10.0, 30.0, 50.0])
+    assert merged_features["stride_start (frame)"].tolist() == [1, 11, 21]
 
 
 def test_asymmetry_is_signed_contralesional_minus_ipsilesional():

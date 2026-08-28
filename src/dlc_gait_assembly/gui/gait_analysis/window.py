@@ -53,6 +53,8 @@ from dlc_gait_assembly.gui.gait_analysis.previews import (
 )
 from dlc_gait_assembly.gui.gait_analysis.settings import (
     BOTTOM_VIEW_LABELS,
+    FORELIMB_BOTTOM_VIEW_LABELS,
+    FORELIMB_SIDE_VIEW_LABELS,
     MULTI_SIDE_VIEW_MODE_LABEL,
     SIDE_VIEW_LABELS,
     SINGLE_SIDE_VIEW_MODE_LABEL,
@@ -121,6 +123,7 @@ class AlmaKinematicsWidget(QWidget):
         self._connect_signals()
         self._apply_style()
         self._update_input_mode()
+        self._update_limb_scope()
         self._update_analysis_mode()
         self._update_calibration_method()
         self._update_run_state()
@@ -326,14 +329,23 @@ class AlmaKinematicsWidget(QWidget):
         self.analysis_type_combo = QComboBox()
         self.analysis_type_combo.addItems(["Treadmill", "Spontaneous walking"])
         self.analysis_type_combo.setCurrentText(self._defaults.analysis_type)
+        self.limb_scope_combo = QComboBox()
+        self.limb_scope_combo.addItems(["Hindlimb", "Hindlimb + Forelimb"])
+        self.limb_scope_combo.setCurrentText(self._defaults.limb_scope)
         set_tooltip(
             self.input_mode_combo, "Switch between one side-view CSV and paired left/right/bottom CSV analysis."
         )
         set_tooltip(self.analysis_type_combo, "Choose treadmill or spontaneous-walking analysis.")
+        set_tooltip(
+            self.limb_scope_combo,
+            "Choose the established hindlimb output or add RustLab1 forelimb and interlimb parameters and plots.",
+        )
         setup_layout.addWidget(QLabel("Input mode"), 0, 0)
         setup_layout.addWidget(self.input_mode_combo, 0, 1)
         setup_layout.addWidget(QLabel("Analysis type"), 1, 0)
         setup_layout.addWidget(self.analysis_type_combo, 1, 1)
+        setup_layout.addWidget(QLabel("Limb analysis"), 2, 0)
+        setup_layout.addWidget(self.limb_scope_combo, 2, 1)
         setup_tab_layout.addWidget(setup_box)
 
         speed_box = QGroupBox("Treadmill speed and calibration")
@@ -509,18 +521,28 @@ class AlmaKinematicsWidget(QWidget):
 
         stroke_filter_box = QGroupBox("Synchronized stroke-pilot QC")
         stroke_filter_layout = QGridLayout(stroke_filter_box)
-        self.stroke_likelihood_spin = _double_spin(0.0, 1.0, self._defaults.stroke_likelihood_threshold, 2)
-        self.stroke_likelihood_spin.setSingleStep(0.01)
+        self.stroke_likelihood_spin = _double_spin(0.0, 1.0, self._defaults.likelihood_threshold, 2)
+        self.stroke_likelihood_spin.setEnabled(False)
+        set_tooltip(
+            self.stroke_likelihood_spin,
+            "Synchronized outputs use the same likelihood threshold as ALMA.",
+        )
         self.stroke_gap_spin = QSpinBox()
         self.stroke_gap_spin.setRange(0, 60)
-        self.stroke_gap_spin.setValue(self._defaults.max_interpolation_gap_frames)
+        self.stroke_gap_spin.setSpecialValueText("ALMA full")
+        self.stroke_gap_spin.setValue(0)
+        self.stroke_gap_spin.setEnabled(False)
+        set_tooltip(
+            self.stroke_gap_spin,
+            "Synchronized outputs use ALMA's linear interpolation in both directions.",
+        )
         self.stroke_swing_speed_spin = _double_spin(0.1, 100.0, self._defaults.swing_speed_threshold_cm_s, 1)
         self.stroke_min_cycles_spin = QSpinBox()
         self.stroke_min_cycles_spin.setRange(1, 100)
         self.stroke_min_cycles_spin.setValue(self._defaults.minimum_synchronized_cycles)
-        stroke_filter_layout.addWidget(QLabel("Primary likelihood"), 0, 0)
+        stroke_filter_layout.addWidget(QLabel("ALMA likelihood (shared)"), 0, 0)
         stroke_filter_layout.addWidget(self.stroke_likelihood_spin, 0, 1)
-        stroke_filter_layout.addWidget(QLabel("Maximum interpolated gap (frames)"), 1, 0)
+        stroke_filter_layout.addWidget(QLabel("Coordinate gap policy"), 1, 0)
         stroke_filter_layout.addWidget(self.stroke_gap_spin, 1, 1)
         stroke_filter_layout.addWidget(QLabel("Swing threshold (cm/s)"), 2, 0)
         stroke_filter_layout.addWidget(self.stroke_swing_speed_spin, 2, 1)
@@ -553,7 +575,7 @@ class AlmaKinematicsWidget(QWidget):
         )
         set_tooltip(
             self.rustlab1_checkbox,
-            "Calculate 30 RustLab1 and 14 custom SOP parameters, merge them with ALMA cycles, and write 18 adapted runway SVG figures when multi-view labels are present.",
+            "Calculate 30 hindlimb RustLab1 parameters or 76 hindlimb/forelimb parameters, add 14 custom SOP parameters, merge them with ALMA cycles, and write 18 limb-aware runway SVG figures.",
         )
         output_options_layout.addWidget(QLabel("Continuous strides"), 0, 0)
         output_options_layout.addWidget(self.continuous_strides_spin, 0, 1)
@@ -788,6 +810,8 @@ class AlmaKinematicsWidget(QWidget):
         self.preview_button.clicked.connect(self._generate_stickplot_preview)
         self.run_button.clicked.connect(self._run_analysis)
         self.analysis_type_combo.currentTextChanged.connect(self._update_analysis_mode)
+        self.limb_scope_combo.currentTextChanged.connect(self._update_limb_scope)
+        self.likelihood_threshold_spin.valueChanged.connect(self.stroke_likelihood_spin.setValue)
         self.calibration_method_combo.currentTextChanged.connect(self._update_calibration_method)
         self.load_fps_button.clicked.connect(self._load_frame_rate_from_video)
         self.import_calibration_map_button.clicked.connect(self._import_calibration_map)
@@ -804,6 +828,7 @@ class AlmaKinematicsWidget(QWidget):
         preview_controls = (
             self.input_mode_combo,
             self.analysis_type_combo,
+            self.limb_scope_combo,
             self.calibration_method_combo,
             self.reference_segment_combo,
             self.direction_combo,
@@ -1149,6 +1174,7 @@ class AlmaKinematicsWidget(QWidget):
             labels_by_view,
             self._view_label_mappings.get(view_set.name, {}),
             self,
+            include_forelimb=self.limb_scope_combo.currentText() == "Hindlimb + Forelimb",
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -1159,7 +1185,8 @@ class AlmaKinematicsWidget(QWidget):
         else:
             self._view_label_mappings.pop(view_set.name, None)
         selected_count = sum(len(view_mapping) for view_mapping in mapping.values())
-        self.mapping_status_label.setText(f"{selected_count}/16 labels assigned for {view_set.name}.")
+        available_count = 27 if self.limb_scope_combo.currentText() == "Hindlimb + Forelimb" else 16
+        self.mapping_status_label.setText(f"{selected_count}/{available_count} labels assigned for {view_set.name}.")
         self.rustlab_status_label.setText(f"RustLab1 label mapping updated for {view_set.name}.")
         self._invalidate_stickplot_preview(f"Generate a stick-plot preview for {view_set.name}.")
 
@@ -1266,6 +1293,13 @@ class AlmaKinematicsWidget(QWidget):
         self.treadmill_speed_label.setVisible(treadmill)
         self.treadmill_speed_spin.setVisible(treadmill)
         self.spontaneous_box.setVisible(not treadmill)
+
+    def _update_limb_scope(self) -> None:
+        include_forelimb = self.limb_scope_combo.currentText() == "Hindlimb + Forelimb"
+        self.parameter_selection.set_limb_scope(include_forelimb)
+        if self._is_three_view_mode():
+            detail = "76 RustLab1 parameters" if include_forelimb else "30 RustLab1 parameters"
+            self.rustlab_status_label.setText(f"RustLab1 mode: {detail}; paired left, right, and bottom CSVs required.")
 
     def _update_calibration_method(self) -> None:
         reference = self.calibration_method_combo.currentText() == "Reference body segment"
@@ -1481,6 +1515,7 @@ class AlmaKinematicsWidget(QWidget):
 
         return AlmaSettings(
             input_mode=MULTI_SIDE_VIEW_MODE_LABEL if self._is_three_view_mode() else SINGLE_SIDE_VIEW_MODE_LABEL,
+            limb_scope=self.limb_scope_combo.currentText(),
             analysis_type=self.analysis_type_combo.currentText(),
             frame_rate=self.frame_rate_spin.value(),
             filter_cutoff=self.filter_cutoff_spin.value(),
@@ -1511,8 +1546,8 @@ class AlmaKinematicsWidget(QWidget):
             custom_bodypart_mapping=self._collect_bodypart_mapping(),
             view_bodypart_mapping=self._collect_view_bodypart_mapping(),
             stroke_analysis_enabled=self.stroke_analysis_checkbox.isChecked() and self._is_three_view_mode(),
-            stroke_likelihood_threshold=self.stroke_likelihood_spin.value(),
-            max_interpolation_gap_frames=self.stroke_gap_spin.value(),
+            stroke_likelihood_threshold=self.likelihood_threshold_spin.value(),
+            max_interpolation_gap_frames=0,
             swing_speed_threshold_cm_s=self.stroke_swing_speed_spin.value(),
             minimum_synchronized_cycles=self.stroke_min_cycles_spin.value(),
             view_calibration=(
@@ -1595,10 +1630,13 @@ class AlmaKinematicsWidget(QWidget):
                 return []
             missing: list[str] = []
             view_mapping = settings.view_bodypart_mapping or {}
+            include_forelimb = settings.limb_scope == "Hindlimb + Forelimb"
+            side_labels = SIDE_VIEW_LABELS + (FORELIMB_SIDE_VIEW_LABELS if include_forelimb else ())
+            bottom_labels = BOTTOM_VIEW_LABELS[:3] + (FORELIMB_BOTTOM_VIEW_LABELS if include_forelimb else ())
             for view, csv_path, required_labels in (
-                ("left", view_set.left_csv, SIDE_VIEW_LABELS),
-                ("right", view_set.right_csv, SIDE_VIEW_LABELS),
-                ("bottom", view_set.bottom_csv, BOTTOM_VIEW_LABELS[:3]),
+                ("left", view_set.left_csv, side_labels),
+                ("right", view_set.right_csv, side_labels),
+                ("bottom", view_set.bottom_csv, bottom_labels),
             ):
                 try:
                     raw_bodyparts = read_dlc_bodyparts(csv_path)

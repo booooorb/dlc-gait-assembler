@@ -73,6 +73,12 @@ Detailed scientific definitions are available in [SOP.tex](SOP.tex).
 
 The in-app parameter and figure documentation describes the generated measurements,
 required markers, calculations, and real ALMA/RustLab1 preview provenance.
+Runway analysis defaults to the established 132-feature Hindlimb output. Select
+`Hindlimb + Forelimb` to add 46 RustLab1 forelimb/interlimb parameters (178 total)
+and include forelimb content in the adapted RustLab1 figure bundle.
+ALMA, RustLab1, custom, and synchronized outputs share one configured confidence,
+interpolation, and Butterworth-filtering pass. Post-ALMA features retain ALMA's
+exact stride start/end rows.
 
 ## Troubleshooting
 

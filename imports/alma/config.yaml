@@ -31,14 +31,17 @@ stride_length_max_cm: 8.0       # include strides with stride length <= this (cm
 # SOP post-ALMA integration
 # Write tidy/summary parameter tables and eight ALMA diagnostic figures.
 generate_alma_representations: True
-# Write the selected 30 RustLab1 features, all 14 custom SOP features, a merged CSV,
-# and 18 adapted runway figures when multi-view markers are available.
+# Write the selected limb-scope RustLab1 features, all 14 custom SOP features,
+# a merged CSV, and 18 adapted runway figures when multi-view markers are available.
 generate_rustlab1_parameters: True
+# Keep the established hindlimb set, or add 46 upstream forelimb/interlimb
+# measures for a 76-feature RustLab1 output.
+limb_scope: Hindlimb
 
 # Pilot-first synchronized stroke analysis
 stroke_analysis_enabled: True
-stroke_likelihood_threshold: 0.95
-max_interpolation_gap_frames: 5
+# Coordinate confidence, interpolation, filtering, and stride windows are
+# inherited from the ALMA settings above for RustLab1/custom/stroke outputs.
 swing_speed_threshold_cm_s: 10.0
 minimum_synchronized_cycles: 5
 # Optional per-view calibration. Each view accepts pixels_per_cm or separate

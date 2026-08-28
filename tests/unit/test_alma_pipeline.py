@@ -24,10 +24,13 @@ from dlc_gait_assembly.services.pipeline.alma.runner import (
 from dlc_gait_assembly.services.pipeline.rustlab1 import (
     CUSTOM_SOP_PARAMETER_NAMES,
     RUSTLAB1_FIGURE_FILENAMES,
+    RUSTLAB1_FORELIMB_PARAMETER_NAMES,
+    RUSTLAB1_HINDLIMB_PARAMETER_NAMES,
     RUSTLAB1_PARAMETER_NAMES,
     extract_custom_sop_parameters,
     extract_rustlab1_parameters,
     generate_rustlab1_figures,
+    prepare_alma_coordinates,
 )
 
 
@@ -71,7 +74,7 @@ def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
     result = extract_rustlab1_parameters(raw, alma_parameters, settings, identity_kinematics)
 
     assert result.dataframe is not None
-    assert result.available_parameters == RUSTLAB1_PARAMETER_NAMES
+    assert result.available_parameters == RUSTLAB1_HINDLIMB_PARAMETER_NAMES
     assert result.missing_markers == ()
     assert result.dataframe["LB__avg_Angle"].tolist() == [45.0, 45.0]
     assert result.dataframe["RB__avg_Angle"].tolist() == [0.0, 0.0]
@@ -86,6 +89,224 @@ def test_rustlab1_parameters_use_alma_cycle_boundaries_and_manual_scale():
     assert custom.missing_markers == ()
     assert custom.dataframe["left_mtp_average_height"].tolist() == [0.45, 0.45]
     assert custom.dataframe["right_knee_vertical_excursion"].tolist() == [1.8, 1.8]
+
+
+def test_rustlab_and_custom_share_configured_alma_coordinate_preprocessing():
+    import numpy as np
+    import pandas as pd
+
+    frame_count = 4
+    coordinates: dict[tuple[str, str], object] = {}
+    for offset, marker in enumerate(("d-back-left", "d-back-right", "d-center-back")):
+        coordinates[(marker, "x")] = np.array([0.0, 100.0, 2.0, 3.0]) + offset
+        coordinates[(marker, "y")] = np.array([10.0, 100.0, 12.0, 13.0]) + offset
+        coordinates[(marker, "likelihood")] = np.array([1.0, 0.4, 1.0, 1.0])
+    raw = pd.DataFrame(coordinates)
+    settings = AlmaSettings(
+        likelihood_threshold=0.5,
+        calibration_method="manual",
+        pixels_per_cm=10.0,
+        generate_stickplot=False,
+    )
+    filter_inputs = []
+
+    def record_filter(values, _frame_rate, _cutoff):
+        filtered = np.asarray(values, dtype=float)
+        filter_inputs.append(filtered.copy())
+        return filtered
+
+    kinematics = SimpleNamespace(butterworth_filter=record_filter)
+    preprocessed = prepare_alma_coordinates(raw, settings, kinematics)
+
+    assert filter_inputs[0].tolist() == [0.0, 1.0, 2.0, 3.0]
+    assert filter_inputs[1].tolist() == [10.0, 11.0, 12.0, 13.0]
+    filter_call_count = len(filter_inputs)
+    alma_parameters = pd.DataFrame(
+        {"stride_start (frame)": [0], "stride_end (frame)": [frame_count - 1]}
+    )
+
+    rustlab = extract_rustlab1_parameters(
+        raw,
+        alma_parameters,
+        settings,
+        kinematics,
+        preprocessed,
+    )
+    custom = extract_custom_sop_parameters(
+        raw,
+        alma_parameters,
+        settings,
+        kinematics,
+        preprocessed,
+    )
+
+    assert len(filter_inputs) == filter_call_count
+    assert rustlab.dataframe["stride_start (frame)"].tolist() == [0]
+    assert rustlab.dataframe["stride_end (frame)"].tolist() == [3]
+    assert custom.dataframe["stride_start (frame)"].tolist() == [0]
+    assert custom.dataframe["stride_end (frame)"].tolist() == [3]
+
+
+def test_rustlab1_combined_limb_scope_adds_all_upstream_forelimb_parameters():
+    import numpy as np
+    import pandas as pd
+
+    frame_count = 40
+    coordinates: dict[tuple[str, str], object] = {}
+    markers = (
+        "d-center-back",
+        "d-back-left",
+        "d-back-right",
+        "d-center-front",
+        "d-front-left",
+        "d-front-right",
+        "l-back-ankle",
+        "l-back-toe",
+        "l-hip",
+        "l-iliac-crest",
+        "r-back-ankle",
+        "r-back-toe",
+        "r-hip",
+        "r-iliac-crest",
+        "l-front-toe-tip",
+        "l-wrist",
+        "l-elbow",
+        "l-shoulder",
+        "r-front-toe-tip",
+        "r-wrist",
+        "r-elbow",
+        "r-shoulder",
+    )
+    for index, marker in enumerate(markers):
+        x = np.arange(frame_count, dtype=float) + (index % 4) * 3
+        y = np.sin(np.arange(frame_count) / 3 + index) * 4 + index
+        if marker in {"d-front-left", "d-front-right", "d-back-left", "d-back-right"}:
+            x = np.tile(np.r_[np.zeros(5), np.arange(5) * 10.0], 4)[:frame_count] + index
+        coordinates[(marker, "x")] = x
+        coordinates[(marker, "y")] = y
+        coordinates[(marker, "likelihood")] = np.ones(frame_count)
+
+    raw = pd.DataFrame(coordinates)
+    alma_parameters = pd.DataFrame(
+        {
+            "limb (hind left / right)": ["left", "right", "left", "right"],
+            "stride_start (frame)": [0, 10, 20, 30],
+            "stride_end (frame)": [9, 19, 29, 39],
+        }
+    )
+    settings = AlmaSettings(
+        limb_scope="Hindlimb + Forelimb",
+        calibration_method="manual",
+        pixels_per_cm=10.0,
+    )
+    identity_kinematics = SimpleNamespace(butterworth_filter=lambda values, _fps, _cutoff: values)
+
+    result = extract_rustlab1_parameters(raw, alma_parameters, settings, identity_kinematics)
+
+    assert result.available_parameters == RUSTLAB1_PARAMETER_NAMES
+    assert len(RUSTLAB1_FORELIMB_PARAMETER_NAMES) == 46
+    assert result.missing_markers == ()
+    assert result.dataframe["LF__avg_Angle"].notna().all()
+    np.testing.assert_allclose(
+        result.dataframe["left__front__seconds"],
+        [11.0 / 120.0, 10.5 / 120.0, 10.0 / 120.0, 10.0 / 120.0],
+    )
+    assert result.dataframe["avg_Angle__left__front__shoulder_ellbow_wrist"].notna().all()
+    assert result.dataframe["FLBR_RATIO"].tolist() == [0.0] * 4
+    assert result.dataframe["FRBL_RATIO"].tolist() == [0.0] * 4
+
+
+def test_forelimb_angle_summaries_match_rustlab1_r_formula_inside_alma_stride():
+    import numpy as np
+    import pandas as pd
+
+    # RustLab1 calculates signed joint angles, takes the 95th/10th
+    # percentiles and mean, and only then applies abs() to each summary.
+    angles = np.arange(10.0, 81.0, 10.0)
+    radians = np.deg2rad(angles)
+    coordinates: dict[tuple[str, str], object] = {
+        ("d-center-front", "x"): np.zeros(len(angles)),
+        ("d-center-front", "y"): np.zeros(len(angles)),
+        ("d-front-left", "x"): np.cos(radians),
+        ("d-front-left", "y"): np.sin(radians),
+        ("l-elbow", "x"): np.zeros(len(angles)),
+        ("l-elbow", "y"): np.zeros(len(angles)),
+        ("l-shoulder", "x"): np.zeros(len(angles)),
+        ("l-shoulder", "y"): np.ones(len(angles)),
+        ("l-wrist", "x"): np.cos(radians),
+        ("l-wrist", "y"): np.sin(radians),
+        ("l-front-toe-tip", "x"): np.cos(radians) - np.sin(radians),
+        ("l-front-toe-tip", "y"): np.sin(radians) + np.cos(radians),
+    }
+    for marker in {marker for marker, _coord in coordinates}:
+        coordinates[(marker, "likelihood")] = np.ones(len(angles))
+
+    raw = pd.DataFrame(coordinates)
+    alma_stride = pd.DataFrame(
+        {
+            "stride_start (frame)": [0],
+            "stride_end (frame)": [len(angles) - 1],
+        }
+    )
+    settings = AlmaSettings(
+        limb_scope="Hindlimb + Forelimb",
+        calibration_method="manual",
+        pixels_per_cm=10.0,
+    )
+    identity_kinematics = SimpleNamespace(butterworth_filter=lambda values, _fps, _cutoff: values)
+
+    result = extract_rustlab1_parameters(raw, alma_stride, settings, identity_kinematics)
+    output = result.dataframe.iloc[0]
+    # The left mirror view is vertically flipped by RustLab1 before angles are
+    # calculated, making this elbow-angle sequence 90° - theta.
+    signed_elbow_angles = 90.0 - angles
+
+    np.testing.assert_allclose(
+        [output["LF__avg_Angle"], output["LF__max_Angle"], output["LF__min_Angle"]],
+        [np.mean(angles), np.percentile(angles, 95), np.percentile(angles, 10)],
+    )
+    np.testing.assert_allclose(
+        [
+            output["avg_Angle__left__front__shoulder_ellbow_wrist"],
+            output["max_Angle__left__front__shoulder_ellbow_wrist"],
+            output["min_Angle__left__front__shoulder_ellbow_wrist"],
+        ],
+        [
+            abs(np.mean(signed_elbow_angles)),
+            abs(np.percentile(signed_elbow_angles, 95)),
+            abs(np.percentile(signed_elbow_angles, 10)),
+        ],
+    )
+    millimeters_per_pixel = 1.0
+    forepaw_y = coordinates[("l-front-toe-tip", "y")]
+    oriented_y = -forepaw_y
+    np.testing.assert_allclose(
+        [
+            output["l-front-toe-tip__Average_Height"],
+            output["l-front-toe-tip__Movement"],
+        ],
+        [
+            (np.mean(oriented_y) - np.min(oriented_y)) * millimeters_per_pixel,
+            (np.max(oriented_y) - np.min(oriented_y)) * millimeters_per_pixel,
+        ],
+    )
+    forepaw_relative_to_shoulder = (
+        coordinates[("l-front-toe-tip", "x")] - coordinates[("l-shoulder", "x")]
+    ) * millimeters_per_pixel
+    np.testing.assert_allclose(
+        [
+            output["left__front__average"],
+            output["left__front__median"],
+            output["left__front__protraction"],
+            output["left__front__retraction"],
+        ],
+        [
+            np.mean(forepaw_relative_to_shoulder),
+            np.median(forepaw_relative_to_shoulder),
+            np.percentile(forepaw_relative_to_shoulder, 95),
+            np.percentile(forepaw_relative_to_shoulder, 5),
+        ],
+    )
 
 
 def test_parameter_selection_limits_alma_rustlab_and_combined_outputs():
@@ -293,9 +514,22 @@ def test_multiview_csv_set_merges_separate_views_for_rustlab1(tmp_path):
     left_csv = tmp_path / "mouse_left.csv"
     right_csv = tmp_path / "mouse_right.csv"
     bottom_csv = tmp_path / "mouse_bottom.csv"
-    _write_dlc_csv(left_csv, ("back-ankle", "back-toe", "hip", "iliac_crest"))
-    _write_dlc_csv(right_csv, ("back-ankle", "back-toe", "hip", "iliac_crest"))
-    _write_dlc_csv(bottom_csv, ("center-back", "back-left", "back-right"))
+    side_markers = (
+        "back-ankle",
+        "back-toe",
+        "hip",
+        "iliac_crest",
+        "front-toe-tip",
+        "wrist",
+        "elbow",
+        "shoulder",
+    )
+    _write_dlc_csv(left_csv, side_markers)
+    _write_dlc_csv(right_csv, side_markers)
+    _write_dlc_csv(
+        bottom_csv,
+        ("center-back", "back-left", "back-right", "center-front", "front-left", "front-right"),
+    )
 
     view_set = AlmaViewCsvSet(
         name="mouse",
@@ -308,6 +542,9 @@ def test_multiview_csv_set_merges_separate_views_for_rustlab1(tmp_path):
     assert ("l-back-toe", "x") in merged.columns
     assert ("r-back-ankle", "y") in merged.columns
     assert ("d-center-back", "likelihood") in merged.columns
+    assert ("l-front-toe-tip", "x") in merged.columns
+    assert ("r-shoulder", "y") in merged.columns
+    assert ("d-front-right", "likelihood") in merged.columns
 
     alma_parameters = pd.DataFrame({"stride_start (frame)": [0], "stride_end (frame)": [4]})
     settings = AlmaSettings(calibration_method="manual", pixels_per_cm=10.0)
@@ -317,7 +554,7 @@ def test_multiview_csv_set_merges_separate_views_for_rustlab1(tmp_path):
 
     assert result.dataframe is not None
     assert result.missing_markers == ()
-    assert set(result.available_parameters).issubset(RUSTLAB1_PARAMETER_NAMES)
+    assert set(result.available_parameters).issubset(RUSTLAB1_HINDLIMB_PARAMETER_NAMES)
 
 
 def test_pixels_per_cm_from_calibration_map_uses_overall_value(tmp_path):
@@ -434,6 +671,7 @@ def test_low_confidence_filter_interpolates_parameters_and_masks_stickplot_frame
 def test_alma_config_uses_separate_kinematics_likelihood_threshold():
     assert settings_from_alma_config({"likelihood_threshold": 0.1}).likelihood_threshold == 0.5
     assert settings_from_alma_config({"kinematics_likelihood_threshold": 0.7}).likelihood_threshold == 0.7
+    assert settings_from_alma_config({"limb_scope": "Hindlimb + Forelimb"}).limb_scope == "Hindlimb + Forelimb"
 
 
 def test_return_continuous_can_plot_one_valid_preview_stride(tmp_path, alma_root):
@@ -478,25 +716,29 @@ def test_return_continuous_can_plot_one_valid_preview_stride(tmp_path, alma_root
     assert stickplot_path.exists()
 
 
-def test_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(tmp_path, alma_root, alma_fixtures_dir):
-    _assert_generated_parameters_match_real_alma(
+def test_spontaneous_robust_stance_detection_preserves_alma_schema(tmp_path, alma_root, alma_fixtures_dir):
+    _assert_robust_spontaneous_parameters(
         tmp_path,
         alma_root=alma_root,
         input_csv=alma_fixtures_dir / "Demo_Mouse_Treadmill_30cm_s_650000_filtered.csv",
-        expected_parameters_csv=alma_fixtures_dir / "Demo_Mouse_Treadmill_30cm_s_650000_filtered_parameters.csv",
-        settings=_spontaneous_manual_50_px_per_cm_settings(),
+        legacy_parameters_csv=alma_fixtures_dir / "Demo_Mouse_Treadmill_30cm_s_650000_filtered_parameters.csv",
+        expected_rows=52,
+        expected_first_start=5,
+        expected_last_end=2112,
     )
 
 
-def test_edge_case_spontaneous_manual_pixel_ratio_matches_real_alma_parameters_csv(
+def test_edge_case_spontaneous_robust_stance_detection_preserves_alma_schema(
     tmp_path, alma_root, alma_fixtures_dir
 ):
-    _assert_generated_parameters_match_real_alma(
+    _assert_robust_spontaneous_parameters(
         tmp_path,
         alma_root=alma_root,
         input_csv=alma_fixtures_dir / "alma_edge_cases_filtered.csv",
-        expected_parameters_csv=alma_fixtures_dir / "alma_edge_cases_filtered_parameters.csv",
-        settings=_spontaneous_manual_50_px_per_cm_settings(),
+        legacy_parameters_csv=alma_fixtures_dir / "alma_edge_cases_filtered_parameters.csv",
+        expected_rows=5,
+        expected_first_start=0,
+        expected_last_end=229,
     )
 
 
@@ -590,6 +832,50 @@ def _assert_generated_parameters_match_real_alma(
         check_dtype=True,
         check_exact=True,
     )
+
+
+def _assert_robust_spontaneous_parameters(
+    tmp_path: Path,
+    *,
+    alma_root: Path,
+    input_csv: Path,
+    legacy_parameters_csv: Path,
+    expected_rows: int,
+    expected_first_start: int,
+    expected_last_end: int,
+) -> None:
+    import numpy as np
+    import pandas as pd
+
+    settings = _spontaneous_manual_50_px_per_cm_settings()
+    results = run_alma_gait_analysis([input_csv], tmp_path, settings, alma_root)
+    actual_path = tmp_path / f"{input_csv.stem}_parameters.csv"
+    actual = pd.read_csv(actual_path)
+    legacy = pd.read_csv(legacy_parameters_csv)
+
+    assert len(results) == 1
+    assert actual_path in results[0].output_files
+    assert list(actual.columns) == list(legacy.columns)
+    assert len(actual) == expected_rows
+    assert len(actual) != len(legacy)
+    starts = actual["stride_start (frame)"].to_numpy(dtype=int)
+    ends = actual["stride_end (frame)"].to_numpy(dtype=int)
+    assert starts[0] == expected_first_start
+    assert ends[-1] == expected_last_end
+    np.testing.assert_array_equal(starts[1:], ends[:-1] + 1)
+    valid_cycle_frames = actual["cycle duration (no. frames)"].notna()
+    np.testing.assert_array_equal(
+        actual.loc[valid_cycle_frames, "cycle duration (no. frames)"].to_numpy(dtype=int),
+        (ends - starts)[valid_cycle_frames],
+    )
+    assert actual["stride length (cm)"].dropna().between(
+        settings.stride_length_min_cm,
+        settings.stride_length_max_cm,
+    ).all()
+    assert actual["step height (cm)"].dropna().between(
+        settings.step_height_min_cm,
+        settings.step_height_max_cm,
+    ).all()
 
 
 def _assert_csv_text_equal(actual_path: Path, expected_path: Path) -> None:

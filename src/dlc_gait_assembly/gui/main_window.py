@@ -662,6 +662,7 @@ class MainWindow(QMainWindow):
         automated_button.setObjectName("RunwayOptionButton")
         automated_button.setProperty("runwayOption", "automated")
         automated_button.setCursor(Qt.PointingHandCursor)
+        automated_button.setToolTip("Select a profile and process a batch of runway videos.")
         automated_button.clicked.connect(self._show_automated_pipeline)
         runway_options_layout.addWidget(automated_button)
         self._automation_run_button = automated_button
@@ -670,6 +671,7 @@ class MainWindow(QMainWindow):
         profiles_button.setObjectName("RunwayOptionButton")
         profiles_button.setProperty("runwayOption", "profiles")
         profiles_button.setCursor(Qt.PointingHandCursor)
+        profiles_button.setToolTip("Create, edit, and manage reusable runway automation profiles.")
         profiles_button.clicked.connect(self._show_automated_profiles)
         runway_options_layout.addWidget(profiles_button)
         self._automation_profiles_button = profiles_button
@@ -773,7 +775,8 @@ class MainWindow(QMainWindow):
             button.setObjectName("ManualStageButton")
             button.setProperty("manualStage", spec.id)
             button.setProperty("activeStage", False)
-            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            button.setMinimumWidth(0)
             button.setEnabled(spec.enabled)
             button.setCursor(Qt.PointingHandCursor)
             button.setToolTip(spec.label)
@@ -794,7 +797,8 @@ class MainWindow(QMainWindow):
         manual_stage_layout.addWidget(profile_separator)
         create_profile_button = QPushButton("Create\nprofile", manual_stage_frame)
         create_profile_button.setObjectName("ManualPresetProfileButton")
-        create_profile_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        create_profile_button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        create_profile_button.setMinimumWidth(0)
         create_profile_button.setCursor(Qt.PointingHandCursor)
         create_profile_button.setToolTip(
             "Create a profile draft from manifests exported in the manual pipeline. "

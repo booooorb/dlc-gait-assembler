@@ -18,8 +18,10 @@ from dlc_gait_assembly.services.pipeline.gait_parameter_catalog import ALMA_PARA
 from dlc_gait_assembly.services.pipeline.rustlab1.extraction import (
     CUSTOM_SOP_PARAMETER_NAMES,
     RUSTLAB1_PARAMETER_NAMES,
-    coordinate_columns,
+    extract_custom_sop_parameters,
     extract_rustlab1_parameters,
+    prepare_alma_coordinates,
+    rustlab1_parameter_names_for_scope,
 )
 
 CUSTOM_STROKE_PARAMETER_NAMES = CUSTOM_SOP_PARAMETER_NAMES
@@ -130,6 +132,7 @@ def generate_stroke_analysis_outputs(
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
     merged = merge_multiview_rustlab1_dataframe(view_set, pd, view_mappings)
+    preprocessed = prepare_alma_coordinates(merged, settings, kinematics)
     metadata, metadata_warnings = _resolved_metadata(view_set)
     calibration = _view_calibration(settings, "bottom")
     messages = list(metadata_warnings)
@@ -147,8 +150,9 @@ def generate_stroke_analysis_outputs(
         kinematics,
         pd,
         np,
+        preprocessed,
     )
-    cycles = detect_canonical_cycles(trajectories, settings, metadata, pd, np)
+    cycles = canonical_cycles_from_alma(left_parameters, trajectories, metadata, pd, np)
     cycles["frame_rate_hz"] = float(settings.frame_rate)
     cycles["bottom_x_pixels_per_cm"] = float(calibration["x_pixels_per_cm"])
     cycles["bottom_y_pixels_per_cm"] = float(calibration["y_pixels_per_cm"])
@@ -177,13 +181,17 @@ def generate_stroke_analysis_outputs(
         pd,
         np,
     )
-    cycle_bounds = cycles.loc[
-        :,
-        ["cycle_id", "stride_start (frame)", "stride_end (frame)"],
-    ].copy()
-    cycle_bounds["limb (hind left / right)"] = "left"
-    rustlab = extract_rustlab1_parameters(merged, cycle_bounds, settings, kinematics)
-    enabled_rustlab = _selected_parameter_names(settings, RUSTLAB1_PARAMETER_NAMES)
+    rustlab = extract_rustlab1_parameters(
+        merged,
+        left_parameters,
+        settings,
+        kinematics,
+        preprocessed,
+    )
+    enabled_rustlab = _selected_parameter_names(
+        settings,
+        rustlab1_parameter_names_for_scope(settings.limb_scope),
+    )
     if rustlab.dataframe is None:
         rustlab_features = pd.DataFrame(
             np.nan,
@@ -192,26 +200,30 @@ def generate_stroke_analysis_outputs(
         )
         messages.append("RustLab1 features unavailable: required side/down markers were not found.")
     else:
-        rustlab_features = rustlab.dataframe.loc[:, list(enabled_rustlab)].reset_index(drop=True)
+        rustlab_features = align_feature_rows_to_cycles(
+            cycles,
+            rustlab.dataframe,
+            enabled_rustlab,
+            pd,
+            np,
+        )
         if rustlab.missing_markers:
             messages.append("Missing RustLab1 markers: " + ", ".join(rustlab.missing_markers))
 
-    side_y_pixels_per_cm = {}
-    for side in ("left", "right"):
-        side_calibration = _view_calibration(settings, side)
-        if side_calibration is not None:
-            side_y_pixels_per_cm[side] = float(side_calibration["y_pixels_per_cm"])
-        elif rustlab.pixels_per_cm:
-            side_y_pixels_per_cm[side] = float(rustlab.pixels_per_cm)
     enabled_custom = _selected_parameter_names(settings, CUSTOM_SOP_PARAMETER_NAMES)
-    custom = calculate_stroke_features(
+    custom_extraction = extract_custom_sop_parameters(
+        merged,
+        left_parameters,
+        settings,
+        kinematics,
+        preprocessed,
+    )
+    custom = align_feature_rows_to_cycles(
         cycles,
-        trajectories,
-        calibration,
+        custom_extraction.dataframe,
+        enabled_custom,
         pd,
         np,
-        side_y_pixels_per_cm=side_y_pixels_per_cm,
-        enabled_parameter_names=enabled_custom,
     )
     metadata_frame = _metadata_frame(metadata, cycles, pd)
     stride_features = pd.concat(
@@ -275,9 +287,9 @@ def generate_stroke_analysis_outputs(
             "right": _side_calibration_source(settings, "right"),
         },
         "settings": {
-            "likelihood_threshold": settings.stroke_likelihood_threshold,
+            "likelihood_threshold": settings.likelihood_threshold,
             "filter_cutoff_hz": settings.filter_cutoff,
-            "max_interpolation_gap_frames": settings.max_interpolation_gap_frames,
+            "coordinate_interpolation": "ALMA linear interpolation in both directions",
             "swing_speed_threshold_cm_s": settings.swing_speed_threshold_cm_s,
             "minimum_synchronized_cycles": settings.minimum_synchronized_cycles,
         },
@@ -389,6 +401,131 @@ def detect_canonical_cycles(trajectories, settings: AlmaSettings, metadata, pd, 
             }
         )
     return pd.DataFrame(rows, columns=CANONICAL_CYCLE_COLUMNS)
+
+
+def canonical_cycles_from_alma(alma_parameters, trajectories, metadata, pd, np):
+    """Build synchronized-cycle metadata without re-detecting ALMA strides.
+
+    ALMA's stride start/end columns are authoritative. Bottom-view stance
+    states are used only for synchronized phase, overlap, and QC measures
+    inside those already-detected windows.
+    """
+    left_stance = _debounce_boolean(
+        trajectories["left_stance"].fillna(False).to_numpy(dtype=bool),
+        minimum_run=2,
+        np=np,
+    )
+    right_stance = _debounce_boolean(
+        trajectories["right_stance"].fillna(False).to_numpy(dtype=bool),
+        minimum_run=2,
+        np=np,
+    )
+    right_onsets = _onsets(right_stance, np)
+    session_id = metadata.session_id or metadata.animal_id or "session"
+    metadata_values = asdict(metadata)
+    if metadata.lesion_hemisphere == "right":
+        contralesional_side, ipsilesional_side = "left", "right"
+    elif metadata.lesion_hemisphere == "left":
+        contralesional_side, ipsilesional_side = "right", "left"
+    else:
+        contralesional_side = ipsilesional_side = "unknown"
+
+    rows = []
+    for index, parameter_row in alma_parameters.reset_index(drop=True).iterrows():
+        try:
+            start = int(float(parameter_row["stride_start (frame)"]))
+            end = int(float(parameter_row["stride_end (frame)"]))
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"ALMA stride row {index + 1} has invalid frame boundaries.") from exc
+        if start < 0 or end < start:
+            raise ValueError(f"ALMA stride row {index + 1} has invalid frame boundaries: {start}-{end}.")
+
+        in_range = end < len(trajectories)
+        right_candidates = right_onsets[(right_onsets >= start) & (right_onsets <= end)]
+        right_start = int(right_candidates[0]) if len(right_candidates) else None
+        left_stance_end = _stance_end(left_stance, start, end) if in_range else None
+        right_stance_end = (
+            _stance_end(right_stance, right_start, end)
+            if in_range and right_start is not None
+            else None
+        )
+        cycle_trajectory = trajectories.loc[start:end]
+        coverage = (
+            float(cycle_trajectory["required_tracking_valid"].astype(float).mean())
+            if len(cycle_trajectory)
+            else 0.0
+        )
+        speed_values = cycle_trajectory["body_speed_cm_s"].to_numpy(dtype=float)
+        finite_speed = speed_values[np.isfinite(speed_values)]
+        mean_speed = float(np.nanmean(finite_speed)) if len(finite_speed) else np.nan
+        speed_cv = (
+            float(np.nanstd(finite_speed, ddof=1) / abs(mean_speed))
+            if len(finite_speed) > 1 and mean_speed
+            else np.nan
+        )
+        duration_frames = end - start + 1
+        overlap_frames = _interval_overlap(start, left_stance_end, right_start, right_stance_end)
+        row_valid = (
+            in_range
+            and right_start is not None
+            and coverage >= 1.0
+            and (not np.isfinite(speed_cv) or speed_cv <= 0.15)
+        )
+        rejection_reasons = []
+        if not in_range:
+            rejection_reasons.append("alma_stride_out_of_range")
+        if right_start is None:
+            rejection_reasons.append("missing_right_stance_onset")
+        if coverage < 1.0:
+            rejection_reasons.append("required_marker_gap")
+        if np.isfinite(speed_cv) and speed_cv > 0.15:
+            rejection_reasons.append("unstable_speed")
+        rows.append(
+            {
+                **metadata_values,
+                "session_id": session_id,
+                "cycle_id": f"{session_id}:cycle-{index + 1:04d}",
+                "contralesional_side": contralesional_side,
+                "ipsilesional_side": ipsilesional_side,
+                "stride_start (frame)": start,
+                "stride_end (frame)": end,
+                "left_stance_start_frame": start,
+                "left_stance_end_frame": left_stance_end,
+                "right_stance_start_frame": right_start,
+                "right_stance_end_frame": right_stance_end,
+                "cycle_duration_frames": duration_frames,
+                "left_right_hindlimb_phase_offset": (
+                    100.0 * (right_start - start) / duration_frames
+                    if right_start is not None
+                    else np.nan
+                ),
+                "hindlimb_stance_overlap_fraction": 100.0 * overlap_frames / duration_frames,
+                "tracking_coverage": coverage,
+                "mean_speed_cm_s": mean_speed,
+                "speed_cv": speed_cv,
+                "cycle_valid": bool(row_valid),
+                "rejection_reason": ";".join(rejection_reasons),
+            }
+        )
+    return pd.DataFrame(rows, columns=CANONICAL_CYCLE_COLUMNS)
+
+
+def align_feature_rows_to_cycles(cycles, feature_rows, feature_names, pd, np):
+    """Select feature columns only after verifying exact ALMA stride identity."""
+    source = feature_rows.reset_index(drop=True)
+    canonical = cycles.reset_index(drop=True)
+    if len(source) != len(canonical):
+        raise ValueError(
+            "Post-ALMA feature rows do not match the number of authoritative ALMA strides."
+        )
+    for column in ("stride_start (frame)", "stride_end (frame)"):
+        source_bounds = pd.to_numeric(source[column], errors="coerce").to_numpy(dtype=float)
+        canonical_bounds = pd.to_numeric(canonical[column], errors="coerce").to_numpy(dtype=float)
+        if not np.array_equal(source_bounds, canonical_bounds, equal_nan=True):
+            raise ValueError(
+                f"Post-ALMA feature rows changed authoritative ALMA {column} values."
+            )
+    return source.reindex(columns=list(feature_names)).reset_index(drop=True)
 
 
 def align_parameters_to_cycles(cycles, parameters, side: str, pd, np):
@@ -639,8 +776,9 @@ def build_feature_dictionary(stride_features, pd):
     return pd.DataFrame(rows)
 
 
-def _bottom_trajectories(merged, settings, calibration, kinematics, pd, np):
-    columns = coordinate_columns(merged)
+def _bottom_trajectories(merged, settings, calibration, kinematics, pd, np, preprocessed=None):
+    preprocessed = preprocessed or prepare_alma_coordinates(merged, settings, kinematics)
+    columns = preprocessed.columns
     marker_map = {
         "left": "d-back-left",
         "right": "d-back-right",
@@ -661,19 +799,17 @@ def _bottom_trajectories(merged, settings, calibration, kinematics, pd, np):
             likelihood_column = columns.get((marker, "likelihood"))
             if likelihood_column is not None:
                 likelihood = pd.to_numeric(merged[likelihood_column], errors="coerce")
-                values = values.mask(likelihood < settings.stroke_likelihood_threshold)
+                values = values.mask(likelihood < settings.likelihood_threshold)
             original_valid = values.notna()
-            interpolated = _interpolate_short_gaps(values, settings.max_interpolation_gap_frames, pd)
-            interpolation_counts[f"{marker}_{coord}"] = int((~original_valid & interpolated.notna()).sum())
-            coverage[f"{marker}_{coord}"] = float(original_valid.mean())
-            result[f"{label}_{coord}"] = _filter_with_gaps(
-                interpolated,
-                settings.frame_rate,
-                settings.filter_cutoff,
-                kinematics,
-                pd,
-                np,
+            processed = preprocessed.series.get(marker, {}).get(coord)
+            if processed is None:
+                processed = np.full(len(merged), np.nan)
+            processed = np.asarray(processed, dtype=float)
+            interpolation_counts[f"{marker}_{coord}"] = int(
+                np.count_nonzero(~original_valid.to_numpy(dtype=bool) & np.isfinite(processed))
             )
+            coverage[f"{marker}_{coord}"] = float(original_valid.mean())
+            result[f"{label}_{coord}"] = processed
 
     required = ["left_x", "left_y", "right_x", "right_y", "center_x", "center_y"]
     side_required = []
@@ -693,27 +829,21 @@ def _bottom_trajectories(merged, settings, calibration, kinematics, pd, np):
                 likelihood_column = columns.get((marker, "likelihood"))
                 if likelihood_column is not None:
                     likelihood = pd.to_numeric(merged[likelihood_column], errors="coerce")
-                    values = values.mask(likelihood < settings.stroke_likelihood_threshold)
+                    values = values.mask(likelihood < settings.likelihood_threshold)
                 original_valid = values.notna()
-                interpolated = _interpolate_short_gaps(
-                    values,
-                    settings.max_interpolation_gap_frames,
-                    pd,
-                )
-                result[validity_name] = interpolated.notna()
+                processed = preprocessed.series.get(marker, {}).get(coord)
+                if processed is None:
+                    processed = np.full(len(merged), np.nan)
+                processed = np.asarray(processed, dtype=float)
+                result[validity_name] = np.isfinite(processed)
                 if coord == "y" and bodypart in {"back-mtp", "back-knee"}:
                     output_bodypart = bodypart.removeprefix("back-")
                     side = "left" if prefix == "l" else "right"
-                    result[f"{side}_{output_bodypart}_y"] = _filter_with_gaps(
-                        interpolated,
-                        settings.frame_rate,
-                        settings.filter_cutoff,
-                        kinematics,
-                        pd,
-                        np,
-                    )
+                    result[f"{side}_{output_bodypart}_y"] = processed
                 coverage[f"{marker}_{coord}"] = float(original_valid.mean())
-                interpolation_counts[f"{marker}_{coord}"] = int((~original_valid & interpolated.notna()).sum())
+                interpolation_counts[f"{marker}_{coord}"] = int(
+                    np.count_nonzero(~original_valid.to_numpy(dtype=bool) & np.isfinite(processed))
+                )
     result["required_tracking_valid"] = result[required].notna().all(axis=1) & result[side_required].all(axis=1)
     x_scale = float(calibration["x_pixels_per_cm"])
     y_scale = float(calibration["y_pixels_per_cm"])
@@ -994,7 +1124,7 @@ def _formula(column: str) -> str:
     if column.startswith(("left__", "right__")):
         return "ALMA KinematicsFunctions definition evaluated on the matched canonical cycle"
     if column in RUSTLAB1_PARAMETER_NAMES:
-        return "RustLab1-derived definition evaluated on the canonical source-frame window"
+        return "RustLab1-derived definition evaluated on the authoritative ALMA stride window"
     return "cycle metadata or quality-control value; see feature name"
 
 
@@ -1005,9 +1135,11 @@ __all__ = [
     "PRIMARY_STROKE_PARAMETER_NAMES",
     "StrokeOutputBundle",
     "add_asymmetry_features",
+    "align_feature_rows_to_cycles",
     "align_parameters_to_cycles",
     "build_feature_dictionary",
     "calculate_stroke_features",
+    "canonical_cycles_from_alma",
     "detect_canonical_cycles",
     "generate_stroke_analysis_outputs",
     "summarize_session",

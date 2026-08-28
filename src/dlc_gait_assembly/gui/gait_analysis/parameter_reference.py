@@ -32,6 +32,9 @@ from dlc_gait_assembly.services.pipeline.gait_parameter_catalog import (
     GaitParameterDefinition,
     gait_parameter_catalog,
 )
+from dlc_gait_assembly.services.pipeline.rustlab1.extraction import (
+    RUSTLAB1_FORELIMB_PARAMETER_NAMES,
+)
 from dlc_gait_assembly.services.project_paths import find_project_root
 
 
@@ -194,56 +197,56 @@ def gait_figure_catalog(project_root: Path | None = None) -> tuple[FigureDefinit
             "6_1_PLOT_DOWN_Analysis_Speed_QC.svg",
             "Down-view paw-speed QC",
             "Supports the speed-based separation of stance and swing phases.",
-            "Hindpaw speed through time in the bottom camera view.",
+            "Hindpaw speed, plus forepaw speed in Hindlimb + Forelimb mode, in the bottom camera view.",
             "Low-speed regions correspond to stance candidates and higher-speed regions to swing candidates; noisy transitions reduce segmentation confidence.",
         ),
         rustlab(
             "6_2_sync_plots.svg",
-            "Hindlimb synchronization",
-            "Compares left and right step timing in the down view.",
-            "Step events and their temporal relationship for both hindpaws.",
-            "A stable offset suggests repeatable coordination; variable offsets indicate less consistent interlimb timing.",
+            "Gait-cycle synchronization",
+            "Compares gait-cycle timing and, in the combined mode, diagonal fore–hind coordination.",
+            "Cycle duration, stride length, stance/swing timing, and FL–BR and FR–BL asynchronous-phase fractions when forelimbs are enabled.",
+            "Higher diagonal asynchronous-phase fractions mean the paired forepaw and hindpaw spend more analyzed frames in opposing phases.",
         ),
         rustlab(
             "7_1_PLOT_FIRST_OVERVIEW_VERTICAL_BARPLOT.svg",
             "Vertical-height summary",
             "Summarizes lateral-view marker height and movement across groups.",
-            "Side-view vertical measures for ankle, toe, hip, and iliac-crest markers.",
+            "Side-view hindlimb measures and, when enabled, forepaw, wrist, elbow, and shoulder height/excursion measures.",
             "Use the summary to locate group differences, then inspect the timecourse to see when they occur.",
         ),
         rustlab(
             "7.2_PLOT_SECOND_OVERVIEW_Vertical_TIMECOURSE.svg",
             "Vertical-height timecourse",
             "Shows how lateral marker heights evolve throughout each representative run.",
-            "Frame-ordered vertical trajectories for the side-view hindlimb markers.",
+            "Gait-cycle-ordered vertical measures for hindlimb markers and optional forelimb markers.",
             "Repeated oscillations should align with steps; abrupt jumps often reflect tracking artifacts rather than gait.",
         ),
         rustlab(
             "8_1_PLOT_Horizontal_Analysis_QC.svg",
-            "Hindpaw-position QC",
-            "Checks horizontal hindpaw position before protraction and retraction are summarized.",
-            "Bottom- or side-view hindpaw position relative to the reference marker used by the workflow.",
+            "Paw-position QC",
+            "Checks horizontal paw position before protraction and retraction are summarized.",
+            "Hindpaw position relative to hip and optional forepaw position relative to shoulder.",
             "Consistent periodic excursions support the derived movement measures; discontinuities should be reviewed.",
         ),
         rustlab(
             "8.2_PLOT_Protraction_Retraction.svg",
             "Protraction/retraction summary",
-            "Summarizes forward and backward hindlimb excursion.",
-            "Group-level protraction, retraction, average, and median horizontal-position measures.",
+            "Summarizes forward and backward hindlimb and optional forelimb excursion.",
+            "Protraction, retraction, average, and median horizontal paw-position measures by side and limb.",
             "Read forward and backward excursions together to distinguish a translated step from a changed movement range.",
         ),
         rustlab(
             "8_3_PLOT_Protraction_Retraction_line.svg",
             "Protraction/retraction timecourse",
             "Shows the sequence underlying the horizontal excursion summary.",
-            "Hindlimb horizontal position through time for the representative recordings.",
+            "Hindpaw and optional forepaw horizontal position across gait cycles.",
             "Peaks and troughs mark opposing excursion phases; irregular spacing can indicate variable stepping or tracking loss.",
         ),
         rustlab(
             "9_1_PLOT_DURATION_of_STEPE.svg",
             "Step duration",
             "Compares how long detected steps last.",
-            "Durations derived from the down-view speed-based step segmentation.",
+            "ALMA hindlimb cycle durations and optional RustLab1 forelimb stance-onset intervals.",
             "Interpret very short or long values alongside the paw-speed plot to rule out split or merged step events.",
         ),
         rustlab(
@@ -255,16 +258,16 @@ def gait_figure_catalog(project_root: Path | None = None) -> tuple[FigureDefinit
         ),
         rustlab(
             "10_1_PLOT_selected_horizontal_Angle.svg",
-            "Hindpaw-angle timecourse",
-            "Shows frame-by-frame hindpaw orientation in the down view.",
-            "Angles calculated from the left paw, right paw, and center-back coordinates in selected runs.",
+            "Paw and forelimb-angle timecourse",
+            "Shows frame-by-frame paw orientation and optional forelimb joint kinematics.",
+            "Bottom-view hind/forepaw angles plus side-view elbow and wrist angles when forelimbs are enabled.",
             "Smooth repeated changes are expected through stepping; abrupt angle flips usually indicate coordinate problems.",
         ),
         rustlab(
             "10_2_PLOT_horizontal_Angle_line.svg",
-            "Hindpaw-angle summary",
-            "Compares representative hindpaw orientation across groups and sides.",
-            "Mean and selected distribution summaries of the derived left and right hindpaw angles.",
+            "Paw and forelimb-angle summary",
+            "Compares paw orientation and optional forelimb joint angles across gait cycles.",
+            "Mean, 95th-percentile, and 10th-percentile summaries for bottom-view paws and side-view forelimb joints.",
             "Side-to-side or day-to-day shifts indicate changed orientation only after view alignment and tracking QC are confirmed.",
         ),
     )
@@ -723,6 +726,7 @@ class GaitParameterSelectionWidget(QWidget):
         self.setObjectName("GaitParameterSelection")
         self._definitions = gait_parameter_catalog()
         self._multiside = multiside
+        self._include_forelimb = False
         self._items: list[tuple[GaitParameterDefinition, QTreeWidgetItem]] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -782,14 +786,21 @@ class GaitParameterSelectionWidget(QWidget):
         """Expose exactly the parameters generated by the selected input mode."""
         self._multiside = multiside
         expected_view_mode = "Multi-view" if multiside else "Single-view"
+        forelimb_names = set(RUSTLAB1_FORELIMB_PARAMETER_NAMES)
         visible_index = 0
         for definition, item in self._items:
-            visible = definition.view_mode == expected_view_mode
+            visible = definition.view_mode == expected_view_mode and (
+                self._include_forelimb or definition.name not in forelimb_names
+            )
             item.setHidden(not visible)
             if visible:
                 visible_index += 1
                 item.setText(0, str(visible_index))
         self._update_count()
+
+    def set_limb_scope(self, include_forelimb: bool) -> None:
+        self._include_forelimb = bool(include_forelimb)
+        self.set_multiside(self._multiside)
 
     def enabled_parameter_names(self) -> tuple[str, ...]:
         return tuple(

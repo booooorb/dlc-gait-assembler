@@ -50,12 +50,14 @@ from dlc_gait_assembly.gui.manual_calibration.preview import CalibrationStickIte
 from dlc_gait_assembly.gui.automated_pipeline import AutomatedPipelineProfilesWidget
 from dlc_gait_assembly.gui.automated_pipeline.previews import render_svg_pixmap
 from dlc_gait_assembly.gui.main_window import (
+    APP_TOOLBAR_HEIGHT,
     BRAND_LOGO_FILENAMES,
     LADDER_TOOL_SPEC,
     MainMenuWidget,
     MainWindow,
     PartnerLogoLabel,
     TOOL_SPECS,
+    WORKFLOW_ROW_HEIGHT,
 )
 from dlc_gait_assembly.gui.merging.window import MergingWidget
 from dlc_gait_assembly.gui.pca_random_forest.window import PcaRandomForestWidget
@@ -66,6 +68,14 @@ from dlc_gait_assembly.services.profiles import AutomatedProfileStore
 from dlc_gait_assembly.services.analysis_manifests import write_analysis_manifest, write_knee_analysis_manifest
 from dlc_gait_assembly.services.knee_correction import KneeCorrectionSettings
 from dlc_gait_assembly.services.domain.calibration import CalibrationPoint, CalibrationStick
+
+
+def _wait_for_animation(animation, timeout_ms: int = 1500) -> None:
+    elapsed = 0
+    while animation.state() == QAbstractAnimation.State.Running and elapsed < timeout_ms:
+        QTest.qWait(20)
+        elapsed += 20
+    assert animation.state() == QAbstractAnimation.State.Stopped
 
 
 def test_calibration_hover_uses_concrete_qcursors():
@@ -369,8 +379,8 @@ def test_gait_parameter_reference_documents_and_filters_exported_parameters():
 
     assert runway.workspace_stack.currentWidget() is reference
     assert reference.documentation_stack.currentWidget() is reference.parameter_documentation
-    assert reference.parameter_tree.topLevelItemCount() == 132
-    assert reference.count_label.text() == "Showing 132 of 132 gait parameters"
+    assert reference.parameter_tree.topLevelItemCount() == 178
+    assert reference.count_label.text() == "Showing 178 of 178 gait parameters"
 
     reference.view_filter.setCurrentText("Single-view")
     app.processEvents()
@@ -382,10 +392,10 @@ def test_gait_parameter_reference_documents_and_filters_exported_parameters():
     reference.view_filter.setCurrentText("Multi-view")
     reference.source_filter.setCurrentText("RustLab1")
     app.processEvents()
-    assert reference.parameter_tree.topLevelItemCount() == 30
-    assert reference.count_label.text() == "Showing 30 of 30 gait parameters"
-    rustlab_labels = [reference.parameter_tree.topLevelItem(index).text(1) for index in range(30)]
-    assert len(set(rustlab_labels)) == 30
+    assert reference.parameter_tree.topLevelItemCount() == 76
+    assert reference.count_label.text() == "Showing 76 of 76 gait parameters"
+    rustlab_labels = [reference.parameter_tree.topLevelItem(index).text(1) for index in range(76)]
+    assert len(set(rustlab_labels)) == 76
     assert rustlab_labels[:3] == [
         "Left hindpaw angle — mean (deg)",
         "Left hindpaw angle — 95th percentile (deg)",
@@ -393,13 +403,15 @@ def test_gait_parameter_reference_documents_and_filters_exported_parameters():
     ]
     assert "Left ankle average height (mm)" in rustlab_labels
     assert "Right hip displacement per step (cm)" in rustlab_labels
+    assert "Left forelimb elbow angle — mean (deg)" in rustlab_labels
+    assert "Right forelimb step duration (s)" in rustlab_labels
 
     reference.search_edit.setText("angle bottom")
     app.processEvents()
-    assert reference.parameter_tree.topLevelItemCount() == 6
+    assert reference.parameter_tree.topLevelItemCount() == 12
     assert reference.calculation_label.text()
     assert reference.views_label.text() == "Bottom view"
-    assert reference.identifier_label.text().startswith(("LB__", "RB__"))
+    assert reference.identifier_label.text().startswith(("LB__", "RB__", "LF__", "RF__"))
 
     runway.documentation_back_button.click()
     app.processEvents()
@@ -483,6 +495,13 @@ def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings()
     assert sum(name.startswith("right__") for name in multi_alma_names) == 44
     assert not set(ALMA_PARAMETER_NAMES).intersection(multi_names)
     assert selection.count_label.text() == "132 of 132 parameters enabled"
+
+    runway.limb_scope_combo.setCurrentText("Hindlimb + Forelimb")
+    app.processEvents()
+    assert selection.count_label.text() == "178 of 178 parameters enabled"
+    assert runway._collect_settings().limb_scope == "Hindlimb + Forelimb"
+    runway.limb_scope_combo.setCurrentText("Hindlimb")
+    app.processEvents()
 
     selection.clear_button.click()
     app.processEvents()
@@ -649,62 +668,54 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     window.resize(1180, 700)
     window.show()
     app.processEvents()
-    automation_buttons = window.findChildren(QPushButton, "TopAutomationButton")
+    automation_buttons = window.findChildren(QPushButton, "RunwayOptionButton")
 
     assert [button.text() for button in automation_buttons] == ["Automated", "Profiles"]
     assert window._stack.currentWidget() is window._main_menu
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
     assert window._home_button.property("activeNavigation") is True
     assert window._automation_run_button.property("activeNavigation") is False
-    assert window._automation_run_button.property("navigationRole") == "automated"
-    assert window._automation_profiles_button.property("navigationRole") == "profiles"
-    assert window._manual_tools_button.property("navigationRole") == "manual"
+    assert window._automation_run_button.property("runwayOption") == "automated"
+    assert window._automation_profiles_button.property("runwayOption") == "profiles"
     assert not window._automation_run_button.icon().isNull()
     assert not window._automation_profiles_button.icon().isNull()
-    assert not window._manual_tools_button.icon().isNull()
+    assert not window._runway_manual_button.icon().isNull()
     assert not window._settings_button.icon().isNull()
     assert window._active_tool_id is None
-    assert window._manual_tools_button.parentWidget() is not window._primary_navigation
+    assert window._runway_options.isHidden()
     assert window._manual_stage_frame.isHidden()
     assert window._primary_navigation_highlight.isHidden()
 
-    def highlight_target(button):
-        top_left = button.mapTo(window._primary_row, QPoint(0, 0))
-        return button.rect().translated(top_left)
+    window._runway_button.click()
+    QTest.qWait(280)
+    assert not window._runway_options.isHidden()
+    assert window._runway_button.text() == "Runway  ‹"
+    assert window._runway_button.property("activeNavigation") is True
+    assert window._main_menu.view_stack.currentWidget() is window._main_menu.runway_home_page
 
     window._automation_run_button.click()
-    app.processEvents()
-    assert window._primary_navigation_highlight.isVisible()
-    assert window._primary_navigation_highlight.geometry() == highlight_target(window._automation_run_button)
-    assert window._primary_navigation_highlight.property("navigationRole") == "automated"
+    QTest.qWait(280)
+    assert window._runway_mode_highlight.isVisible()
+    assert window._runway_mode_highlight.geometry() == window._runway_mode_highlight_target()
+    assert window._runway_mode_highlight.property("runwayMode") == "automated"
 
     window._automation_profiles_button.click()
-    assert window._primary_navigation_animation.state() == QAbstractAnimation.State.Running
     QTest.qWait(280)
-    assert window._primary_navigation_highlight.geometry() == highlight_target(window._automation_profiles_button)
-    assert window._primary_navigation_highlight.property("navigationRole") == "profiles"
+    assert window._runway_mode_highlight.geometry() == window._runway_mode_highlight_target()
+    assert window._runway_mode_highlight.property("runwayMode") == "profiles"
+    assert window._main_menu.automated_profiles.workspace_stack.currentWidget() is (
+        window._main_menu.automated_profiles.configuration_page
+    )
 
-    manual_x_before_expansion = window._manual_tools_button.mapTo(window._primary_row, QPoint(0, 0)).x()
-    window._manual_tools_button.click()
-    assert window._primary_navigation_animation.state() == QAbstractAnimation.State.Running
+    window._runway_manual_button.click()
     assert window._manual_stage_animation.state() == QAbstractAnimation.State.Running
-    initial_stage_width = window._manual_stage_frame.width()
-    QTest.qWait(90)
-    assert window._manual_stage_frame.width() > initial_stage_width
-    QTest.qWait(190)
-    assert window._primary_navigation_highlight.geometry() == highlight_target(window._manual_tools_button)
-    assert window._primary_navigation_highlight.property("navigationRole") == "manual"
-    assert window._manual_tools_button.text() == "Manual"
-    manual_x_after_expansion = window._manual_tools_button.mapTo(window._primary_row, QPoint(0, 0)).x()
-    assert abs(manual_x_after_expansion - manual_x_before_expansion) <= 1
+    _wait_for_animation(window._manual_stage_animation)
+    QTest.qWait(40)
+    assert window._runway_mode_highlight.property("runwayMode") == "manual"
     assert not window._manual_stage_frame.isHidden()
-    assert window._partner_marks.isHidden()
-    assert window._toolbar.height() == 64
-    assert window._manual_stage_frame.parentWidget() is window._primary_row
-    manual_right = window._manual_tools_button.mapTo(window._shell, window._manual_tools_button.rect().topRight()).x()
-    stage_left = window._manual_stage_frame.mapTo(window._shell, window._manual_stage_frame.rect().topLeft()).x()
-    assert stage_left >= manual_right
-    assert window._manual_stage_frame.y() < window._toolbar.height()
+    assert window._partner_marks.isVisible()
+    assert window._toolbar.height() == APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT
+    assert window._manual_stage_frame.parentWidget() is window._toolbar
     assert [button.text() for button in window._manual_stage_buttons.values()] == [
         "Calibration",
         "Video\nprocessing",
@@ -726,9 +737,8 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     stage_buttons = list(window._manual_stage_buttons.values())
     assert len({button.y() for button in stage_buttons}) == 1
     assert all(button.width() >= 28 for button in stage_buttons)
-    assert window._manual_stage_frame.width() <= 500
     assert [button.x() for button in stage_buttons] == sorted(button.x() for button in stage_buttons)
-    assert window._manual_stage_animation.duration() == 260
+    assert window._manual_stage_animation.duration() == 210
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.manual_pipeline_page
     assert window._manual_tools_button.property("activeManual") is True
@@ -740,10 +750,10 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     QTest.qWait(300)
     assert not window._manual_stage_frame.isHidden()
     assert window._active_tool_id == "manual_calibration"
-    assert window._toolbar.height() == 64
+    assert window._toolbar.height() == APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT
 
     window._automation_profiles_button.click()
-    QTest.qWait(300)
+    _wait_for_animation(window._manual_stage_animation)
     assert window._main_menu.automated_profiles.workspace_stack.currentWidget() is (
         window._main_menu.automated_profiles.configuration_page
     )
@@ -752,7 +762,8 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert window._partner_marks.isVisible()
     assert window._toolbar.height() == 64
 
-    window._manual_tools_button.click()
+    window._runway_manual_button.click()
+    QTest.qWait(240)
     assert window._main_menu.pipeline_tabs.currentIndex() == 0
     assert window._manual_tools_button.property("activeManual") is True
     assert window._active_tool_id is None
@@ -819,13 +830,12 @@ def test_navigation_does_not_override_the_user_window_size():
     app.processEvents()
     chosen_size = window.size()
     window._show_main_menu()
-    app.processEvents()
-    assert window._toolbar.height() == 64
+    _wait_for_animation(window._manual_stage_animation)
+    assert window._toolbar.height() == APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT
     assert window._manual_stage_frame.isVisible()
-    assert window.minimumSizeHint().width() <= window.minimumWidth()
     window._show_home_menu()
-    app.processEvents()
-    assert window._toolbar.height() == 64
+    _wait_for_animation(window._manual_stage_animation)
+    assert window._toolbar.height() == APP_TOOLBAR_HEIGHT
     window._show_automated_pipeline()
     window._main_menu.automated_profiles.set_pipeline_running(True)
     app.processEvents()
@@ -1072,12 +1082,15 @@ def test_runway_light_mode_has_a_distinct_settings_tab_strip():
         stylesheet = runway.styleSheet()
 
         assert runway.settings_tabs.objectName() == "RunwaySettingsTabs"
-        assert runway.settings_tabs.tabBar().expanding()
+        assert runway.settings_tabs.tabBar().isHidden()
+        assert [row.count() for row in runway.settings_section_rows] == [4, 3]
+        assert runway.settings_section_rows[0].property("activeRow") is True
+        assert runway.settings_section_rows[1].property("activeRow") is False
         mapping_index = runway.settings_tabs.indexOf(runway.mapping_tab)
         assert mapping_index >= 0
         assert runway.settings_tabs.tabText(mapping_index) == "Mapping"
         assert _auto_bodypart_label(["iliac-crest"], "iliac crest") == "iliac-crest"
-        assert "QTabWidget#RunwaySettingsTabs QTabBar::tab" in stylesheet
+        assert "QTabBar#RunwaySettingsSectionRow::tab" in stylesheet
         assert f"background: {theme.PANEL};" in stylesheet
         assert f"background: {theme.SURFACE};" in stylesheet
     finally:
@@ -1104,7 +1117,8 @@ def test_gait_workspace_tabs_use_explicit_dark_mode_contrast():
         assert f"color: {theme.CONNECTOR};" in stylesheet
         assert f"background: {theme.SURFACE};" in stylesheet
         assert f"color: {theme.TEXT};" in stylesheet
-        assert f"border-bottom-color: {theme.TOOL_1};" in stylesheet
+        assert "border-bottom-color: transparent;" in stylesheet
+        assert runway.workspace_tabs.tabBar()._accent == theme.TOOL_3
     finally:
         if runway is not None:
             runway.close()
@@ -1319,7 +1333,8 @@ def test_main_navigation_uses_one_primary_bar_instead_of_a_duplicate_tab_strip()
         assert not window._home_button.icon().isNull()
         assert window._brand_logo_filename == "DLC-Gait-Assembler-logo-light-original-clean.png"
         assert window._primary_navigation.objectName() == "PrimaryNavigation"
-        assert "QPushButton#TopAutomationButton" in window._shell.styleSheet()
+        assert "QToolButton#RunwayNavigationButton" in window._shell.styleSheet()
+        assert "QPushButton#RunwayOptionButton" in window._shell.styleSheet()
         window.close()
     finally:
         if menu is not None:

@@ -1900,7 +1900,7 @@ ALMA outputs 44 kinematic parameters:
 % ---------------------------------------------------------
 \section{Additional Post-ALMA Parameters}
 
-The 88 extracted ALMA hind limb parameters may not account for all relevant features in mouse gait analysis. ALMA only extracts the side-view gait parameters, missing important gait features observable from different views. To address this limitation, the existing 88 ALMA parameters are merged with 30 non-overlapping parameters from the RustLab1 Gait Analysis scripts from Weber et al. (2022), and 14 additional gait parameters created with original scripts; totalling 132 gait parameters. To prevent overfitting, it is recommended to have a moderately large number set of markerless tracking data. Smoothing and gait cycle detection must be performed on non-ALMA scripts to standardize features.
+The 88 extracted ALMA hind limb parameters may not account for all relevant features in mouse gait analysis. ALMA only extracts the side-view hindlimb parameters, missing important gait features observable from different views and from the forelimbs. The \textbf{Hindlimb} option merges the existing 88 ALMA parameters with 30 non-overlapping RustLab1 parameters and 14 custom parameters, producing 132 features. The \textbf{Hindlimb + Forelimb} option adds 46 upstream RustLab1 forelimb/interlimb parameters, producing 178 features. To prevent overfitting, it is recommended to have a moderately large markerless-tracking dataset. Smoothing and gait cycle detection are shared across the merged outputs to standardize features.
 
 \begin{tcolorbox}[
     figure callout,
@@ -1965,7 +1965,7 @@ ALMA\\
 
 \node[box] (rustlab) at (0,-4.8) {
 RustLab1\\
-\textbf{30 features}
+\textbf{30 or 76 features}
 };
 
 \node[box] (custom) at (5.2,-4.8) {
@@ -1976,7 +1976,7 @@ Custom Script\\
 % Merged output
 \node[mainbox] (merged) at (0,-6.6) {
 Merged Gait Feature Dataset\\
-\textbf{132 total features}
+\textbf{132 or 178 total features}
 };
 
 % Arrows from middle of boxes
@@ -2004,6 +2004,12 @@ ALMA smooths marker coordinate trajectories using a fifth-order Butterworth
 low-pass filter. To standardize RustLab1 and custom scripts with ALMA, the same
 filter should be applied to all marker coordinates before parameter extraction. Given a video frame rate \(F\) and cutoff
 frequency \(f_c\), the normalized cutoff frequency $W_n$ is:
+
+\noindent In the assembled pipeline, ALMA, RustLab1, custom, and synchronized
+stroke outputs also share the configured kinematics likelihood threshold and
+the same bidirectional linear interpolation before this filter is applied.
+RustLab1 and custom calculations reuse that processed coordinate set rather
+than applying a separate confidence cutoff or smoothing pass.
 
 \[
 W_n = \frac{f_c}{F/2}
@@ -2042,6 +2048,12 @@ y_{b,f}
 
 % ---------------------------------------------------------
 \subsection{ALMA Gait Cycle Standardization}
+
+The stride start and end frames returned by ALMA are authoritative for every
+post-ALMA feature table. RustLab1 and custom features are calculated inside
+those exact windows. Synchronized bottom-view contact states may add phase,
+overlap, and quality-control measurements, but they do not replace or shift
+the ALMA stride boundaries.
 
 ALMA's spontaneous walking gait analysis defines a gait cycle $i$ as the interval from stance onset of one toe
 to the next stance onset of the same toe:
@@ -2085,9 +2097,9 @@ There are a total of 106 gait parameters used in the Weber et al. (2022) DeepLab
 \url{https://github.com/rustlab1/DLC-Gait-Analysis/tree/main}
 \end{tcolorbox}
 
-\noindent Only 30 of the 106 gait parameters extracted by the scripts are both hind-limb specific and non-overlapping with the 44 parameters from ALMA. After splitting the DeepLabCut data into the same gait cycles as ALMA, the 106 parameters can be extracted through the RustLab1 script. Then, the dataset is filtered to the 30 relevant parameters, and merged back with the ALMA gait parameter data set. The 30 relevant parameters are as follows:
+\noindent The default \textbf{Hindlimb} mode retains 30 of the 106 RustLab1 outputs that are hindlimb-specific and non-overlapping with the 44 per-side ALMA parameters. The optional \textbf{Hindlimb + Forelimb} mode retains those 30 and adds 46 forelimb/interlimb outputs that ALMA does not provide. All RustLab1 calculations are evaluated within the shared ALMA gait-cycle windows so the tables can be merged by row. The default 30 parameters are as follows:
 
-\begin{tcolorbox}[parameter table box,title=\textbf{RustLab1 Parameter List}]
+\begin{tcolorbox}[parameter table box,title=\textbf{RustLab1 Hindlimb Parameter List}]
 \begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.045\linewidth}
                   |>{\raggedright\arraybackslash}p{0.36\linewidth}
                   |>{\raggedright\arraybackslash}X
@@ -2130,6 +2142,38 @@ There are a total of 106 gait parameters used in the Weber et al. (2022) DeepLab
 
 29 & Left hip displacement per step & \texttt{left\_\_back\_\_movement\_per\_step} & cm \\
 30 & Right hip displacement per step & \texttt{right\_\_back\_\_movement\_per\_step} & cm \\
+\boxedbottomrule
+\end{tabularx}
+\end{tcolorbox}
+
+\begin{tcolorbox}[parameter table box,title=\textbf{Optional RustLab1 Forelimb/Interlimb Parameter List}]
+\scriptsize
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.04\linewidth}
+                  |>{\raggedright\arraybackslash}p{0.31\linewidth}
+                  |>{\raggedright\arraybackslash}X
+                  |>{\centering\arraybackslash}p{0.07\linewidth}}
+\boxedtoprule
+\textbf{\#} & \textbf{Parameter Name} & \textbf{RustLab1 .csv Output Parameter Name} & \textbf{Units} \\
+\boxedmidrule
+1--3 & Left forepaw mean, maximum, and minimum bottom-view angle & \texttt{LF\_\_avg\_Angle}, \texttt{LF\_\_max\_Angle}, \texttt{LF\_\_min\_Angle} & deg \\
+4--6 & Right forepaw mean, maximum, and minimum bottom-view angle & \texttt{RF\_\_avg\_Angle}, \texttt{RF\_\_max\_Angle}, \texttt{RF\_\_min\_Angle} & deg \\
+7--8 & Left forepaw average height and vertical excursion & \texttt{l-front-toe-tip\_\_Average\_Height}, \texttt{l-front-toe-tip\_\_Movement} & mm \\
+9--10 & Left wrist average height and vertical excursion & \texttt{l-wrist\_\_Average\_Height}, \texttt{l-wrist\_\_Movement} & mm \\
+11--12 & Left elbow average height and vertical excursion & \texttt{l-elbow\_\_Average\_Height}, \texttt{l-elbow\_\_Movement} & mm \\
+13--14 & Left shoulder average height and vertical excursion & \texttt{l-shoulder\_\_Average\_Height}, \texttt{l-shoulder\_\_Movement} & mm \\
+15--16 & Right forepaw average height and vertical excursion & \texttt{r-front-toe-tip\_\_Average\_Height}, \texttt{r-front-toe-tip\_\_Movement} & mm \\
+17--18 & Right wrist average height and vertical excursion & \texttt{r-wrist\_\_Average\_Height}, \texttt{r-wrist\_\_Movement} & mm \\
+19--20 & Right elbow average height and vertical excursion & \texttt{r-elbow\_\_Average\_Height}, \texttt{r-elbow\_\_Movement} & mm \\
+21--22 & Right shoulder average height and vertical excursion & \texttt{r-shoulder\_\_Average\_Height}, \texttt{r-shoulder\_\_Movement} & mm \\
+23--26 & Left forepaw mean, median, protraction, and retraction relative to shoulder & \texttt{left\_\_front\_\_average}, \texttt{left\_\_front\_\_median}, \texttt{left\_\_front\_\_protraction}, \texttt{left\_\_front\_\_retraction} & mm \\
+27--30 & Right forepaw mean, median, protraction, and retraction relative to shoulder & \texttt{right\_\_front\_\_average}, \texttt{right\_\_front\_\_median}, \texttt{right\_\_front\_\_protraction}, \texttt{right\_\_front\_\_retraction} & mm \\
+31--33 & Left elbow mean, maximum, and minimum side-view angle & \texttt{avg\_Angle\_\_left\_\_front\_\_shoulder\_ellbow\_wrist}, corresponding \texttt{max\_Angle} and \texttt{min\_Angle} names & deg \\
+34--36 & Left wrist mean, maximum, and minimum side-view angle & \texttt{avg\_Angle\_\_left\_\_front\_\_ellbow\_wrist\_toetip}, corresponding \texttt{max\_Angle} and \texttt{min\_Angle} names & deg \\
+37--39 & Right elbow mean, maximum, and minimum side-view angle & \texttt{avg\_Angle\_\_right\_\_front\_\_shoulder\_ellbow\_wrist}, corresponding \texttt{max\_Angle} and \texttt{min\_Angle} names & deg \\
+40--42 & Right wrist mean, maximum, and minimum side-view angle & \texttt{avg\_Angle\_\_right\_\_front\_\_ellbow\_wrist\_toetip}, corresponding \texttt{max\_Angle} and \texttt{min\_Angle} names & deg \\
+43--44 & Left and right forelimb step duration & \texttt{left\_\_front\_\_seconds}, \texttt{right\_\_front\_\_seconds} & s \\
+45 & Left-fore/right-hind asynchronous-phase fraction & \texttt{FLBR\_RATIO} & fraction \\
+46 & Right-fore/left-hind asynchronous-phase fraction & \texttt{FRBL\_RATIO} & fraction \\
 \boxedbottomrule
 \end{tabularx}
 \end{tcolorbox}
@@ -2416,16 +2460,16 @@ h_{\mathrm{knee},f}^{R}
 % ---------------------------------------------------------
 \subsection{Merging Features}
 
-The final expanded gait dataset was created by merging ALMA, RustLab1, and custom post-ALMA features into one CSV file. Each row in the merged CSV represents one gait cycle. Feature merging can be performed using a Python script with the \texttt{pandas} library. The ALMA, RustLab1, and custom feature CSV files are loaded as separate data tables and rows are matched using shared identifier columns in the gait cycle index.  The merged dataset contains 132 total gait features arranged in a fixed column order:
+The final expanded gait dataset is created by merging ALMA, RustLab1, and custom post-ALMA features into one CSV file. Each row represents one gait cycle. The ALMA, RustLab1, and custom feature tables are matched using the shared gait-cycle row index. Hindlimb mode contains 132 features; Hindlimb + Forelimb mode contains 178:
 
 \[
 88\ \text{ALMA features}
 +
-30\ \text{RustLab1 features}
+30\text{ or }76\ \text{RustLab1 features}
 +
 14\ \text{custom features}
 =
-132\ \text{total features}
+132\text{ or }178\ \text{total features}
 \]
 
 \begin{tcolorbox}[compact table box,title=\textbf{Expanded Gait Feature Merge}]
@@ -2438,8 +2482,8 @@ The final expanded gait dataset was created by merging ALMA, RustLab1, and custo
 Column range & Feature source & Description \\
 \boxedmidrule
 Features 1--88 & ALMA & ALMA gait parameters used as the core feature set \\
-Features 89--118 & RustLab1 & Post-ALMA additional features from existing scripts \\
-Features 119--132 & Custom & Post-ALMA additional features from custom scripts \\
+Features 89--118 (hindlimb) or 89--164 (combined) & RustLab1 & Post-ALMA hindlimb parameters plus the optional 46 forelimb/interlimb parameters \\
+Features 119--132 (hindlimb) or 165--178 (combined) & Custom & Post-ALMA additional hindlimb features from custom scripts \\
 \boxedbottomrule
 \end{tabularx}
 \end{tcolorbox}

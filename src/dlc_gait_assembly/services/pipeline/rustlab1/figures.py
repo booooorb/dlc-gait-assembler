@@ -7,7 +7,7 @@ from dlc_gait_assembly.services.pipeline.rustlab1.extraction import (
     RUSTLAB1_PARAMETER_NAMES,
     RustLab1Extraction,
     coordinate_columns,
-    filtered_series,
+    prepare_alma_coordinates,
 )
 
 
@@ -19,6 +19,7 @@ def generate_rustlab1_figures(
     settings,
     kinematics,
     plt,
+    preprocessed=None,
 ) -> tuple[Path, ...]:
     """Write the 18 RustLab1 runway figure categories for one recording.
 
@@ -43,6 +44,7 @@ def generate_rustlab1_figures(
         kinematics,
         np,
         pd,
+        preprocessed,
     )
     plotters = (
         _plot_tracking_reliability,
@@ -74,8 +76,18 @@ def generate_rustlab1_figures(
     return tuple(output_paths)
 
 
-def _rustlab1_figure_context(raw_dataframe, alma_parameters, extraction, settings, kinematics, np, pd):
+def _rustlab1_figure_context(
+    raw_dataframe,
+    alma_parameters,
+    extraction,
+    settings,
+    kinematics,
+    np,
+    pd,
+    preprocessed=None,
+):
     columns = coordinate_columns(raw_dataframe)
+    preprocessed = preprocessed or prepare_alma_coordinates(raw_dataframe, settings, kinematics)
     markers = sorted({marker for marker, _coord in columns})
     raw: dict[str, dict[str, object]] = {}
     filtered: dict[str, dict[str, object]] = {}
@@ -90,14 +102,7 @@ def _rustlab1_figure_context(raw_dataframe, alma_parameters, extraction, setting
                 else pd.to_numeric(raw_dataframe[column], errors="coerce").to_numpy(dtype=float)
             )
         for coord in ("x", "y"):
-            filtered[marker][coord] = filtered_series(
-                raw_dataframe,
-                columns,
-                marker,
-                coord,
-                settings,
-                kinematics,
-            )
+            filtered[marker][coord] = preprocessed.series.get(marker, {}).get(coord)
     return {
         "np": np,
         "pd": pd,
@@ -108,6 +113,8 @@ def _rustlab1_figure_context(raw_dataframe, alma_parameters, extraction, setting
         "rustlab": extraction.dataframe.reset_index(drop=True),
         "pixels_per_cm": extraction.pixels_per_cm,
         "frame_rate": float(settings.frame_rate),
+        "likelihood_threshold": float(getattr(settings, "likelihood_threshold", 0.0) or 0.0),
+        "include_forelimb": getattr(settings, "limb_scope", "Hindlimb") == "Hindlimb + Forelimb",
     }
 
 
@@ -249,7 +256,13 @@ def _plot_down_paw_speed(context, plt):
     figure, axis = plt.subplots(figsize=(8.5, 4.5))
     pixels_per_cm = context["pixels_per_cm"] or 49.143
     plotted = False
-    for marker, color in (("d-back-left", "#ef4444"), ("d-back-right", "#2563eb")):
+    series = [
+        ("d-back-left", "#ef4444"),
+        ("d-back-right", "#2563eb"),
+    ]
+    if context["include_forelimb"]:
+        series.extend((("d-front-left", "#f59e0b"), ("d-front-right", "#22c55e")))
+    for marker, color in series:
         x = context["filtered"].get(marker, {}).get("x")
         if x is None or len(x) < 2:
             continue
@@ -266,9 +279,9 @@ def _plot_down_paw_speed(context, plt):
         axis.legend(fontsize=8)
     else:
         _no_data(axis)
-    axis.set_xlabel("Hindpaw x-speed (cm/s)")
+    axis.set_xlabel("Paw x-speed (cm/s)")
     axis.set_ylabel("Frame transitions")
-    axis.set_title("Down-view hindpaw speed quality control")
+    axis.set_title("Down-view paw speed quality control")
     _style_axes(axis)
     return figure
 
@@ -280,12 +293,23 @@ def _plot_cycle_summary(context, plt):
         ("stance duration (s)", "Stance duration (s)"),
         ("swing duration (s)", "Swing duration (s)"),
     )
-    figure, axes = plt.subplots(2, 2, figsize=(9, 7))
-    for axis, (column, title) in zip(axes.flat, metrics, strict=True):
+    if context["include_forelimb"]:
+        figure, axes = plt.subplots(2, 3, figsize=(12, 7))
+        sync_axis = axes.flat[0]
+        _parameter_mean_bars(context, sync_axis, ("FLBR_RATIO", "FRBL_RATIO"))
+        sync_axis.set_title("Diagonal asynchronous-phase fraction")
+        sync_axis.set_ylabel("Fraction")
+        _style_axes(sync_axis)
+        metric_axes = list(axes.flat[1:5])
+        axes.flat[5].axis("off")
+    else:
+        figure, axes = plt.subplots(2, 2, figsize=(9, 7))
+        metric_axes = list(axes.flat)
+    for axis, (column, title) in zip(metric_axes, metrics, strict=True):
         _boxplot_parameter_by_limb(context, axis, column)
         axis.set_title(title)
         _style_axes(axis)
-    figure.suptitle("ALMA gait-cycle summary on RustLab1 recording", fontsize=13)
+    figure.suptitle("RustLab1 synchronization and gait-cycle summary", fontsize=13)
     figure.subplots_adjust(top=0.90, hspace=0.35)
     return figure
 
@@ -301,7 +325,8 @@ def _plot_vertical_summary(context, plt):
         _parameter_mean_bars(context, axis, columns)
         axis.set_ylabel(title)
         _style_axes(axis)
-    figure.suptitle("RustLab1 vertical parameter summary", fontsize=13)
+    limb_text = "hindlimb and forelimb" if context["include_forelimb"] else "hindlimb"
+    figure.suptitle(f"RustLab1 {limb_text} vertical parameter summary", fontsize=13)
     figure.subplots_adjust(top=0.92, hspace=0.55, bottom=0.17)
     return figure
 
@@ -331,39 +356,54 @@ def _plot_hindpaw_position_qc(context, plt):
     figure, axis = plt.subplots(figsize=(8.5, 4.5))
     pixels_per_cm = context["pixels_per_cm"] or 49.143
     plotted = False
-    for side, prefix, color in (("Left", "l", "#f59e0b"), ("Right", "r", "#22c55e")):
-        toe_x = context["filtered"].get(f"{prefix}-back-toe", {}).get("x")
-        hip_x = context["filtered"].get(f"{prefix}-hip", {}).get("x")
-        if toe_x is None or hip_x is None:
+    series = [
+        ("Left hindpaw", "l-back-toe", "l-hip", "#f59e0b"),
+        ("Right hindpaw", "r-back-toe", "r-hip", "#22c55e"),
+    ]
+    if context["include_forelimb"]:
+        series.extend(
+            (
+                ("Left forepaw", "l-front-toe-tip", "l-shoulder", "#ef4444"),
+                ("Right forepaw", "r-front-toe-tip", "r-shoulder", "#2563eb"),
+            )
+        )
+    for label, toe_marker, reference_marker, color in series:
+        toe_x = context["filtered"].get(toe_marker, {}).get("x")
+        reference_x = context["filtered"].get(reference_marker, {}).get("x")
+        if toe_x is None or reference_x is None:
             continue
-        distance = (toe_x - hip_x) * 10.0 / pixels_per_cm
+        distance = (toe_x - reference_x) * 10.0 / pixels_per_cm
         distance = distance[context["np"].isfinite(distance)]
         if len(distance) == 0:
             continue
-        axis.hist(distance, bins=30, alpha=0.45, label=side, color=color)
+        axis.hist(distance, bins=30, alpha=0.45, label=label, color=color)
         plotted = True
     if plotted:
         axis.legend()
     else:
         _no_data(axis)
     axis.axvline(0, color="#111827", linewidth=0.9)
-    axis.set_xlabel("Hindpaw position relative to hip (mm)")
+    axis.set_xlabel("Paw position relative to proximal reference (mm)")
     axis.set_ylabel("Frames")
-    axis.set_title("Horizontal hindpaw-position quality control")
+    axis.set_title("Horizontal paw-position quality control")
     _style_axes(axis)
     return figure
 
 
 def _plot_protraction_summary(context, plt):
+    prefixes = ["left__back__", "right__back__"]
+    if context["include_forelimb"]:
+        prefixes.extend(("left__front__", "right__front__"))
     columns = [
         name
         for name in RUSTLAB1_PARAMETER_NAMES
-        if name.startswith(("left__back__", "right__back__")) and not name.endswith("movement_per_step")
+        if name.startswith(tuple(prefixes))
+        and not name.endswith(("movement_per_step", "seconds"))
     ]
     figure, axis = plt.subplots(figsize=(11, 5))
     _parameter_mean_bars(context, axis, columns)
     axis.axhline(0, color="#111827", linewidth=0.8)
-    axis.set_ylabel("Hindpaw position relative to hip (mm)")
+    axis.set_ylabel("Paw position relative to proximal reference (mm)")
     axis.set_title("Protraction and retraction summary")
     _style_axes(axis)
     figure.subplots_adjust(bottom=0.24)
@@ -371,10 +411,14 @@ def _plot_protraction_summary(context, plt):
 
 
 def _plot_protraction_timecourse(context, plt):
+    prefixes = ["left__back__", "right__back__"]
+    if context["include_forelimb"]:
+        prefixes.extend(("left__front__", "right__front__"))
     columns = [
         name
         for name in RUSTLAB1_PARAMETER_NAMES
-        if name.startswith(("left__back__", "right__back__")) and not name.endswith("movement_per_step")
+        if name.startswith(tuple(prefixes))
+        and not name.endswith(("movement_per_step", "seconds"))
     ]
     figure, axis = plt.subplots(figsize=(10.5, 5))
     plotted = _plot_parameter_lines(context, axis, _gait_cycles(context), columns)
@@ -382,18 +426,29 @@ def _plot_protraction_timecourse(context, plt):
         _no_data(axis)
     axis.axhline(0, color="#111827", linewidth=0.8)
     axis.set_xlabel("Gait cycle")
-    axis.set_ylabel("Hindpaw position relative to hip (mm)")
+    axis.set_ylabel("Paw position relative to proximal reference (mm)")
     axis.set_title("Protraction and retraction across gait cycles")
     _style_axes(axis)
     return figure
 
 
 def _plot_step_duration(context, plt):
-    figure, axis = plt.subplots(figsize=(7.5, 4.8))
-    _boxplot_parameter_by_limb(context, axis, "cycle duration (s)")
-    axis.set_ylabel("Seconds")
-    axis.set_title("Step-cycle duration by hindlimb")
-    _style_axes(axis)
+    if context["include_forelimb"]:
+        figure, axes = plt.subplots(1, 2, figsize=(10, 4.8))
+        _boxplot_parameter_by_limb(context, axes[0], "cycle duration (s)")
+        axes[0].set_title("ALMA hindlimb gait cycle")
+        _parameter_mean_bars(context, axes[1], ("left__front__seconds", "right__front__seconds"))
+        axes[1].set_title("RustLab1 forelimb step duration")
+        for axis in axes:
+            axis.set_ylabel("Seconds")
+            _style_axes(axis)
+        figure.subplots_adjust(bottom=0.22)
+    else:
+        figure, axis = plt.subplots(figsize=(7.5, 4.8))
+        _boxplot_parameter_by_limb(context, axis, "cycle duration (s)")
+        axis.set_ylabel("Seconds")
+        axis.set_title("Step-cycle duration by hindlimb")
+        _style_axes(axis)
     return figure
 
 
@@ -414,13 +469,22 @@ def _plot_distance_per_step(context, plt):
 
 
 def _plot_hindpaw_angle_timecourse(context, plt):
-    figure, axis = plt.subplots(figsize=(10, 4.8))
-    angles = _down_hindpaw_angles(context)
+    column_count = 3 if context["include_forelimb"] else 1
+    figure, axes = plt.subplots(1, column_count, figsize=(13 if column_count > 1 else 10, 4.8), squeeze=False)
+    axis = axes[0][0]
+    angles = _down_paw_angles(context)
     plotted = False
-    series = (
+    series = [
         ("Left hindpaw", angles.get("LB"), "#ef4444"),
         ("Right hindpaw", angles.get("RB"), "#2563eb"),
-    )
+    ]
+    if context["include_forelimb"]:
+        series.extend(
+            (
+                ("Left forepaw", angles.get("LF"), "#f59e0b"),
+                ("Right forepaw", angles.get("RF"), "#22c55e"),
+            )
+        )
     for label, values, color in series:
         if values is None:
             continue
@@ -433,21 +497,54 @@ def _plot_hindpaw_angle_timecourse(context, plt):
         _no_data(axis)
     axis.set_xlabel("Frame")
     axis.set_ylabel("Angle (degrees)")
-    axis.set_title("Down-view hindpaw angle timecourse")
+    axis.set_title("Down-view paw angle timecourse")
     _style_axes(axis)
+    if context["include_forelimb"]:
+        for side_axis, prefix, title in zip(
+            axes[0][1:],
+            ("l", "r"),
+            ("Left forelimb joint angles", "Right forelimb joint angles"),
+            strict=True,
+        ):
+            side_angles = _forelimb_joint_angles(context, prefix)
+            for label, values in side_angles.items():
+                side_axis.plot(context["np"].arange(len(values)), values, linewidth=1.0, label=label)
+            if side_angles:
+                side_axis.legend(fontsize=7)
+            else:
+                _no_data(side_axis)
+            side_axis.set_title(title)
+            side_axis.set_xlabel("Frame")
+            side_axis.set_ylabel("Angle (degrees)")
+            _style_axes(side_axis)
+        figure.subplots_adjust(wspace=0.32)
     return figure
 
 
 def _plot_hindpaw_angle_summary(context, plt):
-    columns = [name for name in RUSTLAB1_PARAMETER_NAMES if name.startswith(("LB__", "RB__"))]
-    figure, axis = plt.subplots(figsize=(10, 4.8))
-    plotted = _plot_parameter_lines(context, axis, _gait_cycles(context), columns)
+    bottom_prefixes = ("LB__", "RB__", "LF__", "RF__") if context["include_forelimb"] else ("LB__", "RB__")
+    bottom_columns = [name for name in RUSTLAB1_PARAMETER_NAMES if name.startswith(bottom_prefixes)]
+    column_count = 2 if context["include_forelimb"] else 1
+    figure, axes = plt.subplots(1, column_count, figsize=(13 if column_count > 1 else 10, 4.8), squeeze=False)
+    bottom_axis = axes[0][0]
+    plotted = _plot_parameter_lines(context, bottom_axis, _gait_cycles(context), bottom_columns)
     if not plotted:
-        _no_data(axis)
-    axis.set_xlabel("Gait cycle")
-    axis.set_ylabel("Angle (degrees)")
-    axis.set_title("Hindpaw angle summary across gait cycles")
-    _style_axes(axis)
+        _no_data(bottom_axis)
+    bottom_axis.set_xlabel("Gait cycle")
+    bottom_axis.set_ylabel("Angle (degrees)")
+    bottom_axis.set_title("Bottom-view paw angles")
+    _style_axes(bottom_axis)
+    if context["include_forelimb"]:
+        side_axis = axes[0][1]
+        side_columns = [name for name in RUSTLAB1_PARAMETER_NAMES if "__front__" in name and "Angle__" in name]
+        plotted = _plot_parameter_lines(context, side_axis, _gait_cycles(context), side_columns)
+        if not plotted:
+            _no_data(side_axis)
+        side_axis.set_xlabel("Gait cycle")
+        side_axis.set_ylabel("Angle (degrees)")
+        side_axis.set_title("Side-view forelimb joint angles")
+        _style_axes(side_axis)
+        figure.subplots_adjust(wspace=0.30)
     return figure
 
 
@@ -457,7 +554,8 @@ def _marker_reliability(context, marker: str) -> float:
     likelihood = values.get("likelihood")
     if likelihood is not None and len(likelihood):
         finite = np.isfinite(likelihood)
-        return float(np.mean(likelihood[finite] > 0.95) * 100.0) if finite.any() else 0.0
+        threshold = context["likelihood_threshold"]
+        return float(np.mean(likelihood[finite] >= threshold) * 100.0) if finite.any() else 0.0
     available = [values.get(coord) for coord in ("x", "y") if values.get(coord) is not None]
     if not available:
         return 0.0
@@ -490,7 +588,8 @@ def _coordinate_mask(context, marker, x, y, *, filtered: bool):
         likelihood = context["raw"].get(marker, {}).get("likelihood")
         if likelihood is not None:
             n = min(n, len(likelihood))
-            mask = mask[:n] & np.isfinite(likelihood[:n]) & (likelihood[:n] >= 0.95)
+            threshold = context["likelihood_threshold"]
+            mask = mask[:n] & np.isfinite(likelihood[:n]) & (likelihood[:n] >= threshold)
     return mask
 
 
@@ -595,30 +694,71 @@ def _short_parameter_label(column: str) -> str:
     return (
         column.replace("l-back-", "L ")
         .replace("r-back-", "R ")
+        .replace("l-front-", "L front ")
+        .replace("r-front-", "R front ")
         .replace("l-", "L ")
         .replace("r-", "R ")
         .replace("left__back__", "L ")
         .replace("right__back__", "R ")
+        .replace("left__front__", "L front ")
+        .replace("right__front__", "R front ")
         .replace("__", " ")
         .replace("_", " ")
     )
 
 
-def _down_hindpaw_angles(context):
+def _down_paw_angles(context):
     np = context["np"]
-    center_x = context["filtered"].get("d-center-back", {}).get("x")
-    center_y = context["filtered"].get("d-center-back", {}).get("y")
     result = {}
-    if center_x is None or center_y is None:
-        return result
-    for label, marker in (("LB", "d-back-left"), ("RB", "d-back-right")):
+    definitions = [
+        ("LB", "d-back-left", "d-center-back"),
+        ("RB", "d-back-right", "d-center-back"),
+    ]
+    if context["include_forelimb"]:
+        definitions.extend((("LF", "d-front-left", "d-center-front"), ("RF", "d-front-right", "d-center-front")))
+    for label, marker, center in definitions:
+        center_x = context["filtered"].get(center, {}).get("x")
+        center_y = context["filtered"].get(center, {}).get("y")
         paw_x = context["filtered"].get(marker, {}).get("x")
         paw_y = context["filtered"].get(marker, {}).get("y")
-        if paw_x is None or paw_y is None:
+        if center_x is None or center_y is None or paw_x is None or paw_y is None:
             continue
         n = min(len(center_x), len(center_y), len(paw_x), len(paw_y))
         angle = np.abs(np.degrees(np.arctan2(paw_y[:n] - center_y[:n], paw_x[:n] - center_x[:n])))
         result[label] = np.where(angle > 90.0, angle - 90.0, angle)
+    return result
+
+
+def _forelimb_joint_angles(context, prefix: str):
+    np = context["np"]
+    points = {
+        name: (
+            context["filtered"].get(f"{prefix}-{name}", {}).get("x"),
+            context["filtered"].get(f"{prefix}-{name}", {}).get("y"),
+        )
+        for name in ("shoulder", "elbow", "wrist", "front-toe-tip")
+    }
+    result = {}
+    for label, center_name, first_name, second_name in (
+        ("Elbow", "elbow", "wrist", "shoulder"),
+        ("Wrist", "wrist", "front-toe-tip", "elbow"),
+    ):
+        arrays = (*points[center_name], *points[first_name], *points[second_name])
+        if any(value is None for value in arrays):
+            continue
+        length = min(len(value) for value in arrays)
+        center_x, center_y = (value[:length] for value in points[center_name])
+        first_x, first_y = (value[:length] for value in points[first_name])
+        second_x, second_y = (value[:length] for value in points[second_name])
+        if prefix == "l":
+            center_y, first_y, second_y = -center_y, -first_y, -second_y
+        angle = np.abs(
+            np.degrees(
+                np.arctan2(first_y - center_y, first_x - center_x)
+                - np.arctan2(second_y - center_y, second_x - center_x)
+            )
+        )
+        result[label] = np.where(angle < 180.0, angle, np.nan)
     return result
 
 

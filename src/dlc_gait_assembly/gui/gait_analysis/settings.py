@@ -10,6 +10,8 @@ from dlc_gait_assembly.gui.gait_analysis.pairing import normalized_bodypart_labe
 STANDARD_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")
 SIDE_VIEW_LABELS = STANDARD_BODYPARTS
 BOTTOM_VIEW_LABELS = ("center back", "back left", "back right", "body reference")
+FORELIMB_SIDE_VIEW_LABELS = ("front toe tip", "wrist", "elbow", "shoulder")
+FORELIMB_BOTTOM_VIEW_LABELS = ("center front", "front left", "front right")
 MULTI_SIDE_VIEW_MODE_LABEL = "Multi side view"
 SINGLE_SIDE_VIEW_MODE_LABEL = "Single side view"
 BODY_PART_ALIASES = {
@@ -38,6 +40,19 @@ BODY_PART_ALIASES = {
     "body reference": (
         "body reference", "body-reference", "reference", "ref", "tail base", "tail-base",
     ),
+    "front toe tip": (
+        "front toe tip", "front-toe-tip", "front toe", "front-toe",
+        "l-front-toe-tip", "r-front-toe-tip",
+    ),
+    "wrist": ("wrist", "l-wrist", "r-wrist"),
+    "elbow": ("elbow", "ellbow", "l-elbow", "r-elbow", "l-ellbow", "r-ellbow"),
+    "shoulder": ("shoulder", "l-shoulder", "r-shoulder"),
+    "center front": (
+        "center front", "center-front", "centre front", "centre-front",
+        "front-center", "front-centre", "d-center-front",
+    ),
+    "front left": ("front left", "front-left", "left front", "left-front", "d-front-left"),
+    "front right": ("front right", "front-right", "right front", "right-front", "d-front-right"),
 }
 
 

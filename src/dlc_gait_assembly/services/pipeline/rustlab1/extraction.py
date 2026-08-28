@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-RUSTLAB1_PARAMETER_NAMES = (
+RUSTLAB1_HINDLIMB_PARAMETER_NAMES = (
     "LB__avg_Angle",
     "LB__max_Angle",
     "LB__min_Angle",
@@ -35,7 +35,58 @@ RUSTLAB1_PARAMETER_NAMES = (
     "right__back__movement_per_step",
 )
 
-RUSTLAB1_MARKERS = (
+RUSTLAB1_FORELIMB_PARAMETER_NAMES = (
+    "LF__avg_Angle",
+    "LF__max_Angle",
+    "LF__min_Angle",
+    "RF__avg_Angle",
+    "RF__max_Angle",
+    "RF__min_Angle",
+    "l-front-toe-tip__Average_Height",
+    "l-front-toe-tip__Movement",
+    "l-wrist__Average_Height",
+    "l-wrist__Movement",
+    "l-elbow__Average_Height",
+    "l-elbow__Movement",
+    "l-shoulder__Average_Height",
+    "l-shoulder__Movement",
+    "r-front-toe-tip__Average_Height",
+    "r-front-toe-tip__Movement",
+    "r-wrist__Average_Height",
+    "r-wrist__Movement",
+    "r-elbow__Average_Height",
+    "r-elbow__Movement",
+    "r-shoulder__Average_Height",
+    "r-shoulder__Movement",
+    "left__front__average",
+    "left__front__median",
+    "left__front__protraction",
+    "left__front__retraction",
+    "right__front__average",
+    "right__front__median",
+    "right__front__protraction",
+    "right__front__retraction",
+    "avg_Angle__left__front__shoulder_ellbow_wrist",
+    "max_Angle__left__front__shoulder_ellbow_wrist",
+    "min_Angle__left__front__shoulder_ellbow_wrist",
+    "avg_Angle__left__front__ellbow_wrist_toetip",
+    "max_Angle__left__front__ellbow_wrist_toetip",
+    "min_Angle__left__front__ellbow_wrist_toetip",
+    "avg_Angle__right__front__shoulder_ellbow_wrist",
+    "max_Angle__right__front__shoulder_ellbow_wrist",
+    "min_Angle__right__front__shoulder_ellbow_wrist",
+    "avg_Angle__right__front__ellbow_wrist_toetip",
+    "max_Angle__right__front__ellbow_wrist_toetip",
+    "min_Angle__right__front__ellbow_wrist_toetip",
+    "left__front__seconds",
+    "right__front__seconds",
+    "FLBR_RATIO",
+    "FRBL_RATIO",
+)
+
+RUSTLAB1_PARAMETER_NAMES = RUSTLAB1_HINDLIMB_PARAMETER_NAMES + RUSTLAB1_FORELIMB_PARAMETER_NAMES
+
+RUSTLAB1_HINDLIMB_MARKERS = (
     "d-back-left",
     "d-back-right",
     "d-center-back",
@@ -48,6 +99,22 @@ RUSTLAB1_MARKERS = (
     "r-hip",
     "r-iliac-crest",
 )
+
+RUSTLAB1_FORELIMB_MARKERS = (
+    "d-center-front",
+    "d-front-left",
+    "d-front-right",
+    "l-front-toe-tip",
+    "l-wrist",
+    "l-elbow",
+    "l-shoulder",
+    "r-front-toe-tip",
+    "r-wrist",
+    "r-elbow",
+    "r-shoulder",
+)
+
+RUSTLAB1_MARKERS = RUSTLAB1_HINDLIMB_MARKERS + RUSTLAB1_FORELIMB_MARKERS
 
 RUSTLAB1_FIGURE_FILENAMES = (
     "1_PLOT_bar_all_videos.svg",
@@ -114,13 +181,63 @@ class CustomSopExtraction:
     missing_markers: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class AlmaPreprocessedCoordinates:
+    """Coordinate series prepared with ALMA's configured filtering contract."""
+
+    columns: dict[tuple[str, str], object]
+    series: dict[str, dict[str, object | None]]
+    frame_count: int
+    likelihood_threshold: float
+    frame_rate: float
+    filter_cutoff: float
+
+
+def prepare_alma_coordinates(
+    raw_dataframe,
+    settings,
+    kinematics,
+    markers: tuple[str, ...] | None = None,
+) -> AlmaPreprocessedCoordinates:
+    """Confidence-filter, interpolate, and low-pass-filter marker coordinates.
+
+    This is the shared preprocessing boundary for ALMA-adjacent RustLab1 and
+    custom measures. It deliberately uses the same likelihood cutoff, frame
+    rate, Butterworth implementation, and cutoff frequency configured for
+    ALMA, and it computes every coordinate series only once.
+    """
+    columns = coordinate_columns(raw_dataframe)
+    selected_markers = (
+        tuple(dict.fromkeys(markers))
+        if markers is not None
+        else tuple(dict.fromkeys(marker for marker, _coord in columns))
+    )
+    series = {
+        marker: {
+            coord: filtered_series(raw_dataframe, columns, marker, coord, settings, kinematics)
+            for coord in ("x", "y")
+        }
+        for marker in selected_markers
+        if (marker, "x") in columns or (marker, "y") in columns
+    }
+    return AlmaPreprocessedCoordinates(
+        columns=columns,
+        series=series,
+        frame_count=len(raw_dataframe),
+        likelihood_threshold=float(getattr(settings, "likelihood_threshold", 0.0) or 0.0),
+        frame_rate=float(settings.frame_rate),
+        filter_cutoff=float(settings.filter_cutoff),
+    )
+
+
 def extract_rustlab1_parameters(
     raw_dataframe,
     alma_parameters,
     settings,
     kinematics,
+    preprocessed: AlmaPreprocessedCoordinates | None = None,
 ) -> RustLab1Extraction:
-    """Calculate the SOP's 30 RustLab1 features on ALMA gait-cycle rows.
+    """Calculate the selected RustLab1 limb features on ALMA gait-cycle rows.
 
     The modified RustLab1 R script summarizes whole videos. Here the same
     calculations are evaluated inside ALMA's stride_start/stride_end windows,
@@ -129,10 +246,20 @@ def extract_rustlab1_parameters(
     """
     import numpy as np
 
-    columns = coordinate_columns(raw_dataframe)
+    preprocessed = preprocessed or prepare_alma_coordinates(
+        raw_dataframe,
+        settings,
+        kinematics,
+        rustlab1_markers_for_scope(getattr(settings, "limb_scope", "Hindlimb")),
+    )
+    _validate_preprocessed_coordinates(preprocessed, raw_dataframe, settings)
+    columns = preprocessed.columns
     present_markers = {marker for marker, _coord in columns}
-    if not present_markers.intersection(RUSTLAB1_MARKERS):
-        return RustLab1Extraction(None, (), RUSTLAB1_MARKERS, None, "not available")
+    limb_scope = getattr(settings, "limb_scope", "Hindlimb")
+    parameter_names = rustlab1_parameter_names_for_scope(limb_scope)
+    required_markers = rustlab1_markers_for_scope(limb_scope)
+    if not present_markers.intersection(required_markers):
+        return RustLab1Extraction(None, (), required_markers, None, "not available")
 
     pixels_per_cm, calibration_source = _resolve_pixels_per_cm(raw_dataframe, columns, settings)
     cycle_keys = [
@@ -143,16 +270,19 @@ def extract_rustlab1_parameters(
     output = alma_parameters.loc[:, cycle_keys].copy().reset_index(drop=True)
     output.insert(0, "gait_cycle", range(1, len(output) + 1))
     output["pixels_per_cm"] = pixels_per_cm
-    enabled_parameters = _enabled_parameters(settings, RUSTLAB1_PARAMETER_NAMES)
+    enabled_parameters = _enabled_parameters(settings, parameter_names)
     for parameter in enabled_parameters:
         output[parameter] = np.nan
 
     required_series = {
-        marker: {
-            coord: filtered_series(raw_dataframe, columns, marker, coord, settings, kinematics) for coord in ("x", "y")
-        }
-        for marker in RUSTLAB1_MARKERS
-        if (marker, "x") in columns or (marker, "y") in columns
+        marker: preprocessed.series[marker]
+        for marker in required_markers
+        if marker in preprocessed.series
+    }
+    bottom_stance = {
+        marker: _rustlab1_stance_mask(required_series, marker, np)
+        for marker in ("d-front-left", "d-front-right", "d-back-left", "d-back-right")
+        if marker in required_series
     }
 
     hip_cycle_means: dict[str, list[float]] = {"left": [], "right": []}
@@ -168,6 +298,7 @@ def extract_rustlab1_parameters(
         cycle_slice = slice(start, end + 1)
 
         _write_down_view_angles(output, row_index, required_series, cycle_slice, np)
+        _write_interlimb_coordination(output, row_index, bottom_stance, cycle_slice, np)
         for side, prefix in (("left", "l"), ("right", "r")):
             _write_side_view_features(
                 output,
@@ -179,6 +310,24 @@ def extract_rustlab1_parameters(
                 pixels_per_cm,
                 np,
             )
+            _write_forelimb_side_angles(
+                output,
+                row_index,
+                side,
+                prefix,
+                required_series,
+                cycle_slice,
+                np,
+            )
+            duration_name = f"{side}__front__seconds"
+            if duration_name in output.columns:
+                output.at[row_index, duration_name] = _step_duration_seconds(
+                    bottom_stance.get(f"d-front-{side}"),
+                    start,
+                    end,
+                    float(settings.frame_rate),
+                    np,
+                )
             hip = _slice(required_series, f"{prefix}-hip", "x", cycle_slice)
             hip_cycle_means[side].append(_safe_stat(np.nanmean, hip, np))
 
@@ -196,8 +345,20 @@ def extract_rustlab1_parameters(
                 output[movement_name] = differences
 
     available = tuple(name for name in enabled_parameters if output[name].notna().any())
-    missing = tuple(marker for marker in RUSTLAB1_MARKERS if marker not in present_markers)
+    missing = tuple(marker for marker in required_markers if marker not in present_markers)
     return RustLab1Extraction(output, available, missing, pixels_per_cm, calibration_source)
+
+
+def rustlab1_parameter_names_for_scope(limb_scope: str) -> tuple[str, ...]:
+    if str(limb_scope).strip().casefold() == "hindlimb + forelimb".casefold():
+        return RUSTLAB1_PARAMETER_NAMES
+    return RUSTLAB1_HINDLIMB_PARAMETER_NAMES
+
+
+def rustlab1_markers_for_scope(limb_scope: str) -> tuple[str, ...]:
+    if str(limb_scope).strip().casefold() == "hindlimb + forelimb".casefold():
+        return RUSTLAB1_MARKERS
+    return RUSTLAB1_HINDLIMB_MARKERS
 
 
 def extract_custom_sop_parameters(
@@ -205,22 +366,28 @@ def extract_custom_sop_parameters(
     alma_parameters,
     settings,
     kinematics,
+    preprocessed: AlmaPreprocessedCoordinates | None = None,
 ) -> CustomSopExtraction:
     """Calculate the SOP's 14 custom measures on ALMA gait-cycle windows."""
     import numpy as np
 
-    columns = coordinate_columns(raw_dataframe)
+    preprocessed = preprocessed or prepare_alma_coordinates(
+        raw_dataframe,
+        settings,
+        kinematics,
+        CUSTOM_SOP_MARKERS,
+    )
+    _validate_preprocessed_coordinates(preprocessed, raw_dataframe, settings)
+    columns = preprocessed.columns
     present_markers = {marker for marker, _coord in columns}
     scalar_scale, _source = _resolve_pixels_per_cm(raw_dataframe, columns, settings)
     bottom_x_scale = _configured_axis_scale(settings, "bottom", "x", scalar_scale)
     bottom_y_scale = _configured_axis_scale(settings, "bottom", "y", scalar_scale)
     side_y_scales = {side: _configured_axis_scale(settings, side, "y", scalar_scale) for side in ("left", "right")}
     required_series = {
-        marker: {
-            coord: filtered_series(raw_dataframe, columns, marker, coord, settings, kinematics) for coord in ("x", "y")
-        }
+        marker: preprocessed.series[marker]
         for marker in CUSTOM_SOP_MARKERS
-        if (marker, "x") in columns or (marker, "y") in columns
+        if marker in preprocessed.series
     }
     left_stance = _stance_mask(
         required_series,
@@ -348,6 +515,22 @@ def _canonical_marker(value) -> str:
         "right-hip": "r-hip",
         "left-iliac-crest": "l-iliac-crest",
         "right-iliac-crest": "r-iliac-crest",
+        "l-front-toe": "l-front-toe-tip",
+        "r-front-toe": "r-front-toe-tip",
+        "left-front-toe": "l-front-toe-tip",
+        "right-front-toe": "r-front-toe-tip",
+        "left-front-toe-tip": "l-front-toe-tip",
+        "right-front-toe-tip": "r-front-toe-tip",
+        "left-wrist": "l-wrist",
+        "right-wrist": "r-wrist",
+        "left-elbow": "l-elbow",
+        "right-elbow": "r-elbow",
+        "left-shoulder": "l-shoulder",
+        "right-shoulder": "r-shoulder",
+        "center-front": "d-center-front",
+        "front-center": "d-center-front",
+        "front-left": "d-front-left",
+        "front-right": "d-front-right",
     }
     return aliases.get(marker, marker)
 
@@ -361,9 +544,11 @@ def filtered_series(dataframe, columns, marker, coord, settings, kinematics):
         return None
     values = pd.to_numeric(dataframe[column], errors="coerce").astype(float)
     likelihood_column = columns.get((marker, "likelihood"))
-    if likelihood_column is not None:
+    likelihood_threshold = float(getattr(settings, "likelihood_threshold", 0.0) or 0.0)
+    if likelihood_column is not None and likelihood_threshold > 0:
         likelihood = pd.to_numeric(dataframe[likelihood_column], errors="coerce")
-        values = values.mask(likelihood < 0.95)
+        valid = likelihood.ge(likelihood_threshold).fillna(False)
+        values = values.mask(~valid)
     values = values.interpolate(limit_direction="both")
     array = values.to_numpy(dtype=float)
     if np.count_nonzero(np.isfinite(array)) < 2:
@@ -376,6 +561,25 @@ def filtered_series(dataframe, columns, marker, coord, settings, kinematics):
     except (ValueError, TypeError):
         # Very short clips cannot satisfy scipy.filtfilt's padding requirement.
         return array
+
+
+def _validate_preprocessed_coordinates(preprocessed, raw_dataframe, settings) -> None:
+    expected = (
+        len(raw_dataframe),
+        float(getattr(settings, "likelihood_threshold", 0.0) or 0.0),
+        float(settings.frame_rate),
+        float(settings.filter_cutoff),
+    )
+    actual = (
+        preprocessed.frame_count,
+        preprocessed.likelihood_threshold,
+        preprocessed.frame_rate,
+        preprocessed.filter_cutoff,
+    )
+    if actual != expected:
+        raise ValueError(
+            "Preprocessed coordinates do not match the current ALMA frame count or filtering settings."
+        )
 
 
 def _resolve_pixels_per_cm(dataframe, columns, settings) -> tuple[float | None, str]:
@@ -426,9 +630,14 @@ def _cycle_bounds(row, frame_count: int) -> tuple[int, int] | None:
 
 
 def _write_down_view_angles(output, row_index, series, cycle_slice, np) -> None:
-    center_x = _slice(series, "d-center-back", "x", cycle_slice)
-    center_y = _slice(series, "d-center-back", "y", cycle_slice)
-    for label, marker in (("LB", "d-back-left"), ("RB", "d-back-right")):
+    for label, marker, center in (
+        ("LB", "d-back-left", "d-center-back"),
+        ("RB", "d-back-right", "d-center-back"),
+        ("LF", "d-front-left", "d-center-front"),
+        ("RF", "d-front-right", "d-center-front"),
+    ):
+        center_x = _slice(series, center, "x", cycle_slice)
+        center_y = _slice(series, center, "y", cycle_slice)
         paw_x = _slice(series, marker, "x", cycle_slice)
         paw_y = _slice(series, marker, "y", cycle_slice)
         if any(value is None for value in (center_x, center_y, paw_x, paw_y)):
@@ -449,7 +658,16 @@ def _write_side_view_features(output, row_index, side, prefix, series, cycle_sli
     if not pixels_per_cm or pixels_per_cm <= 0:
         return
     millimeters_per_pixel = 10.0 / pixels_per_cm
-    for marker_suffix in ("back-ankle", "back-toe", "hip", "iliac-crest"):
+    for marker_suffix in (
+        "back-ankle",
+        "back-toe",
+        "hip",
+        "iliac-crest",
+        "front-toe-tip",
+        "wrist",
+        "elbow",
+        "shoulder",
+    ):
         marker = f"{prefix}-{marker_suffix}"
         y = _slice(series, marker, "y", cycle_slice)
         if y is None or not np.isfinite(y).any():
@@ -465,20 +683,108 @@ def _write_side_view_features(output, row_index, side, prefix, series, cycle_sli
         if movement_name in output.columns:
             output.at[row_index, movement_name] = movement
 
-    toe_x = _slice(series, f"{prefix}-back-toe", "x", cycle_slice)
-    hip_x = _slice(series, f"{prefix}-hip", "x", cycle_slice)
-    if toe_x is None or hip_x is None:
-        return
-    distance_mm = (toe_x - hip_x) * millimeters_per_pixel
-    values = {
-        f"{side}__back__average": _safe_stat(np.nanmean, distance_mm, np),
-        f"{side}__back__median": _safe_stat(np.nanmedian, distance_mm, np),
-        f"{side}__back__protraction": _safe_percentile(distance_mm, 95, np),
-        f"{side}__back__retraction": _safe_percentile(distance_mm, 5, np),
+    for limb, toe_marker, reference_marker in (
+        ("back", f"{prefix}-back-toe", f"{prefix}-hip"),
+        ("front", f"{prefix}-front-toe-tip", f"{prefix}-shoulder"),
+    ):
+        toe_x = _slice(series, toe_marker, "x", cycle_slice)
+        reference_x = _slice(series, reference_marker, "x", cycle_slice)
+        if toe_x is None or reference_x is None:
+            continue
+        distance_mm = (toe_x - reference_x) * millimeters_per_pixel
+        values = {
+            f"{side}__{limb}__average": _safe_stat(np.nanmean, distance_mm, np),
+            f"{side}__{limb}__median": _safe_stat(np.nanmedian, distance_mm, np),
+            f"{side}__{limb}__protraction": _safe_percentile(distance_mm, 95, np),
+            f"{side}__{limb}__retraction": _safe_percentile(distance_mm, 5, np),
+        }
+        for name, value in values.items():
+            if name in output.columns:
+                output.at[row_index, name] = value
+
+
+def _write_forelimb_side_angles(output, row_index, side, prefix, series, cycle_slice, np) -> None:
+    points = {
+        name: (
+            _slice(series, f"{prefix}-{name}", "x", cycle_slice),
+            _slice(series, f"{prefix}-{name}", "y", cycle_slice),
+        )
+        for name in ("shoulder", "elbow", "wrist", "front-toe-tip")
     }
-    for name, value in values.items():
-        if name in output.columns:
-            output.at[row_index, name] = value
+    angle_definitions = (
+        ("shoulder_ellbow_wrist", "elbow", "wrist", "shoulder"),
+        ("ellbow_wrist_toetip", "wrist", "front-toe-tip", "elbow"),
+    )
+    for joint_name, center_name, first_name, second_name in angle_definitions:
+        arrays = (*points[center_name], *points[first_name], *points[second_name])
+        if any(value is None for value in arrays):
+            continue
+        center_x, center_y = points[center_name]
+        first_x, first_y = points[first_name]
+        second_x, second_y = points[second_name]
+        if prefix == "l":
+            # RustLab1 mirrors the left side-view y-axis before calculating
+            # joint angles. The +1506 translation in the R notebook cancels
+            # in vector differences, so only the sign inversion is needed.
+            center_y, first_y, second_y = -center_y, -first_y, -second_y
+        angle = np.degrees(
+            np.arctan2(first_y - center_y, first_x - center_x)
+            - np.arctan2(second_y - center_y, second_x - center_x)
+        )
+        angle = angle[np.isfinite(angle) & (angle < 180.0)]
+        # RustLab1 summarizes the signed joint angle first and applies abs() to
+        # each summary value afterwards (Runway_Analysis.Rmd, section 9.1).
+        values = {
+            f"avg_Angle__{side}__front__{joint_name}": abs(_safe_stat(np.nanmean, angle, np)),
+            f"max_Angle__{side}__front__{joint_name}": abs(_safe_percentile(angle, 95, np)),
+            f"min_Angle__{side}__front__{joint_name}": abs(_safe_percentile(angle, 10, np)),
+        }
+        for name, value in values.items():
+            if name in output.columns:
+                output.at[row_index, name] = value
+
+
+def _rustlab1_stance_mask(series, marker, np):
+    x = _slice(series, marker, "x", slice(None))
+    if x is None or len(x) == 0:
+        return None
+    speed = np.abs(np.diff(x, prepend=x[0]))
+    stance = np.isfinite(speed) & (speed <= 7.0)
+    if len(stance) > 1:
+        stance[0] = stance[1]
+    return stance
+
+
+def _write_interlimb_coordination(output, row_index, stance_masks, cycle_slice, np) -> None:
+    if not {"FLBR_RATIO", "FRBL_RATIO"}.intersection(output.columns):
+        return
+    markers = ("d-front-left", "d-front-right", "d-back-left", "d-back-right")
+    if any(stance_masks.get(marker) is None for marker in markers):
+        return
+    fl, fr, bl, br = (np.asarray(stance_masks[marker][cycle_slice], dtype=bool) for marker in markers)
+    length = min(map(len, (fl, fr, bl, br)))
+    if length == 0:
+        return
+    fl, fr, bl, br = (values[:length] for values in (fl, fr, bl, br))
+    included = ~(fl & fr & bl & br)
+    if not np.any(included):
+        return
+    if "FLBR_RATIO" in output.columns:
+        output.at[row_index, "FLBR_RATIO"] = float(np.mean(fl[included] != br[included]))
+    if "FRBL_RATIO" in output.columns:
+        output.at[row_index, "FRBL_RATIO"] = float(np.mean(fr[included] != bl[included]))
+
+
+def _step_duration_seconds(stance, start: int, end: int, frame_rate: float, np) -> float:
+    if stance is None or frame_rate <= 0:
+        return np.nan
+    stance = np.asarray(stance, dtype=bool)
+    onsets = np.flatnonzero(stance & ~np.r_[False, stance[:-1]])
+    if len(onsets) < 2:
+        return np.nan
+    intervals = np.diff(onsets).astype(float) / frame_rate
+    overlaps = (onsets[:-1] <= end) & (onsets[1:] >= start)
+    return _safe_stat(np.nanmedian, intervals[overlaps], np)
 
 
 def _enabled_parameters(settings, available: tuple[str, ...]) -> tuple[str, ...]:

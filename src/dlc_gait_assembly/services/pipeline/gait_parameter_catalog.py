@@ -151,17 +151,60 @@ def _alma_formula(name: str) -> str:
 
 
 def _rustlab1_definition(name: str) -> GaitParameterDefinition:
-    if name.startswith(("LB__", "RB__")):
-        side = "left" if name.startswith("LB__") else "right"
+    if name.startswith(("LB__", "RB__", "LF__", "RF__")):
+        code = name.split("__", 1)[0]
+        side = "left" if code.startswith("L") else "right"
+        limb = "fore" if code.endswith("F") else "hind"
+        center = "front" if limb == "fore" else "back"
         statistic = "mean" if "avg" in name else "95th percentile" if "max" in name else "10th percentile"
         return GaitParameterDefinition(
             name,
             "RustLab1",
             "Multi-view",
             "Bottom view",
-            f"Bottom {side} hindpaw and center back",
-            f"{statistic} absolute hindpaw-to-center-back angle within the ALMA gait-cycle window",
-            f"{side.title()} hindpaw angle — {statistic} (deg)",
+            f"Bottom {side} {limb}paw and center {center}",
+            f"{statistic} absolute {limb}paw-to-center-{center} angle within the ALMA gait-cycle window",
+            f"{side.title()} {limb}paw angle — {statistic} (deg)",
+        )
+    if name in {"FLBR_RATIO", "FRBL_RATIO"}:
+        diagonal = "left forepaw and right hindpaw" if name == "FLBR_RATIO" else "right forepaw and left hindpaw"
+        return GaitParameterDefinition(
+            name,
+            "RustLab1",
+            "Multi-view",
+            "Bottom view",
+            "All four paws",
+            f"fraction of non-all-stance gait-cycle frames in which the {diagonal} occupy different stance/swing phases",
+            f"{diagonal.title()} asynchronous-phase fraction",
+        )
+    if name.endswith("__front__seconds"):
+        side = "Left" if name.startswith("left__") else "Right"
+        return GaitParameterDefinition(
+            name,
+            "RustLab1",
+            "Multi-view",
+            "Bottom view",
+            f"Bottom {side.lower()} forepaw",
+            "median interval between consecutive forepaw stance onsets overlapping the ALMA gait-cycle window / frame rate",
+            f"{side} forelimb step duration (s)",
+        )
+    if name.startswith(("avg_Angle__", "max_Angle__", "min_Angle__")):
+        statistic_key, side, _limb, joint = name.split("__", 3)
+        statistic = {
+            "avg_Angle": "mean",
+            "max_Angle": "95th percentile",
+            "min_Angle": "10th percentile",
+        }[statistic_key]
+        joint_label = "elbow" if joint == "shoulder_ellbow_wrist" else "wrist"
+        markers = "Shoulder, elbow, and wrist" if joint_label == "elbow" else "Elbow, wrist, and fore toe tip"
+        return GaitParameterDefinition(
+            name,
+            "RustLab1",
+            "Multi-view",
+            f"{side.title()} side view",
+            f"{side.title()} {markers.lower()}",
+            f"absolute value of the signed {joint_label}-angle {statistic} within the ALMA gait-cycle window",
+            f"{side.title()} forelimb {joint_label} angle — {statistic} (deg)",
         )
     side = "Left" if name.startswith(("l-", "left__")) else "Right"
     if "Average_Height" in name:
@@ -182,8 +225,11 @@ def _rustlab1_definition(name: str) -> GaitParameterDefinition:
             "protraction": "95th percentile",
             "retraction": "5th percentile",
         }.get(name.rsplit("__", 1)[-1], "summary")
-        calculation = f"{statistic} toe x-position minus hip x-position, converted to millimetres"
-        markers = f"{side} hind toe and hip"
+        forelimb = "__front__" in name
+        reference = "shoulder" if forelimb else "hip"
+        limb = "fore" if forelimb else "hind"
+        calculation = f"{statistic} {limb} toe x-position minus {reference} x-position, converted to millimetres"
+        markers = f"{side} {limb} toe and {reference}"
     return GaitParameterDefinition(
         name,
         "RustLab1",
@@ -197,9 +243,14 @@ def _rustlab1_definition(name: str) -> GaitParameterDefinition:
 
 def _rustlab1_display_name(name: str) -> str:
     side = "Left" if name.startswith(("l-", "left__")) else "Right"
-    if name.startswith(("l-back-", "r-back-")):
+    if name.startswith(("l-back-", "r-back-", "l-front-", "r-front-", "l-wrist", "r-wrist", "l-elbow", "r-elbow", "l-shoulder", "r-shoulder")):
         marker_name = name.split("__", 1)[0]
-        bodypart = "hindpaw" if marker_name.endswith("back-toe") else marker_name.rsplit("-", 1)[-1]
+        if marker_name.endswith("back-toe"):
+            bodypart = "hindpaw"
+        elif marker_name.endswith("front-toe-tip"):
+            bodypart = "forepaw"
+        else:
+            bodypart = marker_name.rsplit("-", 1)[-1]
         measure = "average height" if name.endswith("Average_Height") else "vertical excursion"
         return f"{side} {bodypart} {measure} (mm)"
     if name.startswith(("l-hip__", "r-hip__", "l-iliac-crest__", "r-iliac-crest__")):
@@ -209,6 +260,8 @@ def _rustlab1_display_name(name: str) -> str:
         return f"{side} {bodypart} {measure} (mm)"
     if name.endswith("movement_per_step"):
         return f"{side} hip displacement per step (cm)"
+    if name.endswith("__front__seconds"):
+        return f"{side} forelimb step duration (s)"
     statistic = name.rsplit("__", 1)[-1]
     measure = {
         "average": "mean position",
@@ -216,7 +269,8 @@ def _rustlab1_display_name(name: str) -> str:
         "protraction": "protraction",
         "retraction": "retraction",
     }[statistic]
-    return f"{side} hindpaw {measure} relative to hip (mm)"
+    forelimb = "__front__" in name
+    return f"{side} {'forepaw' if forelimb else 'hindpaw'} {measure} relative to {'shoulder' if forelimb else 'hip'} (mm)"
 
 
 def _custom_definition(name: str) -> GaitParameterDefinition:

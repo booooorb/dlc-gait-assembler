@@ -191,6 +191,12 @@ def _side_view_marker(marker: str, prefix: str) -> str:
         "back-iliac-crest": "iliac-crest",
         "mtp": "back-mtp",
         "knee": "back-knee",
+        "front-toe": "front-toe-tip",
+        "front-toe-tip": "front-toe-tip",
+        "wrist": "wrist",
+        "elbow": "elbow",
+        "ellbow": "elbow",
+        "shoulder": "shoulder",
     }
     return f"{prefix}-{aliases.get(marker, marker)}"
 
@@ -210,6 +216,14 @@ def _bottom_view_marker(marker: str) -> str:
         "right": "back-right",
         "right-back": "back-right",
         "back-right": "back-right",
+        "center-front": "center-front",
+        "centre-front": "center-front",
+        "front-center": "center-front",
+        "front-centre": "center-front",
+        "left-front": "front-left",
+        "front-left": "front-left",
+        "right-front": "front-right",
+        "front-right": "front-right",
     }
     return f"d-{aliases.get(marker, marker)}"
 

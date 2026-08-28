@@ -9,6 +9,7 @@ from typing import Literal
 AnalysisType = Literal["Treadmill", "Spontaneous walking"]
 CalibrationMethod = Literal["reference", "manual"]
 InputMode = Literal["Multi side view", "Single side view", "Three-view", "Single-side ALMA"]
+LimbScope = Literal["Hindlimb", "Hindlimb + Forelimb"]
 LesionHemisphere = Literal["left", "right", "none", "unknown"]
 ALMA_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")
 
@@ -16,6 +17,7 @@ ALMA_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")
 @dataclass(frozen=True)
 class AlmaSettings:
     input_mode: InputMode = "Multi side view"
+    limb_scope: LimbScope = "Hindlimb"
     analysis_type: AnalysisType = "Treadmill"
     frame_rate: float = 120.0
     filter_cutoff: float = 6.0
@@ -42,8 +44,10 @@ class AlmaSettings:
     custom_bodypart_mapping: dict[str, str] | None = None
     view_bodypart_mapping: dict[str, object] | None = None
     stroke_analysis_enabled: bool = True
-    stroke_likelihood_threshold: float = 0.95
-    max_interpolation_gap_frames: int = 5
+    # Retained for manifest compatibility; synchronized outputs use ALMA's
+    # likelihood_threshold and full bidirectional interpolation.
+    stroke_likelihood_threshold: float = 0.5
+    max_interpolation_gap_frames: int = 0
     swing_speed_threshold_cm_s: float = 10.0
     minimum_synchronized_cycles: int = 5
     view_calibration: dict[str, object] | None = None

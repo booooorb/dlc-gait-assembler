@@ -33,10 +33,12 @@ from dlc_gait_assembly.services.pipeline.rustlab1 import (
     extract_custom_sop_parameters,
     extract_rustlab1_parameters,
     generate_rustlab1_figures,
+    prepare_alma_coordinates,
 )
 from dlc_gait_assembly.services.pipeline.rustlab1.extraction import (
     CUSTOM_SOP_PARAMETER_NAMES,
     RUSTLAB1_PARAMETER_NAMES,
+    rustlab1_parameter_names_for_scope,
 )
 from dlc_gait_assembly.services.pipeline.stroke import generate_stroke_analysis_outputs
 
@@ -240,12 +242,20 @@ def _run_single_file(
 
     if settings.generate_rustlab1_parameters:
         rustlab1_source = rustlab1_raw_dataframe if rustlab1_raw_dataframe is not None else raw_dataframe
-        rustlab1 = extract_rustlab1_parameters(rustlab1_source, parameters, settings, kinematics)
+        preprocessed = prepare_alma_coordinates(rustlab1_source, settings, kinematics)
+        rustlab1 = extract_rustlab1_parameters(
+            rustlab1_source,
+            parameters,
+            settings,
+            kinematics,
+            preprocessed,
+        )
         custom = extract_custom_sop_parameters(
             rustlab1_source,
             parameters,
             settings,
             kinematics,
+            preprocessed,
         )
         custom_path = output_folder / f"{base_name}_custom_parameters.csv"
         custom.dataframe.to_csv(custom_path, index=False)
@@ -276,12 +286,14 @@ def _run_single_file(
                 settings,
                 kinematics,
                 plt,
+                preprocessed,
             )
             output_files.extend(rustlab1_figure_paths)
 
             scale_text = "unknown scale" if rustlab1.pixels_per_cm is None else f"{rustlab1.pixels_per_cm:.3f} px/cm"
+            rustlab1_parameter_count = len(rustlab1_parameter_names_for_scope(settings.limb_scope))
             messages.append(
-                f"RustLab1: calculated {len(rustlab1.available_parameters)}/30 parameters at {scale_text} "
+                f"RustLab1: calculated {len(rustlab1.available_parameters)}/{rustlab1_parameter_count} parameters at {scale_text} "
                 f"({rustlab1.calibration_source})."
             )
             messages.append(f"RustLab1: generated {len(rustlab1_figure_paths)}/18 runway figures.")
@@ -360,17 +372,20 @@ def _run_view_csv_set(
             pd,
             view_mappings,
         )
+        preprocessed = prepare_alma_coordinates(rustlab1_source, settings, kinematics)
         rustlab1 = extract_rustlab1_parameters(
             rustlab1_source,
             left_result["parameters"],
             settings,
             kinematics,
+            preprocessed,
         )
         custom = extract_custom_sop_parameters(
             rustlab1_source,
             left_result["parameters"],
             settings,
             kinematics,
+            preprocessed,
         )
         custom_path = output_folder / f"{view_set.name}_custom_parameters.csv"
         custom.dataframe.to_csv(custom_path, index=False)
@@ -395,12 +410,14 @@ def _run_view_csv_set(
                 settings,
                 kinematics,
                 plt,
+                preprocessed,
             )
             output_files.extend(rustlab1_figure_paths)
 
             scale_text = "unknown scale" if rustlab1.pixels_per_cm is None else f"{rustlab1.pixels_per_cm:.3f} px/cm"
+            rustlab1_parameter_count = len(rustlab1_parameter_names_for_scope(settings.limb_scope))
             messages.append(
-                f"RustLab1: calculated {len(rustlab1.available_parameters)}/30 parameters at {scale_text} "
+                f"RustLab1: calculated {len(rustlab1.available_parameters)}/{rustlab1_parameter_count} parameters at {scale_text} "
                 f"({rustlab1.calibration_source})."
             )
             messages.append(f"RustLab1: generated {len(rustlab1_figure_paths)}/18 runway figures.")

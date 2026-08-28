@@ -16,6 +16,8 @@ official RustLab1 representative runway outputs in
 `DLC-Gait-Analysis-main/Output_Runway_Analysis/Output Figures/`. That upstream sample
 contains representative baseline and three-days-post-injury recordings. The SVG wrapper
 embeds the rendered official PDF page so Qt can display it sharply at any preview size.
+The official RustLab1 previews contain both forelimb and hindlimb panels; generated
+recording-specific figures show forelimb content when `Hindlimb + Forelimb` is selected.
 
 Source documentation:
 

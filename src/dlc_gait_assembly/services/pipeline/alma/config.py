@@ -42,6 +42,12 @@ def settings_from_alma_config(config: dict) -> AlmaSettings:
     if likelihood_threshold == "":
         likelihood_threshold = 0.5
     return AlmaSettings(
+        limb_scope=(
+            "Hindlimb + Forelimb"
+            if str(config.get("limb_scope", "Hindlimb")).strip().casefold()
+            == "hindlimb + forelimb".casefold()
+            else "Hindlimb"
+        ),
         frame_rate=float(config.get("frame_rate", 120.0)),
         filter_cutoff=float(config.get("lowpass_filter_cutoff", 6.0)),
         treadmill_speed_cm_s=float(cm_speed),
@@ -71,8 +77,8 @@ def settings_from_alma_config(config: dict) -> AlmaSettings:
             config.get("stroke_analysis_enabled", True),
             default=True,
         ),
-        stroke_likelihood_threshold=float(config.get("stroke_likelihood_threshold", 0.95)),
-        max_interpolation_gap_frames=int(config.get("max_interpolation_gap_frames", 5)),
+        stroke_likelihood_threshold=float(likelihood_threshold),
+        max_interpolation_gap_frames=0,
         swing_speed_threshold_cm_s=float(config.get("swing_speed_threshold_cm_s", 10.0)),
         minimum_synchronized_cycles=int(config.get("minimum_synchronized_cycles", 5)),
         view_calibration=config.get("view_calibration"),

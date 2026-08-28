@@ -28,6 +28,8 @@ from dlc_gait_assembly.gui.gait_analysis.pairing import (
 )
 from dlc_gait_assembly.gui.gait_analysis.settings import (
     BOTTOM_VIEW_LABELS,
+    FORELIMB_BOTTOM_VIEW_LABELS,
+    FORELIMB_SIDE_VIEW_LABELS,
     SIDE_VIEW_LABELS,
     auto_bodypart_label,
     raw_label_for_standard,
@@ -265,6 +267,8 @@ class LabelMappingDialog(QDialog):
         labels_by_view: dict[str, list[str]],
         existing_mapping: dict[str, dict[str, str]],
         parent=None,
+        *,
+        include_forelimb: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(f"Label matching: {view_set.name}")
@@ -276,10 +280,12 @@ class LabelMappingDialog(QDialog):
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
         layout.addWidget(tabs, 1)
+        side_labels = SIDE_VIEW_LABELS + (FORELIMB_SIDE_VIEW_LABELS if include_forelimb else ())
+        bottom_labels = BOTTOM_VIEW_LABELS + (FORELIMB_BOTTOM_VIEW_LABELS if include_forelimb else ())
         for view, title, csv_path, required_labels in (
-            ("left", "Left hindlimb", view_set.left_csv, SIDE_VIEW_LABELS),
-            ("right", "Right hindlimb", view_set.right_csv, SIDE_VIEW_LABELS),
-            ("bottom", "Bottom view", view_set.bottom_csv, BOTTOM_VIEW_LABELS),
+            ("left", "Left side view", view_set.left_csv, side_labels),
+            ("right", "Right side view", view_set.right_csv, side_labels),
+            ("bottom", "Bottom view", view_set.bottom_csv, bottom_labels),
         ):
             page = QWidget()
             page_layout = QVBoxLayout(page)

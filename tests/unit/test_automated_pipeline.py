@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from dlc_gait_assembly.services.analysis_manifests import (
     write_analysis_manifest,
     write_video_settings_manifest,
@@ -16,6 +18,7 @@ from dlc_gait_assembly.services.pipeline.automated import run as automated_run
 from dlc_gait_assembly.services.pipeline.alma import AlmaRunResult, AlmaSettings, AlmaViewCsvSet
 from dlc_gait_assembly.services.pipeline.deeplabcut import (
     DlcAnalysisResult,
+    DlcAnalysisJob,
     _DlcProgressParser,
     _run_request,
     resolve_deeplabcut_config,
@@ -507,10 +510,14 @@ def test_three_view_knee_stage_leaves_bottom_coordinates_unchanged(tmp_path, mon
 def test_knee_and_gait_stages_can_be_independently_disabled(tmp_path, monkeypatch):
     video = tmp_path / "source.mp4"
     video.write_bytes(b"fixture")
+    processing_manifest = write_video_settings_manifest(
+        tmp_path / "video.json",
+        ProcessingOptions(),
+    )
     profile = AutomatedPipelineProfile(
         id="b" * 32,
         name="Selective run",
-        processing_manifest=tmp_path / "video.json",
+        processing_manifest=processing_manifest,
         calibration_map=tmp_path / "calibration.json",
         deeplabcut_models={"Full frame": tmp_path / "model"},
         analysis_manifest=tmp_path / "analysis.json",
@@ -550,10 +557,14 @@ def test_knee_and_gait_stages_can_be_independently_disabled(tmp_path, monkeypatc
 def test_profile_without_analysis_assets_skips_stickplot_and_gait_stages(tmp_path):
     video = tmp_path / "source.mp4"
     video.write_bytes(b"fixture")
+    processing_manifest = write_video_settings_manifest(
+        tmp_path / "video.json",
+        ProcessingOptions(),
+    )
     profile = AutomatedPipelineProfile(
         id="c" * 32,
         name="Tracking only",
-        processing_manifest=tmp_path / "video.json",
+        processing_manifest=processing_manifest,
         calibration_map=None,
         deeplabcut_models={"Full frame": tmp_path / "model"},
         gait_analysis_enabled=False,
@@ -571,3 +582,174 @@ def test_profile_without_analysis_assets_skips_stickplot_and_gait_stages(tmp_pat
     assert run.stage_enabled(4) is False
     assert run.stage_enabled(5) is False
     assert run.stage_skip_reason(4) == "Gait analysis excluded from this profile"
+
+
+def test_pipeline_run_rejects_incomplete_inputs_before_creating_outputs(tmp_path):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    incomplete = AutomatedPipelineProfile(
+        id="d" * 32,
+        name="Incomplete",
+        processing_manifest=None,
+        calibration_map=None,
+        deeplabcut_models={},
+        gait_analysis_enabled=False,
+    )
+
+    with pytest.raises(ValueError, match="video settings manifest"):
+        automated.AutomatedPipelineRun(incomplete, [video], tmp_path, tmp_path / "runs")
+
+    stale = AutomatedPipelineProfile(
+        id="0" * 32,
+        name="Stale manifest",
+        processing_manifest=tmp_path / "missing-video.json",
+        calibration_map=None,
+        deeplabcut_models={},
+        gait_analysis_enabled=False,
+    )
+    with pytest.raises(FileNotFoundError, match="Video settings manifest no longer exists"):
+        automated.AutomatedPipelineRun(stale, [video], tmp_path, tmp_path / "runs")
+
+    profile = AutomatedPipelineProfile(
+        id="e" * 32,
+        name="Duplicate sources",
+        processing_manifest=tmp_path / "video.json",
+        calibration_map=None,
+        deeplabcut_models={"Full frame": tmp_path / "model"},
+        gait_analysis_enabled=False,
+    )
+    with pytest.raises(ValueError, match="only be added"):
+        automated.AutomatedPipelineRun(profile, [video, video], tmp_path, tmp_path / "runs")
+
+    assert not (tmp_path / "runs").exists()
+
+
+def test_pipeline_run_rejects_out_of_order_and_repeated_stages(tmp_path):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    manifest = write_video_settings_manifest(
+        tmp_path / "video.json",
+        ProcessingOptions(),
+    )
+    profile = AutomatedPipelineProfile(
+        id="f" * 32,
+        name="Stage ordering",
+        processing_manifest=manifest,
+        calibration_map=None,
+        deeplabcut_models={"Full frame": tmp_path / "model"},
+        gait_analysis_enabled=False,
+    )
+    run = automated.AutomatedPipelineRun(profile, [video], tmp_path, tmp_path / "runs")
+
+    with pytest.raises(RuntimeError, match="Video Processing before Deeplabcut Analysis"):
+        run.run_stage(1)
+
+    run._completed_stages.add(automated.AutomatedStage.VIDEO_PROCESSING)
+    with pytest.raises(RuntimeError, match="already run"):
+        run.run_stage(0)
+
+
+def test_pipeline_rejects_deeplabcut_results_for_the_wrong_region(tmp_path, monkeypatch):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    manifest = write_video_settings_manifest(tmp_path / "video.json", ProcessingOptions())
+    profile = AutomatedPipelineProfile(
+        id="1" * 32,
+        name="DLC validation",
+        processing_manifest=manifest,
+        calibration_map=None,
+        deeplabcut_models={"Full frame": tmp_path / "model"},
+        gait_analysis_enabled=False,
+    )
+    run = automated.AutomatedPipelineRun(profile, [video], tmp_path, tmp_path / "runs")
+    processed = tmp_path / "source_processed.mp4"
+    processed.write_bytes(b"video")
+    run.processed_by_region = {"Full frame": [processed]}
+
+    monkeypatch.setattr(
+        automated_run,
+        "run_deeplabcut_analysis",
+        lambda *_args, **_kwargs: [
+            DlcAnalysisResult("Wrong view", (processed,), (), (), ())
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="do not match the configured regions"):
+        run._run_deeplabcut(None)
+
+
+def test_multiview_csvs_follow_processed_video_order_instead_of_filename_sort(tmp_path):
+    run = automated.AutomatedPipelineRun.__new__(automated.AutomatedPipelineRun)
+    run.analysis_csvs_by_region = {}
+    run.dlc_jobs = []
+    for region in ("Left view", "Right view", "Bottom view"):
+        slug = region.split()[0]
+        videos = (
+            tmp_path / f"zeta_processed_{slug}.mp4",
+            tmp_path / f"alpha_processed_{slug}.mp4",
+        )
+        csvs = []
+        for video in reversed(videos):
+            csv_path = tmp_path / f"{video.stem}DLC_fixture.csv"
+            csv_path.write_text("coordinates", encoding="utf-8")
+            csvs.append(csv_path)
+        run.dlc_jobs.append(DlcAnalysisJob(region, tmp_path / "model", videos))
+        run.analysis_csvs_by_region[region] = csvs
+
+    inputs = run._alma_inputs("Multi side view")
+
+    assert [item.name for item in inputs] == [
+        "zeta_processed_Left",
+        "alpha_processed_Left",
+    ]
+    assert inputs[0].left_csv.name.startswith("zeta_processed_Left")
+    assert inputs[0].right_csv.name.startswith("zeta_processed_Right")
+    assert inputs[0].bottom_csv.name.startswith("zeta_processed_Bottom")
+
+
+def test_knee_correction_preparation_failure_leaves_all_coordinates_unchanged(
+    tmp_path,
+    monkeypatch,
+):
+    videos = (tmp_path / "first_processed.mp4", tmp_path / "second_processed.mp4")
+    csvs = tuple(tmp_path / f"{video.stem}DLC_fixture.csv" for video in videos)
+    h5s = tuple(tmp_path / f"{video.stem}DLC_fixture.h5" for video in videos)
+    for index, (csv_path, h5_path) in enumerate(zip(csvs, h5s, strict=True), start=1):
+        csv_path.write_text(f"original csv {index}", encoding="utf-8")
+        h5_path.write_bytes(f"original h5 {index}".encode())
+
+    run = automated.AutomatedPipelineRun.__new__(automated.AutomatedPipelineRun)
+    run.profile = SimpleNamespace(knee_manifest=tmp_path / "knee.json")
+    run.output_folder = tmp_path / "run"
+    run.knee_correction_folder = run.output_folder / "03_knee_correction"
+    run.dlc_results = [
+        DlcAnalysisResult("Side view", videos, csvs, h5s, ())
+    ]
+    run.analysis_csvs_by_region = {"Side view": list(csvs)}
+    monkeypatch.setattr(automated_run, "knee_settings_from_manifest", lambda _path: object())
+    calls = 0
+
+    def fail_second_pair(pair, output_folder, _settings):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated correction failure")
+        output_folder.mkdir(parents=True, exist_ok=True)
+        output_csv = output_folder / f"{pair.stem}.csv"
+        output_h5 = output_folder / f"{pair.stem}.h5"
+        output_csv.write_text("corrected csv", encoding="utf-8")
+        output_h5.write_bytes(b"corrected h5")
+        return SimpleNamespace(output_csv=output_csv, output_h5=output_h5)
+
+    monkeypatch.setattr(automated_run, "correct_knee_pair", fail_second_pair)
+
+    with pytest.raises(RuntimeError, match="simulated correction failure"):
+        run._correct_knees(None)
+
+    assert [path.read_text(encoding="utf-8") for path in csvs] == [
+        "original csv 1",
+        "original csv 2",
+    ]
+    assert [path.read_bytes() for path in h5s] == [b"original h5 1", b"original h5 2"]
+    assert not (run.knee_correction_folder / "work").exists()
+    assert not (run.knee_correction_folder / "correction_manifest.json").exists()

@@ -13,6 +13,18 @@ class NormalizedRect:
     height: float
 
     def clamped(self) -> NormalizedRect:
+        if (
+            0.0 <= self.x <= 1.0
+            and 0.0 <= self.y <= 1.0
+            and self.width >= 0.0
+            and self.height >= 0.0
+            and self.x + self.width <= 1.0
+            and self.y + self.height <= 1.0
+        ):
+            # Preserve already-valid values exactly. Reconstructing width and
+            # height from their right/bottom edges introduces floating-point
+            # drift and makes a manifest write/read cycle lossy.
+            return self
         left = _clamp(self.x, 0.0, 1.0)
         top = _clamp(self.y, 0.0, 1.0)
         right = _clamp(self.x + self.width, 0.0, 1.0)
