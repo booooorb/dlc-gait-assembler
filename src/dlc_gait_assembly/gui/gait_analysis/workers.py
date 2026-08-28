@@ -14,6 +14,10 @@ from dlc_gait_assembly.services.pipeline.alma import (
     AlmaViewCsvSet,
     run_alma_gait_analysis,
 )
+from dlc_gait_assembly.services.pipeline.rustlab1 import (
+    RustLab1StandaloneSettings,
+    run_rustlab1_analysis,
+)
 
 
 class StickPlotPreviewThread(QThread):
@@ -161,6 +165,109 @@ class AlmaAnalysisThread(QThread):
             self.analysis_completed.emit(
                 True,
                 f"Analysis complete. Results saved to:\n{self._output_folder}",
+            )
+        except Exception as exc:
+            self.analysis_completed.emit(False, str(exc))
+
+
+class RustLab1PreviewThread(QThread):
+    progress_updated = Signal(int, str)
+    log_message = Signal(str)
+    preview_ready = Signal(object, str)
+    preview_failed = Signal(str)
+
+    def __init__(
+        self,
+        view_set: AlmaViewCsvSet,
+        settings: RustLab1StandaloneSettings,
+        alma_root: Path,
+    ):
+        super().__init__()
+        self._view_set = view_set
+        self._settings = settings
+        self._alma_root = Path(alma_root)
+
+    def run(self) -> None:
+        try:
+            temp_root = Path("/private/tmp") if Path("/private/tmp").is_dir() else None
+            with tempfile.TemporaryDirectory(
+                prefix="dlc-gait-rustlab1-preview-",
+                dir=temp_root,
+            ) as temp_dir:
+                self.progress_updated.emit(10, f"RustLab1: detecting strides for {self._view_set.name}")
+                results = run_rustlab1_analysis(
+                    [self._view_set],
+                    Path(temp_dir),
+                    replace(self._settings, generate_figures=False),
+                    self._alma_root,
+                )
+                for message in results[0].messages:
+                    self.log_message.emit(message)
+                preview_path = next(
+                    path
+                    for path in results[0].output_files
+                    if path.name.endswith("_rustlab1_stride_preview.svg")
+                )
+                self.preview_ready.emit(
+                    (("RustLab1 strides", preview_path.read_bytes()),),
+                    self._view_set.name,
+                )
+        except Exception as exc:
+            self.preview_failed.emit(str(exc))
+
+
+class RustLab1AnalysisThread(QThread):
+    progress_updated = Signal(int, str)
+    log_message = Signal(str)
+    results_ready = Signal(object)
+    analysis_completed = Signal(bool, str)
+
+    def __init__(
+        self,
+        view_sets: list[AlmaViewCsvSet],
+        output_folder: Path,
+        settings: RustLab1StandaloneSettings,
+        alma_root: Path,
+    ):
+        super().__init__()
+        self._view_sets = list(view_sets)
+        self._output_folder = Path(output_folder)
+        self._settings = settings
+        self._alma_root = Path(alma_root)
+
+    def run(self) -> None:
+        try:
+            self.log_message.emit("Workflow: standalone RustLab1 three-view analysis")
+            self.log_message.emit(f"Output folder: {self._output_folder}")
+            self.log_message.emit(f"Reference paw: {self._settings.reference_paw}")
+            self.log_message.emit(
+                "Stance threshold: "
+                f"{self._settings.stance_speed_threshold_px_frame:g} px/frame"
+            )
+
+            def progress(index: int, total: int, message: str) -> None:
+                value = 10 + int((index - 1) * 80 / max(1, total))
+                self.progress_updated.emit(value, message)
+                self.log_message.emit(message)
+
+            results = run_rustlab1_analysis(
+                self._view_sets,
+                self._output_folder,
+                self._settings,
+                self._alma_root,
+                progress_callback=progress,
+            )
+            for result in results:
+                self.log_message.emit(f"{result.input_file.name}:")
+                for output in result.output_files:
+                    self.log_message.emit(f"  {output}")
+                for message in result.messages:
+                    self.log_message.emit(f"  {message}")
+            self.results_ready.emit(tuple(results))
+            self.progress_updated.emit(100, "RustLab1 analysis complete.")
+            self.analysis_completed.emit(
+                True,
+                f"RustLab1 analysis complete. Results saved to:\n{self._output_folder}",
             )
         except Exception as exc:
             self.analysis_completed.emit(False, str(exc))

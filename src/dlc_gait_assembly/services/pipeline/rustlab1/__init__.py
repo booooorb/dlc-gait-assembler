@@ -20,6 +20,14 @@ from dlc_gait_assembly.services.pipeline.rustlab1.extraction import (
     rustlab1_parameter_names_for_scope,
 )
 from dlc_gait_assembly.services.pipeline.rustlab1.figures import generate_rustlab1_figures
+from dlc_gait_assembly.services.pipeline.rustlab1.standalone import (
+    RUSTLAB1_REFERENCE_PAWS,
+    RustLab1RunResult,
+    RustLab1StandaloneSettings,
+    detect_rustlab1_strides,
+    generate_rustlab1_stride_preview,
+    run_rustlab1_analysis,
+)
 
 __all__ = [
     "CUSTOM_SOP_MARKERS",
@@ -32,14 +40,20 @@ __all__ = [
     "RUSTLAB1_HINDLIMB_PARAMETER_NAMES",
     "RUSTLAB1_MARKERS",
     "RUSTLAB1_PARAMETER_NAMES",
+    "RUSTLAB1_REFERENCE_PAWS",
     "AlmaPreprocessedCoordinates",
     "RustLab1Extraction",
+    "RustLab1RunResult",
+    "RustLab1StandaloneSettings",
     "coordinate_columns",
     "extract_custom_sop_parameters",
     "extract_rustlab1_parameters",
+    "detect_rustlab1_strides",
     "filtered_series",
     "prepare_alma_coordinates",
     "rustlab1_markers_for_scope",
     "rustlab1_parameter_names_for_scope",
     "generate_rustlab1_figures",
+    "generate_rustlab1_stride_preview",
+    "run_rustlab1_analysis",
 ]

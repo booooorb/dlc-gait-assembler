@@ -2495,6 +2495,49 @@ Features 119--132 (hindlimb) or 165--178 (combined) & Custom & Post-ALMA additio
 % ---------------------------------------------------------
 \subsection{RustLab1 Standalone Gait Analysis}
 
+The Gait Analysis window includes a separate \textbf{RustLab1 standalone
+(three-view)} workflow. This option is independent of the ALMA gait-cycle
+analysis. It requires one matched left-side, right-side, and bottom-view
+DeepLabCut coordinate CSV for every trial. CSV pairing may be detected from the
+file names or assigned manually, and the labels for every view must be checked
+with \textbf{Label body parts}.
+
+The selected bottom-view reference paw defines the stride cycles. RustLab1's
+default rule classifies a frame as stance when the absolute frame-to-frame
+horizontal paw displacement is no greater than $7$ pixels per frame. A stride
+starts at a transition into stance and ends immediately before the next stance
+onset. The interface also exposes minimum consecutive stance and swing lengths
+to suppress short tracking artifacts. At least two stance onsets are required
+to produce one complete stride.
+
+Before stride detection and parameter extraction, all three views use the same
+configured confidence rejection, bidirectional interpolation, and Butterworth
+low-pass coordinate preparation described above. The standalone defaults are a
+minimum likelihood of $0.95$, a $6\,\mathrm{Hz}$ filter cutoff, and a stance
+threshold of $7$ pixels per frame. These settings may be changed when the
+recording frame rate or tracking characteristics require it. Changing any
+setting invalidates the preview and requires a new
+\textbf{RustLab1 stride preview}.
+
+\begin{tcolorbox}[output file box,title=\textbf{Standalone RustLab1 Output Files}]
+\begin{tabularx}{\linewidth}{
+>{\bfseries\raggedright\arraybackslash}p{0.38\linewidth}|
+>{\raggedright\arraybackslash}X
+}
+\boxedtoprule
+Output & Description \\
+\boxedmidrule
+\texttt{<trial>\_rustlab1\_strides.csv} & Reference-paw stance, swing, and stride boundaries with frame and time measurements. \\
+\texttt{<trial>\_rustlab1\_parameters.csv} & Selected RustLab1 parameters calculated inside the standalone stride windows. \\
+\texttt{<trial>\_rustlab1\_summary.csv} & Trial-level medians of the numeric RustLab1 stride parameters. \\
+\texttt{<trial>\_rustlab1\_stride\_preview.svg} & Bottom-paw speed trace, stance threshold, and detected stride windows. \\
+\texttt{<trial>\_rustlab1\_figures/} & Optional adapted 18-figure RustLab1 runway bundle. \\
+\boxedbottomrule
+\end{tabularx}
+\end{tcolorbox}
+
+This standalone option does not write ALMA parameter tables, custom SOP
+parameters, merged ALMA/RustLab1 tables, or synchronized stroke-pilot outputs.
 
 
 

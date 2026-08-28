@@ -727,6 +727,7 @@ class GaitParameterSelectionWidget(QWidget):
         self._definitions = gait_parameter_catalog()
         self._multiside = multiside
         self._include_forelimb = False
+        self._source_filter: str | None = None
         self._items: list[tuple[GaitParameterDefinition, QTreeWidgetItem]] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -791,7 +792,7 @@ class GaitParameterSelectionWidget(QWidget):
         for definition, item in self._items:
             visible = definition.view_mode == expected_view_mode and (
                 self._include_forelimb or definition.name not in forelimb_names
-            )
+            ) and (self._source_filter is None or definition.source == self._source_filter)
             item.setHidden(not visible)
             if visible:
                 visible_index += 1
@@ -800,6 +801,11 @@ class GaitParameterSelectionWidget(QWidget):
 
     def set_limb_scope(self, include_forelimb: bool) -> None:
         self._include_forelimb = bool(include_forelimb)
+        self.set_multiside(self._multiside)
+
+    def set_source_filter(self, source: str | None) -> None:
+        """Limit the selectable rows to one analysis source, or show all sources."""
+        self._source_filter = source
         self.set_multiside(self._multiside)
 
     def enabled_parameter_names(self) -> tuple[str, ...]:

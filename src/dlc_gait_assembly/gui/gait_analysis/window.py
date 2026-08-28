@@ -65,6 +65,8 @@ from dlc_gait_assembly.gui.gait_analysis.settings import (
 )
 from dlc_gait_assembly.gui.gait_analysis.workers import (
     AlmaAnalysisThread,
+    RustLab1AnalysisThread,
+    RustLab1PreviewThread,
     StickPlotPreviewThread,
 )
 from dlc_gait_assembly.gui.shared.icons import interface_icon
@@ -86,11 +88,23 @@ from dlc_gait_assembly.services.pipeline.alma import (
     pixels_per_cm_from_calibration_map,
     settings_from_alma_config,
 )
+from dlc_gait_assembly.services.pipeline.rustlab1 import (
+    RustLab1StandaloneSettings,
+)
 from dlc_gait_assembly.services.project_paths import (
     find_project_root,
     manual_pipeline_output_folders,
 )
 from dlc_gait_assembly.services.video_processing import probe_video
+
+ALMA_WORKFLOW_LABEL = "ALMA + post-ALMA features"
+RUSTLAB1_WORKFLOW_LABEL = "RustLab1 standalone (three-view)"
+RUSTLAB1_PAW_LABELS = {
+    "Left hind paw": "d-back-left",
+    "Right hind paw": "d-back-right",
+    "Left front paw": "d-front-left",
+    "Right front paw": "d-front-right",
+}
 
 
 class AlmaKinematicsWidget(QWidget):
@@ -104,8 +118,8 @@ class AlmaKinematicsWidget(QWidget):
         self._view_sets: list[AlmaViewCsvSet] = []
         self._view_set_errors: list[str] = []
         self._manual_view_sets: list[AlmaViewCsvSet] | None = None
-        self._worker: AlmaAnalysisThread | None = None
-        self._preview_worker: StickPlotPreviewThread | None = None
+        self._worker: AlmaAnalysisThread | RustLab1AnalysisThread | None = None
+        self._preview_worker: StickPlotPreviewThread | RustLab1PreviewThread | None = None
         self._output_preview_paths: tuple[Path, ...] = ()
         self._stickplot_preview_ready = False
         self._preview_invalidated_while_running = False
@@ -122,6 +136,7 @@ class AlmaKinematicsWidget(QWidget):
         self._install_interactions()
         self._connect_signals()
         self._apply_style()
+        self._update_workflow()
         self._update_input_mode()
         self._update_limb_scope()
         self._update_analysis_mode()
@@ -132,10 +147,11 @@ class AlmaKinematicsWidget(QWidget):
         analysis_running = self._worker is not None and self._worker.isRunning()
         preview_running = self._preview_worker is not None and self._preview_worker.isRunning()
         if analysis_running or preview_running:
+            workflow = "RustLab1" if self._is_rustlab1_workflow() else "gait"
             QMessageBox.information(
                 parent or self,
                 "Gait processing is running",
-                "Wait for the current stick-plot preview or gait-analysis run to finish before closing the window.",
+                f"Wait for the current preview or {workflow}-analysis run to finish before closing the window.",
             )
             return False
         return True
@@ -154,6 +170,18 @@ class AlmaKinematicsWidget(QWidget):
         title.setObjectName("TitleLabel")
         header_layout.addWidget(title)
         self.workspace_title = title
+        workflow_label = QLabel("Workflow")
+        workflow_label.setObjectName("MutedLabel")
+        header_layout.addWidget(workflow_label)
+        self.workflow_combo = QComboBox()
+        self.workflow_combo.setObjectName("GaitWorkflowSelector")
+        self.workflow_combo.addItems((ALMA_WORKFLOW_LABEL, RUSTLAB1_WORKFLOW_LABEL))
+        self.workflow_combo.setAccessibleName("Gait analysis workflow")
+        set_tooltip(
+            self.workflow_combo,
+            "Run ALMA with optional post-ALMA features, or run standalone RustLab1 stride detection on a three-view set.",
+        )
+        header_layout.addWidget(self.workflow_combo)
         header_layout.addStretch(1)
         self.figure_reference_button = QPushButton("Figure documentation")
         self.figure_reference_button.setObjectName("FigureReferenceButton")
@@ -183,6 +211,7 @@ class AlmaKinematicsWidget(QWidget):
         left_layout.setSpacing(12)
 
         file_box = QGroupBox("Multi-view ALMA input and output")
+        self.file_box = file_box
         file_layout = QVBoxLayout(file_box)
         button_row = QHBoxLayout()
         self.add_file_button = QPushButton("Add CSVs")
@@ -446,6 +475,7 @@ class AlmaKinematicsWidget(QWidget):
         calibration_tab_layout.addStretch(1)
 
         movement_box = QGroupBox("Movement analysis settings")
+        self.movement_box = movement_box
         movement_layout = QGridLayout(movement_box)
         movement_layout.setHorizontalSpacing(12)
         movement_layout.setVerticalSpacing(4)
@@ -490,6 +520,7 @@ class AlmaKinematicsWidget(QWidget):
         analysis_tab_layout.addWidget(spontaneous_box)
 
         filter_box = QGroupBox("Stride filtering (optional)")
+        self.filter_box = filter_box
         filter_layout = QGridLayout(filter_box)
         filter_layout.setHorizontalSpacing(12)
         filter_layout.setVerticalSpacing(4)
@@ -520,6 +551,7 @@ class AlmaKinematicsWidget(QWidget):
         filters_tab_layout.addWidget(filter_box)
 
         stroke_filter_box = QGroupBox("Synchronized stroke-pilot QC")
+        self.stroke_filter_box = stroke_filter_box
         stroke_filter_layout = QGridLayout(stroke_filter_box)
         self.stroke_likelihood_spin = _double_spin(0.0, 1.0, self._defaults.likelihood_threshold, 2)
         self.stroke_likelihood_spin.setEnabled(False)
@@ -549,10 +581,59 @@ class AlmaKinematicsWidget(QWidget):
         stroke_filter_layout.addWidget(QLabel("Minimum synchronized cycles"), 3, 0)
         stroke_filter_layout.addWidget(self.stroke_min_cycles_spin, 3, 1)
         filters_tab_layout.addWidget(stroke_filter_box)
+
+        rustlab_detector_box = QGroupBox("Standalone RustLab1 stride detection")
+        rustlab_detector_box.setObjectName("RustLab1StrideDetectionSettings")
+        rustlab_detector_layout = QGridLayout(rustlab_detector_box)
+        self.rustlab_reference_paw_combo = QComboBox()
+        self.rustlab_reference_paw_combo.addItems(tuple(RUSTLAB1_PAW_LABELS))
+        self.rustlab_likelihood_spin = _double_spin(0.0, 1.0, 0.95, 2)
+        self.rustlab_likelihood_spin.setSingleStep(0.01)
+        self.rustlab_stance_speed_spin = _double_spin(0.0, 100.0, 7.0, 1)
+        self.rustlab_min_stance_spin = QSpinBox()
+        self.rustlab_min_stance_spin.setRange(1, 120)
+        self.rustlab_min_stance_spin.setValue(1)
+        self.rustlab_min_swing_spin = QSpinBox()
+        self.rustlab_min_swing_spin.setRange(1, 120)
+        self.rustlab_min_swing_spin.setValue(1)
+        set_tooltip(
+            self.rustlab_reference_paw_combo,
+            "Bottom-view paw whose stance onsets define standalone RustLab1 strides.",
+        )
+        set_tooltip(
+            self.rustlab_likelihood_spin,
+            "Minimum DLC likelihood for standalone RustLab1 coordinates. The upstream notebook uses 0.95.",
+        )
+        set_tooltip(
+            self.rustlab_stance_speed_spin,
+            "RustLab1 stance rule in pixels per frame. The upstream notebook uses 7.",
+        )
+        set_tooltip(
+            self.rustlab_min_stance_spin,
+            "Minimum consecutive stance frames; raise this to suppress short false contacts.",
+        )
+        set_tooltip(
+            self.rustlab_min_swing_spin,
+            "Minimum consecutive swing frames between stance periods.",
+        )
+        rustlab_detector_layout.addWidget(QLabel("Reference paw"), 0, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_reference_paw_combo, 0, 1)
+        rustlab_detector_layout.addWidget(QLabel("Likelihood min"), 1, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_likelihood_spin, 1, 1)
+        rustlab_detector_layout.addWidget(QLabel("Stance speed max (px/frame)"), 2, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_stance_speed_spin, 2, 1)
+        rustlab_detector_layout.addWidget(QLabel("Minimum stance frames"), 3, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_min_stance_spin, 3, 1)
+        rustlab_detector_layout.addWidget(QLabel("Minimum swing frames"), 4, 0)
+        rustlab_detector_layout.addWidget(self.rustlab_min_swing_spin, 4, 1)
+        rustlab_detector_box.hide()
+        self.rustlab_detector_box = rustlab_detector_box
+        filters_tab_layout.addWidget(rustlab_detector_box)
         filters_tab_layout.addStretch(1)
         analysis_tab_layout.addStretch(1)
 
         output_options_box = QGroupBox("Output options")
+        self.output_options_box = output_options_box
         output_options_layout = QGridLayout(output_options_box)
         output_options_layout.setHorizontalSpacing(12)
         output_options_layout.setVerticalSpacing(4)
@@ -585,6 +666,7 @@ class AlmaKinematicsWidget(QWidget):
         output_tab_layout.addWidget(output_options_box)
 
         rustlab_box = QGroupBox("RustLab1 multi-view")
+        self.rustlab_box = rustlab_box
         rustlab_layout = QVBoxLayout(rustlab_box)
         rustlab_layout.setSpacing(6)
         rustlab_layout.addWidget(self.rustlab1_checkbox)
@@ -809,6 +891,7 @@ class AlmaKinematicsWidget(QWidget):
         self.output_folder_edit.textChanged.connect(self._update_run_state)
         self.preview_button.clicked.connect(self._generate_stickplot_preview)
         self.run_button.clicked.connect(self._run_analysis)
+        self.workflow_combo.currentTextChanged.connect(self._update_workflow)
         self.analysis_type_combo.currentTextChanged.connect(self._update_analysis_mode)
         self.limb_scope_combo.currentTextChanged.connect(self._update_limb_scope)
         self.likelihood_threshold_spin.valueChanged.connect(self.stroke_likelihood_spin.setValue)
@@ -826,6 +909,7 @@ class AlmaKinematicsWidget(QWidget):
         self.input_mode_combo.currentTextChanged.connect(self._update_input_mode)
 
         preview_controls = (
+            self.workflow_combo,
             self.input_mode_combo,
             self.analysis_type_combo,
             self.limb_scope_combo,
@@ -849,9 +933,17 @@ class AlmaKinematicsWidget(QWidget):
             self.stride_length_min_spin,
             self.stride_length_max_spin,
             self.likelihood_threshold_spin,
+            self.rustlab_likelihood_spin,
+            self.rustlab_stance_speed_spin,
+            self.rustlab_min_stance_spin,
+            self.rustlab_min_swing_spin,
         )
         for spin in preview_spins:
             spin.valueChanged.connect(self._invalidate_stickplot_preview)
+
+        self.rustlab_reference_paw_combo.currentTextChanged.connect(
+            self._invalidate_stickplot_preview
+        )
 
         for checkbox in (
             self.no_outlier_checkbox,
@@ -863,11 +955,17 @@ class AlmaKinematicsWidget(QWidget):
             combo.currentTextChanged.connect(self._invalidate_stickplot_preview)
 
     def _show_figure_documentation(self) -> None:
+        self.parameter_reference.figure_source_filter.setCurrentText(
+            "RustLab1" if self._is_rustlab1_workflow() else "All figures"
+        )
         self.parameter_reference.show_figure_documentation()
         self._show_documentation("Figure creator documentation")
 
     def _show_parameter_documentation(self) -> None:
         self.parameter_reference.set_multiside(self._is_three_view_mode())
+        self.parameter_reference.source_filter.setCurrentText(
+            "RustLab1" if self._is_rustlab1_workflow() else "All sources"
+        )
         self.parameter_reference.show_parameter_documentation()
         self._show_documentation("Gait parameter documentation")
 
@@ -878,7 +976,11 @@ class AlmaKinematicsWidget(QWidget):
 
     def _close_documentation(self) -> None:
         self.workspace_stack.setCurrentIndex(0)
-        self.workspace_title.setText("Runway analysis")
+        self.workspace_title.setText(
+            "RustLab1 standalone analysis"
+            if self._is_rustlab1_workflow()
+            else "Runway analysis"
+        )
         self.documentation_back_button.hide()
 
     def _add_file(self) -> None:
@@ -929,7 +1031,11 @@ class AlmaKinematicsWidget(QWidget):
         self.view_set_status_label.setText("Add matched left, right, and bottom CSVs.")
         self.rustlab_status_label.setText("RustLab1 needs paired left, right, and bottom CSVs.")
         self.mapping_status_label.setText("Add a complete CSV view set to detect labels.")
-        self._invalidate_stickplot_preview("Select left/right/bottom CSVs, then generate a stick-plot preview.")
+        self._invalidate_stickplot_preview(
+            "Select matched left/right/bottom CSVs, then generate a RustLab1 stride preview."
+            if self._is_rustlab1_workflow()
+            else "Select left/right/bottom CSVs, then generate a stick-plot preview."
+        )
         self._update_run_state()
 
     def _refresh_view_sets(self) -> None:
@@ -1022,7 +1128,12 @@ class AlmaKinematicsWidget(QWidget):
         return base
 
     def _select_output_folder(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select ALMA output folder", self.output_folder_edit.text())
+        title = (
+            "Select RustLab1 output folder"
+            if self._is_rustlab1_workflow()
+            else "Select ALMA output folder"
+        )
+        directory = QFileDialog.getExistingDirectory(self, title, self.output_folder_edit.text())
         if directory:
             self.output_folder_edit.setText(directory)
             self._update_run_state()
@@ -1271,6 +1382,97 @@ class AlmaKinematicsWidget(QWidget):
         for combo in self._bodypart_combos.values():
             combo.setEnabled(enabled)
 
+    def _is_rustlab1_workflow(self) -> bool:
+        return self.workflow_combo.currentText() == RUSTLAB1_WORKFLOW_LABEL
+
+    def _update_workflow(self) -> None:
+        rustlab1_only = self._is_rustlab1_workflow()
+        if rustlab1_only and self.input_mode_combo.currentText() != MULTI_SIDE_VIEW_MODE_LABEL:
+            self.input_mode_combo.setCurrentText(MULTI_SIDE_VIEW_MODE_LABEL)
+        self.input_mode_combo.setEnabled(not rustlab1_only)
+        self.analysis_type_combo.setEnabled(not rustlab1_only)
+        self.workspace_title.setText(
+            "RustLab1 standalone analysis" if rustlab1_only else "Runway analysis"
+        )
+        self.file_box.setTitle(
+            "Three-view RustLab1 input and output"
+            if rustlab1_only
+            else "Multi-view ALMA input and output"
+        )
+        self.movement_box.setTitle(
+            "Coordinate smoothing (RustLab1)"
+            if rustlab1_only
+            else "Movement analysis settings"
+        )
+        for control in (self.direction_combo, self.drag_clearance_spin, self.drag_frames_spin):
+            control.setEnabled(not rustlab1_only)
+        self.filter_box.setVisible(not rustlab1_only)
+        self.stroke_filter_box.setVisible(not rustlab1_only)
+        self.rustlab_detector_box.setVisible(rustlab1_only)
+        self.output_options_box.setVisible(not rustlab1_only)
+        self.parameter_selection.set_source_filter("RustLab1" if rustlab1_only else None)
+        self.rustlab_box.setTitle(
+            "Standalone RustLab1 outputs" if rustlab1_only else "RustLab1 multi-view"
+        )
+        self.rustlab1_checkbox.setText(
+            "Generate the 18 RustLab1 runway figures"
+            if rustlab1_only
+            else "Generate RustLab1 and custom SOP parameters, merged CSV, and figures"
+        )
+        self.rustlab1_checkbox.setEnabled(True)
+        self.rustlab1_checkbox.setChecked(True if rustlab1_only else self.rustlab1_checkbox.isChecked())
+        set_tooltip(
+            self.rustlab1_checkbox,
+            (
+                "Write the optional adapted 18-figure RustLab1 runway bundle."
+                if rustlab1_only
+                else "Calculate RustLab1 and custom SOP features on ALMA cycles and write the merged outputs."
+            ),
+        )
+        set_tooltip(
+            self.output_folder_edit,
+            (
+                "Folder where standalone RustLab1 outputs will be saved."
+                if rustlab1_only
+                else "Folder where ALMA gait-analysis outputs will be saved."
+            ),
+        )
+        self.rustlab_status_label.setText(
+            "Standalone mode detects strides from the selected bottom-view paw and runs only RustLab1."
+            if rustlab1_only
+            else "RustLab1 needs paired left, right, and bottom CSVs."
+        )
+        self.export_manifest_button.setEnabled(not rustlab1_only)
+        self.preview_button.setText(
+            "1. Generate RustLab1 stride preview"
+            if rustlab1_only
+            else "1. Generate stick-plot preview"
+        )
+        self.run_button.setText(
+            "2. Run RustLab1 analysis" if rustlab1_only else "2. Run gait analysis"
+        )
+        set_tooltip(
+            self.preview_button,
+            (
+                "Detect RustLab1 stance-onset strides from the selected three-view set and preview the paw-speed trace."
+                if rustlab1_only
+                else "Generate and inspect an ALMA stick plot from the selected left-view CSV before running the full analysis."
+            ),
+            "Ctrl+P",
+        )
+        set_tooltip(
+            self.run_button,
+            (
+                "Run standalone RustLab1 analysis after reviewing its stride preview."
+                if rustlab1_only
+                else "Run ALMA gait analysis after reviewing the stick plot."
+            ),
+            "Ctrl+R",
+        )
+        self._update_analysis_mode()
+        self._update_limb_scope()
+        self._invalidate_stickplot_preview()
+
     def _update_input_mode(self) -> None:
         three_view = self._is_three_view_mode()
         self.parameter_selection.set_multiside(three_view)
@@ -1289,6 +1491,11 @@ class AlmaKinematicsWidget(QWidget):
         self._update_run_state()
 
     def _update_analysis_mode(self) -> None:
+        if self._is_rustlab1_workflow():
+            self.treadmill_speed_label.hide()
+            self.treadmill_speed_spin.hide()
+            self.spontaneous_box.hide()
+            return
         treadmill = self.analysis_type_combo.currentText() == "Treadmill"
         self.treadmill_speed_label.setVisible(treadmill)
         self.treadmill_speed_spin.setVisible(treadmill)
@@ -1297,7 +1504,7 @@ class AlmaKinematicsWidget(QWidget):
     def _update_limb_scope(self) -> None:
         include_forelimb = self.limb_scope_combo.currentText() == "Hindlimb + Forelimb"
         self.parameter_selection.set_limb_scope(include_forelimb)
-        if self._is_three_view_mode():
+        if self._is_three_view_mode() and not self._is_rustlab1_workflow():
             detail = "76 RustLab1 parameters" if include_forelimb else "30 RustLab1 parameters"
             self.rustlab_status_label.setText(f"RustLab1 mode: {detail}; paired left, right, and bottom CSVs required.")
 
@@ -1316,27 +1523,37 @@ class AlmaKinematicsWidget(QWidget):
         self.run_button.setEnabled(has_files and has_output and self._stickplot_preview_ready and not running)
 
     def _invalidate_stickplot_preview(self, message=None, *_args) -> None:
+        rustlab1_only = self._is_rustlab1_workflow()
+        preview_name = "RustLab1 stride preview" if rustlab1_only else "stick-plot preview"
         if isinstance(message, str) and message:
             placeholder_text = message
         elif self._is_three_view_mode() and self._selected_files and not self._has_valid_view_sets():
             placeholder_text = self._multiview_requirement_message()
         elif self._selected_files:
-            placeholder_text = (
-                f"Settings changed. Regenerate the stick-plot preview for {self._selected_preview_file().name}."
+            source_name = (
+                self._selected_view_set().name
+                if rustlab1_only and self._selected_view_set() is not None
+                else self._selected_preview_file().name
             )
+            placeholder_text = f"Settings changed. Regenerate the {preview_name} for {source_name}."
         else:
-            placeholder_text = (
-                "Select left/right/bottom CSVs, then generate a stick-plot preview."
-                if self._is_three_view_mode()
-                else "Select one side-view CSV, then generate a stick-plot preview."
-            )
+            if rustlab1_only:
+                placeholder_text = (
+                    "Select matched left/right/bottom CSVs, then generate a RustLab1 stride preview."
+                )
+            else:
+                placeholder_text = (
+                    "Select left/right/bottom CSVs, then generate a stick-plot preview."
+                    if self._is_three_view_mode()
+                    else "Select one side-view CSV, then generate a stick-plot preview."
+                )
         self._stickplot_preview_ready = False
         self._preview_svg_data = None
         self._preview_source_name = ""
         if self._preview_worker is not None and self._preview_worker.isRunning():
             self._preview_invalidated_while_running = True
         elif self._has_valid_inputs():
-            self.status_label.setText("Generate a stick-plot preview before gait analysis.")
+            self.status_label.setText(f"Generate a {preview_name} before running the analysis.")
         else:
             self.status_label.setText(
                 "Select matched left/right/bottom CSV files to begin."
@@ -1355,6 +1572,9 @@ class AlmaKinematicsWidget(QWidget):
                 "Input CSVs required",
                 self._input_requirement_message(),
             )
+            return
+        if self._is_rustlab1_workflow():
+            self._generate_rustlab1_preview()
             return
         settings = self._collect_settings()
         if self._is_three_view_mode():
@@ -1420,17 +1640,71 @@ class AlmaKinematicsWidget(QWidget):
         self._preview_worker.start()
         self._update_run_state()
 
+    def _generate_rustlab1_preview(self) -> None:
+        view_set = self._selected_view_set()
+        if view_set is None:
+            QMessageBox.information(
+                self,
+                "Three-view CSV set required",
+                self._multiview_requirement_message(),
+            )
+            return
+        settings = replace(
+            self._collect_rustlab1_settings(),
+            view_bodypart_mapping=self._view_label_mappings.get(view_set.name),
+        )
+        missing_bodyparts = self._missing_rustlab1_bodyparts(view_set, settings)
+        if missing_bodyparts:
+            self._open_label_matching_dialog()
+            self.mapping_status_label.setText(
+                "Missing required RustLab1 body parts: " + ", ".join(missing_bodyparts)
+            )
+            QMessageBox.warning(
+                self,
+                "RustLab1 label mapping incomplete",
+                "RustLab1 needs the side-view joints and bottom-view paw labels for the "
+                "selected limb scope and reference paw. Open Label matching and assign "
+                "the missing labels for this CSV set.",
+            )
+            return
+
+        self._stickplot_preview_ready = False
+        self._preview_invalidated_while_running = False
+        self.progress.setValue(0)
+        self.progress.set_active(True)
+        self.preview_button.setIcon(interface_icon("eye", theme.TEXT))
+        animate_button_emphasis(self.preview_button, True)
+        animate_button_emphasis(self.run_button, False)
+        self.log.clear()
+        self.status_label.setText(f"Detecting RustLab1 strides for {view_set.name}...")
+        self.preview_placeholder.setText(
+            f"Generating bottom-paw speed and stride preview for {view_set.name}..."
+        )
+        self.preview_stack.setCurrentWidget(self.preview_placeholder)
+        self.workspace_tabs.setCurrentWidget(self.preview_page)
+
+        self._preview_worker = RustLab1PreviewThread(view_set, settings, self._alma_root)
+        self._preview_worker.progress_updated.connect(self._update_progress)
+        self._preview_worker.log_message.connect(self._append_log)
+        self._preview_worker.preview_ready.connect(self._stickplot_preview_completed)
+        self._preview_worker.preview_failed.connect(self._stickplot_preview_failed)
+        self._preview_worker.finished.connect(self._preview_worker_finished)
+        self._preview_worker.start()
+        self._update_run_state()
+
     def _stickplot_preview_completed(self, plots, source_name: str) -> None:
+        rustlab1_only = self._is_rustlab1_workflow()
+        preview_name = "RustLab1 stride preview" if rustlab1_only else "Stick-plot preview"
         if self._preview_invalidated_while_running:
             self._stickplot_preview_ready = False
             self.preview_placeholder.setText("Settings changed while the preview was running. Generate it again.")
             self.preview_stack.setCurrentWidget(self.preview_placeholder)
-            self.status_label.setText("Stick-plot preview is out of date.")
+            self.status_label.setText(f"{preview_name} is out of date.")
             self._append_log("Preview discarded because its settings changed during generation.")
             return
         plot_tuple = tuple(plots)
         if not plot_tuple:
-            self._stickplot_preview_failed("Stick-plot preview did not return any SVG plots.")
+            self._stickplot_preview_failed(f"{preview_name} did not return any SVG plots.")
             return
         self.stickplot_view.load_plots(plot_tuple)
         self.preview_stack.setCurrentWidget(self.stickplot_view)
@@ -1441,21 +1715,25 @@ class AlmaKinematicsWidget(QWidget):
         self.progress.setValue(100)
         self.preview_button.setIcon(interface_icon("check", theme.STATUS_READY))
         animate_button_emphasis(self.preview_button, False)
-        self.status_label.setText("Stick-plot preview ready. Review it, then run gait analysis.")
-        self._append_log(f"Stick-plot preview generated from {source_name}.")
+        next_action = "run RustLab1 analysis" if rustlab1_only else "run gait analysis"
+        self.status_label.setText(f"{preview_name} ready. Review it, then {next_action}.")
+        self._append_log(f"{preview_name} generated from {source_name}.")
 
     def _stickplot_preview_failed(self, message: str) -> None:
+        preview_name = (
+            "RustLab1 stride preview" if self._is_rustlab1_workflow() else "Stick-plot preview"
+        )
         self._stickplot_preview_ready = False
         self._preview_svg_data = None
         self._preview_source_name = ""
-        self.preview_placeholder.setText("Stick-plot preview could not be generated.")
+        self.preview_placeholder.setText(f"{preview_name} could not be generated.")
         self.preview_stack.setCurrentWidget(self.preview_placeholder)
-        self.status_label.setText("Stick-plot preview failed.")
+        self.status_label.setText(f"{preview_name} failed.")
         self.progress.set_active(False)
         self.preview_button.setIcon(interface_icon("eye", theme.TEXT))
         animate_button_emphasis(self.preview_button, False)
         self._append_log(message)
-        QMessageBox.critical(self, "Stick-plot preview failed", message)
+        QMessageBox.critical(self, f"{preview_name} failed", message)
 
     def _preview_worker_finished(self) -> None:
         self._preview_worker = None
@@ -1472,11 +1750,20 @@ class AlmaKinematicsWidget(QWidget):
             )
             return
         if not self._stickplot_preview_ready:
+            preview_name = (
+                "RustLab1 stride preview"
+                if self._is_rustlab1_workflow()
+                else "stick-plot preview"
+            )
             QMessageBox.information(
                 self,
-                "Stick-plot preview required",
-                "Generate and review the stick-plot preview before running gait analysis.",
+                f"{preview_name.capitalize()} required",
+                f"Generate and review the {preview_name} before running the analysis.",
             )
+            return
+
+        if self._is_rustlab1_workflow():
+            self._run_rustlab1_analysis(output_folder)
             return
 
         settings = self._collect_settings()
@@ -1497,6 +1784,32 @@ class AlmaKinematicsWidget(QWidget):
 
         analysis_inputs = self._view_sets if self._is_three_view_mode() else self._selected_files
         self._worker = AlmaAnalysisThread(analysis_inputs, output_folder, settings, self._alma_root)
+        self._worker.progress_updated.connect(self._update_progress)
+        self._worker.log_message.connect(self._append_log)
+        self._worker.results_ready.connect(self._output_results_ready)
+        self._worker.analysis_completed.connect(self._analysis_completed)
+        self._worker.finished.connect(self._worker_finished)
+        self._worker.start()
+        self._update_run_state()
+
+    def _run_rustlab1_analysis(self, output_folder: Path) -> None:
+        settings = self._collect_rustlab1_settings()
+        self.progress.setValue(0)
+        self.progress.set_active(True)
+        self.run_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
+        animate_button_emphasis(self.preview_button, False)
+        animate_button_emphasis(self.run_button, True)
+        self.log.clear()
+        self.status_label.setText("Running standalone RustLab1 analysis...")
+        self.workspace_tabs.setCurrentWidget(self.log_page)
+        self.run_button.setEnabled(False)
+
+        self._worker = RustLab1AnalysisThread(
+            self._view_sets,
+            output_folder,
+            settings,
+            self._alma_root,
+        )
         self._worker.progress_updated.connect(self._update_progress)
         self._worker.log_message.connect(self._append_log)
         self._worker.results_ready.connect(self._output_results_ready)
@@ -1563,6 +1876,44 @@ class AlmaKinematicsWidget(QWidget):
             enabled_parameter_names=self.parameter_selection.enabled_parameter_names(),
         )
 
+    def _collect_rustlab1_settings(self) -> RustLab1StandaloneSettings:
+        return RustLab1StandaloneSettings(
+            frame_rate=self.frame_rate_spin.value(),
+            filter_cutoff=self.filter_cutoff_spin.value(),
+            likelihood_threshold=self.rustlab_likelihood_spin.value(),
+            stance_speed_threshold_px_frame=self.rustlab_stance_speed_spin.value(),
+            minimum_stance_frames=self.rustlab_min_stance_spin.value(),
+            minimum_swing_frames=self.rustlab_min_swing_spin.value(),
+            reference_paw=RUSTLAB1_PAW_LABELS[self.rustlab_reference_paw_combo.currentText()],
+            limb_scope=self.limb_scope_combo.currentText(),
+            calibration_method=(
+                "reference"
+                if self.calibration_method_combo.currentText() == "Reference body segment"
+                else "manual"
+            ),
+            reference_segment=self.reference_segment_combo.currentText().split(" ", 1)[0],
+            reference_length_cm=self.reference_length_spin.value(),
+            pixels_per_cm=(
+                self.pixels_per_cm_spin.value()
+                if self.calibration_method_combo.currentText() == "Manual pixel-to-cm ratio"
+                else None
+            ),
+            view_calibration=(
+                {
+                    "bottom": {
+                        "x_pixels_per_cm": self.bottom_x_pixels_per_cm_spin.value(),
+                        "y_pixels_per_cm": self.bottom_y_pixels_per_cm_spin.value(),
+                    }
+                }
+                if self.bottom_x_pixels_per_cm_spin.value() > 0
+                and self.bottom_y_pixels_per_cm_spin.value() > 0
+                else None
+            ),
+            view_bodypart_mapping=self._collect_view_bodypart_mapping(),
+            enabled_parameter_names=self.parameter_selection.enabled_parameter_names(),
+            generate_figures=self.rustlab1_checkbox.isChecked(),
+        )
+
     def _collect_bodypart_mapping(self) -> dict[str, str] | None:
         if not self.use_custom_mapping_checkbox.isChecked():
             return None
@@ -1623,6 +1974,47 @@ class AlmaKinematicsWidget(QWidget):
             return self._view_sets[0]
         return None
 
+    def _missing_rustlab1_bodyparts(
+        self,
+        view_set: AlmaViewCsvSet,
+        settings: RustLab1StandaloneSettings,
+    ) -> list[str]:
+        include_forelimb = settings.limb_scope == "Hindlimb + Forelimb"
+        side_labels = ("ankle", "toe", "hip", "iliac crest")
+        if include_forelimb:
+            side_labels += FORELIMB_SIDE_VIEW_LABELS
+        bottom_labels = list(BOTTOM_VIEW_LABELS[:3])
+        if include_forelimb:
+            bottom_labels.extend(FORELIMB_BOTTOM_VIEW_LABELS)
+        reference_label = {
+            "d-back-left": "back left",
+            "d-back-right": "back right",
+            "d-front-left": "front left",
+            "d-front-right": "front right",
+        }[settings.reference_paw]
+        if reference_label not in bottom_labels:
+            bottom_labels.append(reference_label)
+
+        missing = []
+        view_mapping = settings.view_bodypart_mapping or {}
+        for view, csv_path, required_labels in (
+            ("left", view_set.left_csv, side_labels),
+            ("right", view_set.right_csv, side_labels),
+            ("bottom", view_set.bottom_csv, tuple(bottom_labels)),
+        ):
+            try:
+                raw_bodyparts = read_dlc_bodyparts(csv_path)
+            except Exception:
+                missing.extend(f"{view} {label}" for label in required_labels)
+                continue
+            mapped_bodyparts = set((view_mapping.get(view) or {}).values())
+            for standard_bodypart in required_labels:
+                if standard_bodypart in mapped_bodyparts:
+                    continue
+                if _auto_bodypart_label(raw_bodyparts, standard_bodypart) is None:
+                    missing.append(f"{view} {standard_bodypart}")
+        return missing
+
     def _missing_required_bodyparts(self, settings: AlmaSettings) -> list[str]:
         if self._is_three_view_mode():
             view_set = self._selected_view_set()
@@ -1671,6 +2063,9 @@ class AlmaKinematicsWidget(QWidget):
         self.log.append(text)
 
     def _analysis_completed(self, success: bool, message: str) -> None:
+        workflow_name = (
+            "RustLab1 analysis" if self._is_rustlab1_workflow() else "ALMA gait analysis"
+        )
         status_message = message
         if success and self._output_preview_paths:
             status_message += "\nPreview the generated figures and tables below."
@@ -1680,11 +2075,11 @@ class AlmaKinematicsWidget(QWidget):
         animate_button_emphasis(self.run_button, False)
         if success:
             self.run_button.setIcon(interface_icon("check", theme.PRIMARY_TEXT))
-            QMessageBox.information(self, "ALMA gait analysis complete", message)
+            QMessageBox.information(self, f"{workflow_name} complete", message)
         else:
             self.run_button.setIcon(interface_icon("play", theme.PRIMARY_TEXT))
             self.workspace_tabs.setCurrentWidget(self.log_page)
-            QMessageBox.critical(self, "ALMA gait analysis failed", message)
+            QMessageBox.critical(self, f"{workflow_name} failed", message)
 
     def _output_results_ready(self, results) -> None:
         output_files = (output_file for result in results for output_file in getattr(result, "output_files", ()))

@@ -28,8 +28,12 @@ from dlc_gait_assembly.services.pipeline.ladder import (
 from dlc_gait_assembly.services.pipeline.rustlab1 import (
     RUSTLAB1_FIGURE_FILENAMES,
     RUSTLAB1_PARAMETER_NAMES,
+    RustLab1RunResult,
+    RustLab1StandaloneSettings,
+    detect_rustlab1_strides,
     extract_rustlab1_parameters,
     generate_rustlab1_figures,
+    run_rustlab1_analysis,
 )
 from dlc_gait_assembly.services.pipeline.stroke import (
     ASYMMETRY_PARAMETER_NAMES,
@@ -64,8 +68,12 @@ __all__ = [
     "settings_from_alma_config",
     "RUSTLAB1_FIGURE_FILENAMES",
     "RUSTLAB1_PARAMETER_NAMES",
+    "RustLab1RunResult",
+    "RustLab1StandaloneSettings",
+    "detect_rustlab1_strides",
     "extract_rustlab1_parameters",
     "generate_rustlab1_figures",
+    "run_rustlab1_analysis",
     "LADDER_OUTPUT_COLUMNS",
     "COMBINED_LADDER_OUTPUT_COLUMNS",
     "DualLadderRunResult",

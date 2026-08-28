@@ -5,7 +5,6 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 
-
 NOTO_SANS_FONT_DIR = Path(__file__).with_name("fonts")
 NOTO_SANS_FONT_FILES = (
     "NotoSans-Regular.ttf",

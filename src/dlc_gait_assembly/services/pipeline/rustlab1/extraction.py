@@ -237,12 +237,11 @@ def extract_rustlab1_parameters(
     kinematics,
     preprocessed: AlmaPreprocessedCoordinates | None = None,
 ) -> RustLab1Extraction:
-    """Calculate the selected RustLab1 limb features on ALMA gait-cycle rows.
+    """Calculate the selected RustLab1 limb features on supplied gait-cycle rows.
 
-    The modified RustLab1 R script summarizes whole videos. Here the same
-    calculations are evaluated inside ALMA's stride_start/stride_end windows,
-    which gives both outputs an identical row/cycle index as required by the
-    SOP's merge step.
+    Post-ALMA callers supply ALMA's exact stride boundaries so merged outputs
+    retain one row index. The standalone RustLab1 caller instead supplies its
+    own bottom-paw stance-onset boundaries.
     """
     import numpy as np
 
@@ -280,7 +279,12 @@ def extract_rustlab1_parameters(
         if marker in preprocessed.series
     }
     bottom_stance = {
-        marker: _rustlab1_stance_mask(required_series, marker, np)
+        marker: _rustlab1_stance_mask(
+            required_series,
+            marker,
+            np,
+            float(getattr(settings, "stance_speed_threshold_px_frame", 7.0)),
+        )
         for marker in ("d-front-left", "d-front-right", "d-back-left", "d-back-right")
         if marker in required_series
     }
@@ -744,12 +748,12 @@ def _write_forelimb_side_angles(output, row_index, side, prefix, series, cycle_s
                 output.at[row_index, name] = value
 
 
-def _rustlab1_stance_mask(series, marker, np):
+def _rustlab1_stance_mask(series, marker, np, threshold: float = 7.0):
     x = _slice(series, marker, "x", slice(None))
     if x is None or len(x) == 0:
         return None
     speed = np.abs(np.diff(x, prepend=x[0]))
-    stance = np.isfinite(speed) & (speed <= 7.0)
+    stance = np.isfinite(speed) & (speed <= threshold)
     if len(stance) > 1:
         stance[0] = stance[1]
     return stance
