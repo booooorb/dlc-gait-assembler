@@ -1,0 +1,20 @@
+ALMA attribution and retained provenance
+
+Automated Limb Motion Analysis (ALMA)
+Upstream: https://github.com/sollan/alma
+Aljovic, A., Zhao, S. et al. A deep learning-based toolbox for Automated Limb
+Motion Analysis (ALMA) in murine models of neurological disorders.
+Communications Biology 5, 131 (2022). DOI: 10.1038/s42003-022-03077-6
+
+The ALMA-derived gait and Ladder calculations are maintained in their named
+business modules. The original license is retained as ALMA-LICENSE alongside
+this notice. Refactoring separates scientific calculations, persistence,
+rendering, and Qt presentation. Application modifications include safe empty
+results, confidence handling, marker aliases, calibration, canonical cycle
+handoffs, and explicit detector/timestamp behavior. These modifications do
+not imply that experimental detectors are part of the original ALMA method.
+
+The historical spontaneous-contact comparator explicitly identifies upstream
+commit 89f7be705a730fc0c0acf90817357b6449535df0 in stride_candidates.py.
+Complete local source context remains under ignored references and is not a
+runtime dependency or a distributed package component.

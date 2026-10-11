@@ -1,0 +1,10 @@
+include pyproject.toml gait_assembler.py
+graft tests
+prune references
+prune workspace
+prune build
+prune dist
+prune .pytest_cache
+prune .ruff_cache
+global-exclude *.py[cod] .DS_Store *.md
+include README.md

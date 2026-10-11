@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dlc-gait-assembler"
 version = "0.1.0"
-description = "PySide6 desktop GUI for bulk video region, flip, and enhancement processing."
+readme = "README.md"
+description = "Runway and Ladder gait analysis with video preparation, DeepLabCut integration, and cohort analysis."
 requires-python = ">=3.10"
 dependencies = [
     "matplotlib",
@@ -21,41 +22,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = [
-    "matplotlib",
-    "numpy",
-    "pandas",
-    "pytest",
-    "scikit-learn",
-    "scipy",
-]
-dev = [
-    "matplotlib",
-    "numpy",
-    "pandas",
-    "pytest",
-    "ruff>=0.11",
-    "scikit-learn",
-    "scipy",
-    "statsmodels",
-]
-analysis = [
-    "matplotlib",
-    "numpy",
-    "pandas",
-    "scikit-learn",
-    "scipy",
-    "statsmodels",
-]
+test = ["pytest"]
+dev = ["build", "pytest", "ruff>=0.11"]
+analysis = []
 
 [project.scripts]
-dlc-gait-assembler = "dlc_gait_assembly.gui.app:main"
+dlc-gait-assembler = "dlc_gait_assembly.app.app_bootstrap:main"
+dlc-gait-migrate = "dlc_gait_assembly.maintenance.migration_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"dlc_gait_assembly.gui.theme" = ["fonts/*.ttf", "fonts/OFL.txt"]
+"dlc_gait_assembly.resources" = ["**/*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["__pycache__/*", "**/__pycache__/*", "*.py[cod]", "**/*.py[cod]", ".DS_Store", "**/.DS_Store"]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -67,7 +49,7 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 
 [tool.ruff]
-extend-exclude = ["imports/alma"]
+extend-exclude = ["references", "workspace", "imports", "DLC-Gait-Analysis-main"]
 line-length = 120
 target-version = "py310"
 
@@ -76,5 +58,3 @@ select = ["B", "E4", "E7", "E9", "F", "I", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["B905", "E402", "F841", "I001"]
-"tests/unit/test_knee_correction.py" = ["F401"]
-"tests/unit/test_ladder_pipeline.py" = ["F401"]

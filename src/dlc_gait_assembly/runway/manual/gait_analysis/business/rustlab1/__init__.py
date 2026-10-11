@@ -1,0 +1,1 @@
+"""Rustlab1 package."""

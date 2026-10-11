@@ -1,0 +1,19 @@
+"""Persistence and owned-asset interfaces required by profile operations."""
+
+from typing import Protocol
+
+
+class AutomaticProfileRepositoryPort(Protocol):
+    def list_profiles(self): ...
+
+    def load(self, profile_id: str): ...
+
+    def save(self, **settings): ...
+
+    def duplicate(self, profile_id: str, name: str): ...
+
+    def delete(self, profile_id: str): ...
+
+
+class AutomaticProfileAssetPort(Protocol):
+    def inspect(self, draft): ...

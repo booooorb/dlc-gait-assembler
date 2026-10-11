@@ -1,0 +1,52 @@
+"""Bridge planned video export progress, cancellation, and results into Qt signals."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+
+from PySide6.QtCore import QThread, Signal
+
+from dlc_gait_assembly.runway.manual.video_processing.business.video_processing_contracts import ProcessingOptions
+from dlc_gait_assembly.runway.manual.video_processing.business.video_trim_ranges import TrimRange
+
+
+class VideoProcessingThread(QThread):
+    file_started = Signal(int, int, str)
+    file_finished = Signal(str, object)
+    file_failed = Signal(str, str)
+    completed = Signal(str)
+
+    def __init__(
+        self,
+        video_paths: list[Path],
+        session_dir: Path,
+        options: ProcessingOptions,
+        trim_ranges_by_path: dict[str, tuple[TrimRange, ...]] | None = None,
+        parent=None,
+        *,
+        use_cases,
+    ):
+        super().__init__(parent)
+        self.use_cases = use_cases
+        self._video_paths = video_paths
+        self._session_dir = session_dir
+        self._options = options
+        self._trim_ranges_by_path = trim_ranges_by_path or {}
+
+    def run(self) -> None:
+        total = len(self._video_paths)
+        for index, path in enumerate(self._video_paths, start=1):
+            self.file_started.emit(index, total, path.name)
+            try:
+                options = replace(
+                    self._options,
+                    crop_regions=tuple(region.resolved_for_input(path) for region in self._options.crop_regions),
+                    trim_ranges=self._trim_ranges_by_path.get(str(path), ()),
+                )
+                results = self.use_cases.process_outputs(path, self._session_dir, options)
+            except Exception as exc:
+                self.file_failed.emit(str(path), str(exc))
+            else:
+                self.file_finished.emit(str(path), [str(result.output_path) for result in results])
+        self.completed.emit(str(self._session_dir))
