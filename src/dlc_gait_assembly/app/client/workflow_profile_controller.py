@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer, Signal
@@ -90,10 +89,11 @@ class WorkflowProfileController:
             if frame.objectName() == "ProfileManagementPanel":
                 frame.hide()
         self.automatic.profile_selector.hide()
+        self.automatic.save_profile_button.hide()
         for label in self.automatic._automation_header.findChildren(QLabel):
             if label.text() == "Profile":
                 label.hide()
-        for name in ("manifest_upload_button", "analysis_manifest_upload_button", "knee_manifest_upload_button"):
+        for name in ("manifest_upload_button", "calibration_upload_button", "analysis_manifest_upload_button", "knee_manifest_upload_button"):
             getattr(self.automatic, name).hide()
         self.automatic.open_profile_configuration_button.setText("Automation settings")
         for name, text, tooltip in (
@@ -105,8 +105,6 @@ class WorkflowProfileController:
             button = getattr(self.automatic, name)
             button.setText(text)
             button.setToolTip(tooltip)
-        self.automatic.configuration_tabs.setTabToolTip(0, "Open Video settings to edit regions, trimming and enhancements. Save them with the workflow.")
-        self.automatic.configuration_tabs.setTabToolTip(2, "Choose the analysis stages and edit their settings in this workflow.")
         for label in self.automatic.findChildren(QLabel):
             replacements = {
                 "Manage automated profiles": "Automation settings",
@@ -136,7 +134,8 @@ class WorkflowProfileController:
         self.new_button.setToolTip("Create a new workflow")
         self.new_button.clicked.connect(self.new)
         self.save_button = QPushButton("Save")
-        self.save_button.setFixedWidth(60)
+        self.save_button.setObjectName("PrimaryButton")
+        self.save_button.setFixedWidth(80)
         self.save_button.setToolTip("Save all workflow settings and current file selections (Ctrl+S).")
         self.save_button.clicked.connect(self.save)
         self.save_as_button = QPushButton()
@@ -155,6 +154,7 @@ class WorkflowProfileController:
 
     def apply_bar_theme(self):
         self.new_button.setIcon(interface_icon("plus", theme.TEXT))
+        self.save_button.setIcon(interface_icon("download", theme.PRIMARY_TEXT, size=16))
         self.save_as_button.setIcon(interface_icon("copy", theme.TEXT))
 
     def _set_status(self, message):
@@ -178,18 +178,14 @@ class WorkflowProfileController:
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(16)
         heading = QHBoxLayout()
-        title = QLabel("Load a profile")
+        title = QLabel("Workflows")
         title.setObjectName("WorkflowPickerTitle")
         heading.addWidget(title, 1)
-        self.new_profile_button = QPushButton("New profile…")
+        self.new_profile_button = QPushButton("New workflow…")
         self.new_profile_button.setMinimumHeight(40)
         self.new_profile_button.clicked.connect(self.new)
         heading.addWidget(self.new_profile_button)
         body.addLayout(heading)
-        description = QLabel("Pick up where you left off, or start a new workflow. Your profile keeps settings together across tools.")
-        description.setObjectName("WorkflowPickerDescription")
-        description.setWordWrap(True)
-        body.addWidget(description)
         self.profile_search = QLineEdit()
         self.profile_search.setPlaceholderText("Search workflows…")
         self.profile_search.setAccessibleName("Search saved workflows")
@@ -212,12 +208,13 @@ class WorkflowProfileController:
         row = QHBoxLayout(actions)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
-        self.open_button = QPushButton("Load profile")
+        self.open_button = QPushButton("Open")
         self.open_button.setObjectName("PrimaryButton")
         self.open_button.clicked.connect(self._open_selected)
         self.rename_button = QPushButton("Rename…")
         self.rename_button.clicked.connect(self.rename_selected)
         self.delete_button = QPushButton("Delete workflow…")
+        self.delete_button.setObjectName("DeleteButton")
         self.delete_button.clicked.connect(self.delete_selected)
         self.profile_list.itemSelectionChanged.connect(self._sync_picker_actions)
         row.addWidget(self.rename_button)
@@ -227,10 +224,6 @@ class WorkflowProfileController:
         for button in (self.rename_button, self.delete_button, self.open_button):
             button.setMinimumHeight(38)
         body.addWidget(actions)
-        hint = QLabel("Open a workflow to load its settings. You can choose whether to restore its previous videos and CSVs.")
-        hint.setObjectName("WorkflowPickerDescription")
-        hint.setWordWrap(True)
-        body.addWidget(hint)
         outer.addWidget(content, 0, Qt.AlignTop | Qt.AlignHCenter)
         outer.addStretch(1)
         self.picker.resized.connect(self._resize_profile_list)
@@ -248,36 +241,15 @@ class WorkflowProfileController:
             self.selector.addItem(profile.name, profile.id)
             item = QListWidgetItem(profile.name)
             item.setData(Qt.UserRole, profile.id)
-            item.setSizeHint(QSize(0, 78))
+            item.setSizeHint(QSize(0, 52))
             self.profile_list.addItem(item)
             row = QWidget()
             row.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             layout = QHBoxLayout(row)
             layout.setContentsMargins(20, 12, 20, 12)
-            copy = QVBoxLayout()
-            copy.setSpacing(5)
             title = QLabel(profile.name)
             title.setObjectName("WorkflowRowTitle")
-            copy.addWidget(title)
-            pages = profile.workspace_state.get("pages", {})
-            labels = {spec.id: spec.label.replace("\n", " ") for spec in self.window._main_menu._tools}
-            labels["ladder_analysis"] = "Ladder analysis"
-            tools = [labels.get(stage, "Saved settings") for stage in pages]
-            details = ", ".join(tools[:2]) if tools else "Settings and models"
-            if len(tools) > 2:
-                details += f" + {len(tools) - 2} more tools"
-            try:
-                saved = datetime.fromisoformat(profile.updated_at).astimezone()
-                details += f"  ·  Saved {saved.strftime('%b %d, %Y at %H:%M')}"
-            except ValueError:
-                pass
-            subtitle = QLabel(details)
-            subtitle.setObjectName("WorkflowRowDetail")
-            copy.addWidget(subtitle)
-            layout.addLayout(copy, 1)
-            arrow = QLabel("→")
-            arrow.setObjectName("WorkflowRowArrow")
-            layout.addWidget(arrow)
+            layout.addWidget(title, 1)
             self.profile_list.setItemWidget(item, row)
         self.selector.setCurrentIndex(max(0, self.selector.findData(self.active.id if self.active else None)))
         self.selector.model().item(0).setEnabled(self.active is None)
@@ -305,8 +277,7 @@ class WorkflowProfileController:
             item.setHidden(query not in item.text().casefold())
             visible += not item.isHidden()
         self.profile_list.setVisible(bool(visible))
-        self.empty_label.setText("No matching workflows. Try a different name." if self.profile_list.count() else
-                                 "No saved workflows yet.\nCreate a new workflow to save your settings and file selections.")
+        self.empty_label.setText("No matches" if self.profile_list.count() else "No saved workflows")
         self.empty_label.setVisible(not visible)
         self._resize_profile_list()
         self._sync_picker_actions()
@@ -320,7 +291,7 @@ class WorkflowProfileController:
         available = self.picker.height() - margins.top() - margins.bottom() - other_height
         available -= max(0, len(items) - 1) * body.spacing()
         visible = sum(not self.profile_list.item(index).isHidden() for index in range(self.profile_list.count()))
-        self.profile_list.setFixedHeight(max(60, min(360, visible * 78 + 14, available)))
+        self.profile_list.setFixedHeight(max(60, min(360, visible * 52 + 14, available)))
 
     def rename_selected(self, _checked=False):
         item = self.profile_list.currentItem()
@@ -459,7 +430,7 @@ class WorkflowProfileController:
             route()
         else:
             previous = self.workspace_state.get("route")
-            tool_ids = {spec.id for spec in (*self.window._tool_specs, self.window._ladder_spec)}
+            tool_ids = {spec.id for spec in (*self.window._tool_specs, self.window._ladder_spec) if spec.enabled}
             if previous in tool_ids:
                 self.window.routes._open_tool(previous)
             elif previous == "automation":
@@ -482,6 +453,14 @@ class WorkflowProfileController:
         baseline = json.loads(self.saved_snapshot)
         baseline[0].setdefault("pages", {})[tool_id] = self.workspace_state["pages"][tool_id]
         self.saved_snapshot = json.dumps(baseline, sort_keys=True, allow_nan=False)
+        if tool_id == "manual_calibration":
+            page.save_to_gait_requested.connect(self._save_calibration_to_gait)
+
+    def _save_calibration_to_gait(self):
+        gait_id = "gait_parameter_analysis"
+        self.window.routes._open_tool(gait_id)
+        if self.window.navigation.tool_id == gait_id:
+            self.save(send_calibration_to_gait=True)
 
     def _apply_profile_calibration(self, tool_id, page):
         view = page_view(page)
@@ -557,6 +536,21 @@ class WorkflowProfileController:
         state.pop("route", None)
         return json.dumps([state, self.automatic.profiles._snapshot()], sort_keys=True, allow_nan=False)
 
+    def has_unsaved_changes(self) -> bool:
+        return self.active is not None and self._snapshot() != self.saved_snapshot
+
+    def confirm_save_before_run(self) -> bool:
+        if not self.has_unsaved_changes():
+            return True
+        answer = QMessageBox.question(
+            self.window,
+            "Save before running?",
+            f'Save changes to “{self.active.name}” before starting automation?',
+            QMessageBox.Save | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        return answer == QMessageBox.Save and self.save()
+
     def refresh_dirty_state(self):
         if self.active is None or self.loading:
             return
@@ -567,11 +561,11 @@ class WorkflowProfileController:
         if running:
             self._set_status("Automation is running")
             return
-        dirty = self._snapshot() != self.saved_snapshot
+        dirty = self.has_unsaved_changes()
         self._set_status("Unsaved changes" if dirty else "Saved")
         self.save_button.setText("Save *" if dirty else "Save")
 
-    def save(self, _checked=False, *, name=None):
+    def save(self, _checked=False, *, name=None, send_calibration_to_gait=False):
         if self.active is None:
             return False
         automatic = self.automatic
@@ -604,9 +598,26 @@ class WorkflowProfileController:
             knee_manifest=None if "knee_manifest" in cleared_assets else automatic.profile_state.knee_manifest_source,
         ))
         snapshot = combine_manual_snapshots(snapshots)
+        gait_page = self.window._tool_widgets.get("gait_parameter_analysis") if send_calibration_to_gait else None
+        gait = page_view(gait_page) if gait_page is not None else None
         try:
             state = self._capture()
+            if gait is not None:
+                if snapshot.calibration is None:
+                    raise ValueError("Create calibration sticks before saving to gait analysis.")
+                snapshot = replace(snapshot, gait=replace(
+                    gait.settings_snapshot(), calibration_method="map",
+                    calibration_map_path=None, pixels_per_cm=None, view_calibration=None,
+                ))
+                combo = gait.calibration_method_combo
+                state["pages"]["gait_parameter_analysis"]["controls"]["calibration_method_combo"] = {
+                    "data": "map", "text": combo.itemText(combo.findData("map")),
+                }
             with self.use_cases.manual_assets.materialize(snapshot, allow_incomplete=True) as assets:
+                if gait is not None:
+                    if assets.calibration_map is None:
+                        raise ValueError("Could not create a usable calibration map.")
+                    gait.analysis.settings.calibration_scale(assets.calibration_map)
                 regions = self.use_cases.processing_regions(assets.processing_manifest) if assets.processing_manifest else ()
                 profile = self.use_cases.save(
                     name or self.active.name, assets.processing_manifest, assets.calibration_map,
@@ -622,6 +633,14 @@ class WorkflowProfileController:
             return False
         self.active = profile
         self.workspace_state = state
+        if gait is not None:
+            self._apply_profile_calibration("gait_parameter_analysis", gait_page)
+            combo = gait.calibration_method_combo
+            combo.setCurrentIndex(combo.findData("map"))
+            gait.settings_tabs.setCurrentWidget(gait.calibration_tab)
+            gait.controller._invalidate_stickplot_preview()
+            gait.controller._update_run_state()
+            gait.status_label.setText("Calibration saved to gait analysis.")
         automatic.profiles._refresh_profiles(profile.id)
         self.refresh_profiles()
         self.saved_snapshot = self._snapshot()
@@ -642,7 +661,7 @@ class WorkflowProfileController:
         if worker is not None and worker.isRunning():
             QMessageBox.information(self.window, "Workflow is running", "Finish or stop automation before switching workflows.")
             return False
-        if self.active is None or self._snapshot() == self.saved_snapshot:
+        if not self.has_unsaved_changes():
             return True
         answer = QMessageBox.question(self.window, "Save workflow changes?", f'Save changes to “{self.active.name}”?',
             QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save)

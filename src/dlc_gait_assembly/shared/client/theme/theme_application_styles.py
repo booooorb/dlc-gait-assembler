@@ -47,7 +47,7 @@ def application_stylesheet() -> str:
             background: {theme.SURFACE};
             color: {theme.TEXT};
             border: 1px solid {theme.BORDER};
-            border-radius: 4px;
+            border-radius: 0;
             padding: 7px 10px;
             min-height: 20px;
         }
@@ -62,6 +62,19 @@ def application_stylesheet() -> str:
             background: {theme.PANEL};
             color: {theme.CONNECTOR};
             border-color: {theme.BORDER};
+        }
+        QPushButton#ClearButton:enabled, QPushButton#DeleteButton:enabled,
+        QPushButton#DeleteProfileButton:enabled {
+            background: #B3261E; border-color: #B3261E; color: white;
+            font-weight: 600;
+        }
+        QPushButton#ClearButton:enabled:hover, QPushButton#DeleteButton:enabled:hover,
+        QPushButton#DeleteProfileButton:enabled:hover {
+            background: #9B2019; border-color: #9B2019;
+        }
+        QPushButton#ClearButton:enabled:pressed, QPushButton#DeleteButton:enabled:pressed,
+        QPushButton#DeleteProfileButton:enabled:pressed {
+            background: #801A15; border-color: #801A15;
         }
         QPushButton#PrimaryButton, QPushButton#ExportButton {
             background: {theme.PRIMARY};
@@ -281,16 +294,14 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
             background: transparent;
             border: 0;
         }
-        QPushButton#RemoveButton, QPushButton#ClearButton,
-        QPushButton#DeleteButton {
+        QPushButton#RemoveButton {
             background: {theme.SURFACE};
             border-color: {theme.STATUS_ERROR};
-            border-radius: 2px;
+            border-radius: 0;
             color: {theme.STATUS_ERROR};
             font-weight: 600;
         }
-        QPushButton#RemoveButton:hover, QPushButton#ClearButton:hover,
-        QPushButton#DeleteButton:hover {
+        QPushButton#RemoveButton:hover {
             background: {theme.PANEL};
             border-color: {theme.STATUS_ERROR};
             color: {theme.STATUS_ERROR};

@@ -157,7 +157,7 @@ class AutomaticProfileController:
             QMessageBox.warning(self.view, "Profile name required", "Enter a name for this profile.")
             return
         if self.view.profile_state.manifest_source is None:
-            QMessageBox.warning(self.view, "Manifest required", "Complete step 1 by uploading a processing manifest.")
+            QMessageBox.warning(self.view, "Manifest required", "Choose a processing manifest in Video settings.")
             return
         missing_models = [
             region
@@ -175,7 +175,7 @@ class AutomaticProfileController:
         knee_enabled = self.view.include_knee_correction_button.isChecked()
         if gait_enabled and self.view.profile_state.analysis_manifest_source is None:
             QMessageBox.warning(
-                self.view, "Analysis manifest required", "Complete step 3 by uploading a gait analysis manifest."
+                self.view, "Analysis manifest required", "Choose a gait analysis manifest in Gait settings."
             )
             return
         if knee_enabled and self.view.profile_state.knee_manifest_source is None:

@@ -42,19 +42,16 @@ class AppShellStyle:
                 QFrame#WorkflowProfileBar QPushButton { padding: 0; }
                 QWidget#WorkflowPicker { background: {theme.BACKGROUND}; }
                 QLabel#WorkflowPickerTitle { font-size: 30px; font-weight: 600; }
-                QLabel#WorkflowPickerDescription { color: {theme.CONNECTOR}; font-size: 13px; }
                 QWidget#WorkflowPicker QListWidget {
                     background: {theme.SURFACE}; border: 1px solid {theme.BORDER};
                     border-radius: 10px; padding: 6px;
                 }
                 QWidget#WorkflowPicker QListWidget::item {
-                    padding: 0; border: 0; border-bottom: 1px solid {theme.BORDER}; border-radius: 6px;
+                    padding: 0; border: 0; border-bottom: 1px solid {theme.BORDER}; border-radius: 0;
                 }
                 QWidget#WorkflowPicker QListWidget::item:hover { background: {theme.PANEL}; }
                 QWidget#WorkflowPicker QListWidget::item:selected { background: {theme.PANEL}; }
                 QLabel#WorkflowRowTitle { font-size: 16px; font-weight: 600; background: transparent; }
-                QLabel#WorkflowRowDetail { color: {theme.CONNECTOR}; font-size: 12px; background: transparent; }
-                QLabel#WorkflowRowArrow { font-size: 22px; background: transparent; }
                 QLabel#WorkflowEmptyState {
                     color: {theme.CONNECTOR}; background: {theme.SURFACE};
                     border: 1px solid {theme.BORDER}; border-radius: 10px; padding: 36px 20px;
@@ -67,7 +64,7 @@ class AppShellStyle:
                 QPushButton#HomeNavigationButton {
                     background: transparent;
                     border: 0;
-                    border-radius: 6px;
+                    border-radius: 0;
                     padding: 0 4px;
                 }
                 QPushButton#HomeNavigationButton:hover {
@@ -92,7 +89,7 @@ class AppShellStyle:
                 QFrame#PrimaryNavigationHighlight {
                     border: 1px solid transparent;
                     border-bottom-width: 3px;
-                    border-radius: 6px;
+                    border-radius: 0;
                 }
                 QFrame#PrimaryNavigationHighlight[navigationRole="automated"] {
                     background: NAV_RUN_FILL;
@@ -114,7 +111,7 @@ class AppShellStyle:
                     background: transparent;
                     border: 1px solid transparent;
                     border-bottom-width: 3px;
-                    border-radius: 6px;
+                    border-radius: 0;
                     color: {theme.CONNECTOR};
                     font-size: 13px;
                     font-weight: 600;
@@ -177,7 +174,7 @@ class AppShellStyle:
                 QToolButton#CreditsButton {
                     background: transparent;
                     border: 1px solid {theme.BORDER};
-                    border-radius: 6px;
+                    border-radius: 0;
                     color: {theme.TEXT};
                     font-size: 12px;
                     min-height: 32px;

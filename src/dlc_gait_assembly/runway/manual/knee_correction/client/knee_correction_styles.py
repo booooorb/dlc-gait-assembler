@@ -66,7 +66,7 @@ class KneeCorrectionStyle:
             (self.view.add_files_button, "plus", theme.TEXT),
             (self.view.add_folder_button, "folder", theme.TEXT),
             (self.view.remove_button, "trash", theme.STATUS_ERROR),
-            (self.view.clear_button, "clear", theme.STATUS_ERROR),
+            (self.view.clear_button, "clear", "#FFFFFF"),
             (self.view.calibration_map_button, "upload", theme.TEXT),
             (self.view.output_folder_button, "folder", theme.TEXT),
             (self.view.export_manifest_button, "download", theme.TEXT),

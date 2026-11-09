@@ -27,7 +27,7 @@ class VideoProcessingStyle:
                 (self.view.add_videos_button, "plus", theme.TEXT),
                 (self.view.add_folder_button, "folder", theme.TEXT),
                 (self.view.remove_videos_button, "trash", theme.STATUS_ERROR),
-                (self.view.clear_videos_button, "clear", theme.STATUS_ERROR),
+                (self.view.clear_videos_button, "clear", "#FFFFFF"),
                 (self.view.import_video_manifest_button, "upload", theme.TEXT),
                 (self.view.export_video_manifest_button, "download", theme.TEXT),
                 (self.view.process_button, "play", theme.PRIMARY_TEXT),
@@ -46,7 +46,7 @@ class VideoProcessingStyle:
                 border: 0;
             }
             QPushButton#TinyResetButton {
-                border-radius: 2px;
+                border-radius: 0;
                 padding: 0 4px;
                 font-size: 9px;
             }
@@ -160,4 +160,4 @@ def make_tool_button(text: str, color: str) -> QToolButton:
 
 
 def tool_button_style(color: str) -> str:
-    return f"\n        QToolButton {{\n            background: {theme.SURFACE};\n            border: 1px solid {theme.BORDER};\n            border-bottom: 3px solid {color};\n            color: {theme.TEXT};\n            border-radius: 3px;\n            padding: 6px 10px;\n            font-weight: 600;\n        }}\n        QToolButton:hover {{\n            background: {theme.PANEL};\n            border-color: {theme.CONNECTOR};\n            border-bottom-color: {color};\n        }}\n        QToolButton:checked {{\n            background: {theme.PANEL};\n            border: 1px solid {theme.TEXT};\n            border-bottom: 3px solid {color};\n            color: {theme.TEXT};\n        }}\n        QToolButton:disabled {{\n            background: {theme.BACKGROUND};\n            border-color: {theme.ACCENT};\n            color: {theme.CONNECTOR};\n        }}\n    "
+    return f"\n        QToolButton {{\n            background: {theme.SURFACE};\n            border: 1px solid {theme.BORDER};\n            border-bottom: 3px solid {color};\n            color: {theme.TEXT};\n            border-radius: 0;\n            padding: 6px 10px;\n            font-weight: 600;\n        }}\n        QToolButton:hover {{\n            background: {theme.PANEL};\n            border-color: {theme.CONNECTOR};\n            border-bottom-color: {color};\n        }}\n        QToolButton:checked {{\n            background: {theme.PANEL};\n            border: 1px solid {theme.TEXT};\n            border-bottom: 3px solid {color};\n            color: {theme.TEXT};\n        }}\n        QToolButton:disabled {{\n            background: {theme.BACKGROUND};\n            border-color: {theme.ACCENT};\n            color: {theme.CONNECTOR};\n        }}\n    "

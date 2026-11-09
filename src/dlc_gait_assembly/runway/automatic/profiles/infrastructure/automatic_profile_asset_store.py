@@ -174,12 +174,19 @@ class AutomaticManualAssetWriter:
                 for name in ("processing_manifest", "calibration_map", "analysis_manifest", "knee_manifest")
                 for path in (getattr(snapshot, name),)
             }
+
+            def write_gait():
+                gait = snapshot.gait
+                if gait.calibration_method == "map" and gait.calibration_map_path is None and gait.pixels_per_cm is None:
+                    gait = replace(gait, calibration_map_path=paths["calibration_map"])
+                return write_analysis_manifest(root / "analysis_manifest.json", gait)
+
             writers = (
                 ("processing_manifest", snapshot.video, lambda: write_video_settings_manifest(
                     root / "video_settings_manifest.json", snapshot.video.options, snapshot.video.trim_ranges_by_path)),
                 ("calibration_map", snapshot.calibration, lambda: write_calibration_conversion_export(
                     root / "calibration", list(snapshot.calibration.sticks), snapshot.calibration.report)["map"]),
-                ("analysis_manifest", snapshot.gait, lambda: write_analysis_manifest(root / "analysis_manifest.json", snapshot.gait)),
+                ("analysis_manifest", snapshot.gait, write_gait),
                 ("knee_manifest", snapshot.knee, lambda: write_knee_analysis_manifest(root / "knee_analysis_manifest.json", snapshot.knee)),
             )
             for name, settings, write in writers:

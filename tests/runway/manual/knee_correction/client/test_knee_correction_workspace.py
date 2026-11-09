@@ -2,16 +2,26 @@ from __future__ import annotations
 from dlc_gait_assembly.app.app_bootstrap import create_knee_correction_use_cases, create_media_access
 import json
 import os
+from threading import Event
+from time import monotonic
 import pytest
 import pandas as pd
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtGui import QColor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
 from dlc_gait_assembly.runway.manual.knee_correction.client.knee_correction_view import KneeCorrectionWidget
 from dlc_gait_assembly.runway.manual.knee_correction.client.knee_preview_canvas import KneeStickplotPreview
+
+
+def wait_until(predicate, timeout=5):
+    deadline = monotonic() + timeout
+    while not predicate() and monotonic() < deadline:
+        QTest.qWait(10)
+    assert predicate()
 
 
 def test_unpaired_labels_are_red_until_matching_file_is_added(tmp_path, monkeypatch):
@@ -94,7 +104,7 @@ def test_knee_label_selector_is_populated_from_dlc_header(tmp_path, monkeypatch)
         json.dumps({"conversion_factor_map": {"overall": {"mean_pixels_per_centimeter": 2.0}}}), encoding="utf-8"
     )
     assert widget.controller._set_calibration_map(calibration_map)
-    assert len(widget.state.preview_cache) == 1
+    wait_until(lambda: len(widget.state.preview_cache) == 1)
     assert widget.preview_slider.maximum() == 2
     assert widget.preview_frame_label.minimumWidth() == widget.preview_frame_label.maximumWidth()
     assert widget.preview_slider.maximum() == 2
@@ -149,8 +159,29 @@ def test_calibration_auto_generates_previews_for_all_paired_datasets(tmp_path, m
     calibration_map.write_text(
         json.dumps({"conversion_factor_map": {"overall": {"mean_pixels_per_centimeter": 2.0}}}), encoding="utf-8"
     )
-    assert widget.controller._set_calibration_map(calibration_map)
-    assert len(widget.state.preview_cache) == 2
+    entered, proceed = Event(), Event()
+    requested_lengths = []
+    preview = widget.use_cases.preview
+
+    def slow_first_preview(pair, settings):
+        requested_lengths.append(settings.hip_knee_length_cm)
+        if not entered.is_set():
+            entered.set()
+            assert proceed.wait(5)
+        return preview(pair, settings)
+
+    monkeypatch.setattr(widget.use_cases, "preview", slow_first_preview)
+    try:
+        assert widget.controller._set_calibration_map(calibration_map)
+        wait_until(entered.is_set)
+        assert not widget.state.preview_cache
+        widget.hip_knee_length.setValue(widget.hip_knee_length.value() + 0.25)
+    finally:
+        proceed.set()
+
+    wait_until(lambda: len(widget.state.preview_cache) == 2)
+    assert requested_lengths == [requested_lengths[0], widget.hip_knee_length.value(), widget.hip_knee_length.value()]
+    assert requested_lengths[0] != requested_lengths[1]
     assert widget.state.preview_original is not None
     widget.pair_table.setCurrentItem(widget.pair_table.topLevelItem(1))
     assert "second" in widget.preview_status_label.text()
@@ -186,7 +217,7 @@ def test_preview_slider_skips_low_confidence_frames(tmp_path, monkeypatch):
         json.dumps({"conversion_factor_map": {"overall": {"mean_pixels_per_centimeter": 2.0}}}), encoding="utf-8"
     )
     assert widget.controller._set_calibration_map(calibration_map)
-    assert widget.state.preview_frame_positions == (0, 3)
+    wait_until(lambda: widget.state.preview_frame_positions == (0, 3))
     assert widget.preview_slider.maximum() == 1
     assert "Frame 0" in widget.preview_frame_label.text()
     widget.next_frame_button.click()

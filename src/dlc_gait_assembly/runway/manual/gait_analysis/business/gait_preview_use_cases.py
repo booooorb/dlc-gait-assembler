@@ -6,16 +6,10 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 
-from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_engine import calculate_alma_recording
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_continuous_sequences import (
     prepare_full_recording_stickplot,
     preview_cycle_rows,
     stickplot_axis_limits,
-)
-from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import (
-    BOTTOM_METHODS,
-    STRIDE_METHODS,
-    bottom_detection,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_calibration import settings_for_view
 from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_timing import (
@@ -42,6 +36,14 @@ class GaitPreviewUseCases:
         self.standalone = standalone
 
     def _recordings(self, inputs, settings, progress_callback=None):
+        from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_engine import (
+            calculate_alma_recording,
+        )
+        from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import (
+            BOTTOM_METHODS,
+            bottom_detection,
+        )
+
         settings = self.coordinates.resolve_calibration(settings)
         tracks = {
             label.lower(): read_view_track(
@@ -150,6 +152,8 @@ class GaitPreviewUseCases:
         return plots, source, tuple(messages)
 
     def compare(self, inputs, settings, progress_callback=None):
+        from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import STRIDE_METHODS
+
         calculations = []
         for index, method in enumerate(STRIDE_METHODS, start=1):
             if progress_callback:

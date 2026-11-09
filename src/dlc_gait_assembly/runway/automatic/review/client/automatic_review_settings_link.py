@@ -22,4 +22,5 @@ class AutomaticReviewSettingsLink:
         else:
             gate = PIPELINE_REVIEW_GATES[stage_index]
             self.view.profiles._show_profile_configuration()
-            self.view.configuration_tabs.setCurrentIndex(int(gate["tab"]))
+            section = getattr(self.view, f'configuration_{gate["section"]}_section')
+            self.view.configuration_scroll.ensureWidgetVisible(section)

@@ -52,10 +52,17 @@ class DeepLabCutEnvironmentAdapter:
         return display, ExternalCommand(arguments, cwd)
 
     def change_directory(self, command, cwd):
-        parts = shlex.split(command)
-        if len(parts) > 2:
-            raise ValueError("cd: expected one directory")
-        target = Path.home() if len(parts) == 1 else Path(parts[1]).expanduser()
+        if sys.platform.startswith("win"):
+            # The built-in cd command takes a single path, including spaces and backslashes.
+            directory = command[2:].strip() or None
+            if directory and directory.startswith('"') and directory.endswith('"'):
+                directory = directory[1:-1]
+        else:
+            parts = shlex.split(command)
+            if len(parts) > 2:
+                raise ValueError("cd: expected one directory")
+            directory = parts[1] if len(parts) == 2 else None
+        target = Path.home() if directory is None else Path(directory).expanduser()
         target = (cwd / target).resolve() if not target.is_absolute() else target.resolve()
         if not target.is_dir():
             raise FileNotFoundError(f"cd: no such directory: {target}")

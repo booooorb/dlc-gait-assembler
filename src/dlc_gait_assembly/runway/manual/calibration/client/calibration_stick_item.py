@@ -13,6 +13,7 @@ from dlc_gait_assembly.runway.manual.calibration.business.calibration_measuremen
     CalibrationPoint,
     CalibrationStick,
 )
+from dlc_gait_assembly.runway.manual.calibration.client.calibration_styles import stick_color
 
 
 class CalibrationStickItem(QGraphicsItem):
@@ -67,7 +68,7 @@ class CalibrationStickItem(QGraphicsItem):
         return hit_path
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
-        color = QColor(theme.TOOL_3 if self._stick.axis == "x" else theme.TOOL_2)
+        color = QColor(stick_color(self._stick.axis))
         scale = self._view_scale()
         line_width = max(2.0, 3.0 / scale)
         radius = self.visual_radius()

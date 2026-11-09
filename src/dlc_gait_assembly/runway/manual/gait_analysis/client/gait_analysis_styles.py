@@ -283,7 +283,7 @@ class GaitAnalysisStyle:
         icon_specs = (
             (self.view.add_file_button, "plus", theme.TEXT),
             (self.view.add_folder_button, "folder", theme.TEXT),
-            (self.view.clear_files_button, "clear", theme.STATUS_ERROR),
+            (self.view.clear_files_button, "clear", "#FFFFFF"),
             (self.view.output_folder_button, "folder", theme.TEXT),
             (self.view.import_calibration_map_button, "upload", theme.TEXT),
             (self.view.export_manifest_button, "download", theme.TEXT),

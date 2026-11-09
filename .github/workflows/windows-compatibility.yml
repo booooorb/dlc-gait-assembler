@@ -1,0 +1,57 @@
+name: Windows compatibility
+on:
+  push:
+    branches: [codex/windows-qa-2026-11-09]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 12
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install the packaged application
+        run: python -m pip install ".[test]"
+      - name: Check launcher, resources, and native window
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = 'windows'
+          $env:DLC_GAIT_WORKSPACE = Join-Path $env:RUNNER_TEMP 'gait-smoke'
+          @'
+          import sys
+          from PySide6.QtTest import QTest
+          from PySide6.QtWidgets import QApplication
+          from dlc_gait_assembly.app.app_bootstrap import apply_theme_mode, create_main_window
+          assert sys.platform == "win32"
+          app = QApplication([])
+          assert app.platformName() == "windows"
+          apply_theme_mode(app, None, "light")
+          window = create_main_window()
+          window.show()
+          QTest.qWait(100)
+          assert window.isVisible()
+          for icon in (app.windowIcon(), window.windowIcon()):
+              assert not icon.isNull()
+              assert not icon.pixmap(32, 32).isNull()
+          apply_theme_mode(app, window, "dark")
+          QTest.qWait(100)
+          assert window.close()
+          '@ | python -
+      - name: Test workflow saving, automation, and manual tools
+        run: >-
+          python -m pytest -o pythonpath= -q
+          tests/app/client
+          tests/runway/automatic/client
+          tests/runway/automatic/profiles/client
+          tests/runway/automatic/runs/business
+          tests/runway/manual/calibration/client
+          tests/runway/manual/knee_correction/client
+          tests/runway/manual/deeplabcut/infrastructure
+          tests/runway/manual/gait_analysis/client

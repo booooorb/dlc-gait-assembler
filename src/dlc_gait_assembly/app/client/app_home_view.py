@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
+from dlc_gait_assembly.app.business.app_navigation_routes import LADDER_UI_ENABLED
 from dlc_gait_assembly.app.client.app_branding_widgets import (
     MenuIllustrationLabel,
     WorkspaceChoiceCard,
@@ -18,6 +19,7 @@ from dlc_gait_assembly.app.client.app_branding_widgets import (
 from dlc_gait_assembly.app.client.app_page_contracts import ToolSpec
 from dlc_gait_assembly.shared.client.qt_page_stack import CurrentPageStackedWidget
 from dlc_gait_assembly.shared.client.theme.theme_menu_graphics import menu_colors
+from dlc_gait_assembly.shared.client.theme.theme_qt_palette import mix_hex
 
 
 class MainMenuWidget(QWidget):
@@ -65,6 +67,7 @@ class MainMenuWidget(QWidget):
         choices.addWidget(self._setup_card(
             "Ladder analysis",
             asset="ladder-mouse",
+            enabled=LADDER_UI_ENABLED,
             illustration="Laboratory mouse walking across a horizontal ladder",
             requested=lambda: self.tool_requested.emit("ladder_analysis"),
         ), 2)
@@ -72,8 +75,9 @@ class MainMenuWidget(QWidget):
         layout.addStretch()
         return page
 
-    def _setup_card(self, title, *, asset, illustration, requested) -> WorkspaceChoiceCard:
-        card = WorkspaceChoiceCard(title)
+    def _setup_card(self, title, *, asset, illustration, requested, enabled=True) -> WorkspaceChoiceCard:
+        card = WorkspaceChoiceCard(title if enabled else f"{title} (WIP)")
+        card.setEnabled(enabled)
         card.setObjectName("SetupChoiceCard")
         card.setProperty("setupAsset", asset)
         layout = QVBoxLayout(card)
@@ -87,7 +91,15 @@ class MainMenuWidget(QWidget):
         for decoration in (image, label):
             decoration.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             layout.addWidget(decoration)
-        card.clicked.connect(requested)
+        if enabled:
+            card.clicked.connect(requested)
+            layout.addSpacing(24)
+        else:
+            card.unsetCursor()
+            card.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            badge = QLabel("(WIP)", card)
+            badge.setObjectName("SetupStatus")
+            layout.addWidget(badge, 0, Qt.AlignHCenter)
         return card
 
     def show_automated(self) -> None:
@@ -96,6 +108,7 @@ class MainMenuWidget(QWidget):
     def _apply_style(self) -> None:
         self.automated_profiles._apply_style()
         colors = menu_colors(theme.IS_DARK)
+        disabled_surface = mix_hex(colors["surface"], "#000000", 0.22 if theme.IS_DARK else 0.12)
         self.setStyleSheet(f"""
             QWidget#MainMenuWidget {{
                 background: {colors["bg"]};
@@ -106,9 +119,14 @@ class MainMenuWidget(QWidget):
             }}
             QLabel#SetupTitle {{ font-size: 26px; font-weight: 600; }}
             QFrame#SetupChoiceCard {{
-                background: {colors["surface"]}; border: 1px solid {colors["line"]}; border-radius: 10px;
+                background: {colors["surface"]}; border: 1px solid {colors["line"]}; border-radius: 0;
             }}
-            QFrame#SetupChoiceCard:hover, QFrame#SetupChoiceCard:focus {{
+            QFrame#SetupChoiceCard:disabled {{ background: {disabled_surface}; }}
+            QWidget#PipelineHomePage QLabel#SetupStatus {{
+                background: {colors["panel"]}; color: {colors["text"]};
+                border-radius: 4px; padding: 3px 8px; font-weight: 700;
+            }}
+            QFrame#SetupChoiceCard:enabled:hover, QFrame#SetupChoiceCard:enabled:focus {{
                 border-color: {colors["accent"]};
             }}
         """)

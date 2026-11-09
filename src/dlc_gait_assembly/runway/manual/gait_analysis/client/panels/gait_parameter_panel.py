@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QRect, QSignalBlocker, QSize, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -41,18 +41,22 @@ def display_parameter_name(name: str) -> str:
 def resize_parameter_rows(tree: QTreeWidget, columns: tuple[int, ...], *, checkable_column: int | None = None) -> None:
     """Give wrapped text enough height at the current column widths."""
     metrics = tree.fontMetrics()
+    widths = [
+        (column, tree.columnWidth(column) - (40 if column == checkable_column else 20))
+        for column in columns
+    ]
     for row in range(tree.topLevelItemCount()):
         item = tree.topLevelItem(row)
         if item.isHidden():
             continue
         height = 32
-        for column in columns:
-            width = tree.columnWidth(column) - (40 if column == checkable_column else 20)
+        for column, width in widths:
             if width < 40:
                 continue
             bounds = metrics.boundingRect(QRect(0, 0, width, 10000), Qt.TextWordWrap, item.text(column))
             height = max(height, bounds.height() + 14)
-        item.setSizeHint(0, QSize(0, height))
+        if item.sizeHint(0).height() != height:
+            item.setSizeHint(0, QSize(0, height))
 
 
 class GaitParameterSelectionWidget(QWidget):
@@ -127,15 +131,16 @@ class GaitParameterSelectionWidget(QWidget):
         self._multiside = multiside
         kind = self.extraction_type_filter.currentText()
         visible_index = 0
-        for definition, item in self._items:
-            visible = (
-                self._applicable(definition)
-                and (kind == "All extraction types" or definition.extraction_type.value == kind)
-            )
-            item.setHidden(not visible)
-            if visible:
-                visible_index += 1
-                item.setText(0, str(visible_index))
+        with QSignalBlocker(self.tree):
+            for definition, item in self._items:
+                visible = (
+                    self._applicable(definition)
+                    and (kind == "All extraction types" or definition.extraction_type.value == kind)
+                )
+                item.setHidden(not visible)
+                if visible:
+                    visible_index += 1
+                    item.setText(0, str(visible_index))
         self._update_count()
         resize_parameter_rows(self.tree, (1, 2), checkable_column=1)
 
@@ -163,11 +168,12 @@ class GaitParameterSelectionWidget(QWidget):
             if self._complete_export
             else "Unchecked parameters are excluded from standalone RustLab1 outputs."
         )
-        for _definition, item in self._items:
-            flags = item.flags()
-            item.setFlags(flags & ~Qt.ItemIsUserCheckable if self._complete_export else flags | Qt.ItemIsUserCheckable)
-            if self._complete_export:
-                item.setCheckState(1, Qt.Checked)
+        with QSignalBlocker(self.tree):
+            for _definition, item in self._items:
+                flags = item.flags()
+                item.setFlags(flags & ~Qt.ItemIsUserCheckable if self._complete_export else flags | Qt.ItemIsUserCheckable)
+                if self._complete_export:
+                    item.setCheckState(1, Qt.Checked)
         self.set_multiside(self._multiside)
 
     def enabled_parameter_names(self) -> tuple[str, ...]:

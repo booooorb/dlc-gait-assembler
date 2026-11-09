@@ -4,8 +4,6 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
-from scipy.ndimage import median_filter
-from scipy.signal import find_peaks
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_spontaneous_cycles import (
     clean_short_boolean_runs,
@@ -140,6 +138,8 @@ def detect_strides(
         if diagnostics is not None:
             diagnostics["stance"] = stance
         return stance.tolist(), starts, ends, ground
+    from scipy.ndimage import median_filter
+
     speed = median_filter(np.hypot(np.gradient(x), np.gradient(y)), size=3, mode="nearest")
     motion_reference = x - relative_x if relative_x is not None else x
     travel = (
@@ -202,6 +202,8 @@ def detect_strides(
         if diagnostics is not None:
             diagnostics.update(relative_x=filled, trusted=finite)
         spread = np.nanpercentile(filled[finite], 90) - np.nanpercentile(filled[finite], 10) if finite.any() else 0
+        from scipy.signal import find_peaks
+
         peaks, _properties = find_peaks(filled, distance=minimum_frames, prominence=max(0.5, spread * 0.15))
         starts, ends = [], []
         # Partial edge cycles still have inferred phase; only complete peak pairs

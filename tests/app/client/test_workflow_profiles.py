@@ -1,6 +1,7 @@
 """A workflow survives closing and reopening across manual tools and automation."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,9 @@ from dlc_gait_assembly.app.client.workflow_page_state import decode_value, encod
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_repository import AutomatedProfileStore
 from dlc_gait_assembly.runway.manual.calibration.business.calibration_measurements import CalibrationPoint, CalibrationStick
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_coordinate_contracts import AlmaViewCsvSet, StrokeStudyMetadata
+from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
+    alma_settings_from_manifest,
+)
 from dlc_gait_assembly.runway.manual.video_processing.business.video_region_geometry import CropRegion, NormalizedRect
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures/gait/rustlab1_r_reference"
@@ -77,7 +81,7 @@ def test_workflows_require_a_profile_before_manual_and_automation(window):
     cards = window._main_menu.home_page.findChildren(QFrame, "SetupChoiceCard")
     ladder_card = next(card for card in cards if card.property("setupAsset") == "ladder-mouse")
     ladder_card.clicked.emit()
-    assert window._stack.currentWidget() is window.workflows.picker
+    assert window._stack.currentWidget() is window._main_menu
     window._manual_tools_button.click()
     assert window.workflows.new(name="Manual study")
     assert window.navigation.tool_id == "manual_calibration"
@@ -329,6 +333,7 @@ def test_standalone_rustlab_settings_do_not_silently_run_alma_in_automation(wind
 
 
 def test_manual_video_and_ladder_review_reopen_the_saved_video(window, tmp_path):
+    window._ladder_spec = replace(window._ladder_spec, enabled=True)
     import cv2
     import numpy as np
     from dlc_gait_assembly.runway.manual.video_processing.business.video_trim_ranges import TrimRange
@@ -381,7 +386,93 @@ def test_calibration_measurements_and_settings_survive_without_loading_media(win
     assert calibration.state.calibration_sticks_by_media["example.png"] == (stick,)
     assert calibration.tau_spin.value() == 3.5
     assert calibration.media_list.count() == 0
-    assert calibration.export_conversion_button.isEnabled()
+    assert calibration.save_to_gait_button.isEnabled()
+
+
+def test_save_to_gait_analysis_applies_the_workflow_calibration(window):
+    assert window.workflows.new(name="Calibration handoff")
+    window.routes._open_tool("gait_parameter_analysis")
+    gait = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
+    gait.frame_rate_spin.setValue(240)
+    window.routes._open_tool("manual_calibration")
+    calibration = window._tool_widgets["manual_calibration"]
+    calibration.state.calibration_sticks_by_media["example.png"] = (
+        CalibrationStick("x", 1, CalibrationPoint(0, 0), CalibrationPoint(42, 0)),
+    )
+    calibration.controller._update_calibration_results()
+    assert calibration.save_to_gait_button.isEnabled()
+    calibration.save_to_gait_button.click()
+    profile = window.workflows.active
+    assert window.navigation.tool_id == "gait_parameter_analysis"
+    assert gait.settings_tabs.currentWidget() is gait.calibration_tab
+    assert gait.calibration_method_combo.currentData() == "map"
+    assert gait.state.calibration_map_path == profile.calibration_map
+    assert gait.state.calibration_map_pixels_per_cm == pytest.approx(42)
+    saved_gait = alma_settings_from_manifest(profile.analysis_manifest, profile.calibration_map)
+    assert saved_gait.calibration_method == "map"
+    assert saved_gait.calibration_map_path == profile.calibration_map
+    assert window.workflows.close_profile()
+    assert window.workflows.open_profile(profile.id, restore_files=False)
+    gait = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
+    assert gait.calibration_method_combo.currentData() == "map"
+    assert gait.state.calibration_map_path == profile.calibration_map
+    assert gait.frame_rate_spin.value() == 240
+
+
+def test_automation_runs_saved_settings_and_only_prompts_for_edits(window, tmp_path, monkeypatch):
+    assert window.workflows.new(name="Run settings")
+    window.routes._open_tool("gait_parameter_analysis")
+    gait = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
+    gait.frame_rate_spin.setValue(120)
+    window.routes._show_automated_pipeline()
+    automation = window.workflows.automatic
+    video = tmp_path / "recording.mp4"
+    video.touch()
+    automation.queue._add_video_paths([video])
+    assert window.workflows.save()
+    first_profile = window.workflows.active
+    prompts, started = [], []
+    response = QMessageBox.Cancel
+
+    def question(_parent, title, *_args):
+        prompts.append(title)
+        return response
+
+    monkeypatch.setattr(QMessageBox, "question", question)
+    monkeypatch.setattr(automation.profile_use_cases, "missing_requirements", lambda _profile: [])
+    monkeypatch.setattr(automation.runs, "_start_pipeline", started.append)
+    automation.run_pipeline_button.click()
+    assert prompts == []
+    assert started == [first_profile]
+    assert window.workflows.active is first_profile
+
+    gait.frame_rate_spin.setValue(240)
+    automation.run_pipeline_button.click()
+    assert prompts == ["Save before running?"]
+    assert started == [first_profile]
+    assert alma_settings_from_manifest(first_profile.analysis_manifest).frame_rate == 120
+
+    response = QMessageBox.Save
+    automation.run_pipeline_button.click()
+    assert len(prompts) == 2
+    assert len(started) == 2
+    assert started[-1] is window.workflows.active
+    assert alma_settings_from_manifest(started[-1].analysis_manifest).frame_rate == 240
+    assert started[-1].workspace_state["automation_videos"] == [str(video)]
+    assert not window.workflows.has_unsaved_changes()
+
+
+def test_automation_stage_switches_save_without_a_separate_button(window):
+    assert window.workflows.new(name="Automatic settings")
+    profile_id = window.workflows.active.id
+    window.routes._show_automated_profiles()
+    widget = window.workflows.automatic
+    assert widget.save_profile_button.isHidden()
+    widget.include_gait_analysis_button.click()
+    widget.include_knee_correction_button.click()
+    profile = window.workflows.use_cases.load(profile_id)
+    assert not profile.gait_analysis_enabled
+    assert profile.knee_correction_enabled
 
 
 def test_running_automation_keeps_its_profile_assets_until_it_stops(window):
@@ -414,6 +505,7 @@ def test_closing_the_application_stops_profile_polling(window):
 
 
 def test_ladder_marker_choices_apply_when_csv_is_added_after_settings_only_restore(window, tmp_path, monkeypatch):
+    window._ladder_spec = replace(window._ladder_spec, enabled=True)
     import pandas as pd
     from PySide6.QtWidgets import QFileDialog, QListWidgetItem
     path = tmp_path / "ladder.csv"

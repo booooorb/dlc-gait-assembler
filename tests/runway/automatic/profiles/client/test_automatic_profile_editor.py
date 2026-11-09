@@ -8,7 +8,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QInputDialog, QPushButton
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QPushButton
 from dlc_gait_assembly.shared.client.qt_circular_progress import CircularProgressIndicator
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
     write_analysis_manifest,
@@ -212,6 +212,40 @@ def test_profile_store_persists_incomplete_manual_settings_snapshot(tmp_path):
 def test_manifest_regions_define_ordered_model_requirements(tmp_path):
     sources = _profile_sources(tmp_path)
     assert regions_from_processing_manifest(sources["processing_manifest"]) == ("Front", "Rear")
+
+
+def test_view_model_shortcut_saves_exact_region_assignments_with_overrides(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    widget = create_automatic_workspace(store)
+    sources = _profile_sources(tmp_path)
+    regions = ("Left runway A", "Left runway B", "Right", "Bottom", "Overview")
+    manifest = sources["processing_manifest"]
+    manifest.write_text(json.dumps({"operations": {"crop_regions": [
+        {"name": region, "rect": {}} for region in regions
+    ]}}))
+    assert widget.profile_assets._set_manifest_source(manifest)
+    front = sources["deeplabcut_models"]["Front"]
+    rear = sources["deeplabcut_models"]["Rear"]
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_: str(front))
+    for button in widget.view_model_buttons.values():
+        assert button.isEnabled()
+        button.click()
+    assert widget.profile_state.model_sources["Overview"] is None
+    widget.profile_models._set_model_source("Left runway B", rear)
+    widget.profile_models._set_model_source("Overview", rear)
+    assert widget.profile_state.model_sources == dict(zip(regions, (front, rear, front, front, rear), strict=True))
+    widget.profile_name.setText("View assignments")
+    widget.include_gait_analysis_button.setChecked(False)
+    widget.profiles._save_profile()
+    profile = store.load(widget.profile_state.current_profile_id)
+    assert set(profile.deeplabcut_models) == set(regions)
+    for region, source in zip(regions, ("front", "rear", "front", "front", "rear"), strict=True):
+        weights = next(profile.deeplabcut_models[region].rglob("snapshot-1.pt"))
+        assert weights.read_text(encoding="utf-8") == f"weights-{source}-first"
+    assert not profile.gait_analysis_enabled
+    widget.close()
+    app.processEvents()
 
 
 def test_profile_widget_requires_confirmation_before_replace_or_delete(tmp_path, monkeypatch):
@@ -524,7 +558,7 @@ def test_rejected_pipeline_check_opens_correct_settings_and_rechecks_on_resume(t
     assert widget.run_pipeline_button.text() == "Resume preview"
     widget.pipeline_change_settings_button.click()
     assert widget.workspace_stack.currentWidget() is widget.configuration_page
-    assert widget.configuration_tabs.currentIndex() == 0
+    assert widget.configuration_scroll.verticalScrollBar().value() == 0
     widget.back_to_automation_button.click()
     widget.run_pipeline_button.click()
     assert widget._pipeline_demo_stage == 0

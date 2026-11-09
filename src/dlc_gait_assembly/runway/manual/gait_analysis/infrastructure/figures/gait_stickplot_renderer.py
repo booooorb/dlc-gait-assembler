@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.lines import Line2D
-from matplotlib.ticker import MaxNLocator
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.temporal_speed_mixture import PHASE_SUPPORT_THRESHOLD
 
@@ -64,6 +61,10 @@ def continuous_stickplot(
     output_format="svg",
     dpi=None,
 ):
+    from matplotlib import pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import MaxNLocator
+
     frames = np.arange(start, end + 1)
     phases = stickplot_phase_codes(is_stance, len(filt_corrected_df), trusted, is_drag, phase_confidence)
     # One shared, line-only layout for previews and exports. No point markers or
@@ -189,14 +190,13 @@ class GaitStickplotRenderer:
         from io import BytesIO
 
         buffer = BytesIO()
-        try:
-            render_prepared_stickplot(prepared, buffer)
-            return buffer.getvalue()
-        finally:
-            plt.close("all")
+        render_prepared_stickplot(prepared, buffer)
+        return buffer.getvalue()
 
     def render_rustlab1_preview(self, calculation, settings):
         from io import BytesIO
+
+        from matplotlib import pyplot as plt
 
         from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.figures.rustlab1_step_figures import (
             generate_rustlab1_stride_preview,

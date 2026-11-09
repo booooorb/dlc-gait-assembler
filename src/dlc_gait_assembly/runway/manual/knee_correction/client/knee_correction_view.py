@@ -94,7 +94,11 @@ class KneeCorrectionWidget(QWidget):
         if self._worker is not None and self._worker.isRunning():
             self._worker.requestInterruption()
             self._worker.wait()
-        self.preview_controller._release_preview_capture()
+        self.preview_controller.release()
+
+    def closeEvent(self, event) -> None:
+        self.preview_controller.release()
+        super().closeEvent(event)
 
     def _default_output_folder(self) -> Path:
         return self.workspace.manual / "knee_correction"

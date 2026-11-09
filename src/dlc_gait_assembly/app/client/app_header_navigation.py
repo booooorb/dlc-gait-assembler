@@ -100,7 +100,11 @@ class AppHeaderNavigation:
             button.clicked.connect(route)
             navigation_layout.addWidget(button)
             setattr(self.view, attribute, button)
-            self.view._primary_navigation_buttons.append(button)
+            if role == "ladder" and not self.view._ladder_spec.enabled:
+                button.setEnabled(False)
+                button.hide()
+            else:
+                self.view._primary_navigation_buttons.append(button)
         primary_layout.addWidget(primary_navigation)
         navigation_highlight = QFrame(primary_row)
         navigation_highlight.setObjectName("PrimaryNavigationHighlight")
@@ -224,7 +228,7 @@ class AppHeaderNavigation:
         layout.setSpacing(2 if compact else 10)
         workflows = self.view.workflows
         workflows.selector.setFixedWidth(114 if compact else 180)
-        workflows.save_button.setFixedWidth(52 if compact else 60)
+        workflows.save_button.setFixedWidth(72 if compact else 80)
         workflows.bar.layout().setSpacing(2 if compact else 5)
         for button in (workflows.new_button, workflows.save_as_button, workflows.close_button):
             button.setFixedWidth(28 if compact else 30)

@@ -437,6 +437,7 @@ def build_gait_inputs(self):
     self.add_folder_button = QPushButton("Add folder…")
     set_tooltip(self.add_folder_button, "Add every CSV in a folder and group left/right/bottom views.", "Ctrl+Shift+O")
     self.clear_files_button = QPushButton("Clear")
+    self.clear_files_button.setObjectName("ClearButton")
     self.remove_files_button = QPushButton("Remove selected")
     self.remove_files_button.setToolTip("Remove selected recordings or CSVs from this workflow.")
     self.remove_files_button.clicked.connect(self.inputs._remove_selected_files)

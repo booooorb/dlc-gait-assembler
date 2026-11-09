@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from enum import Enum
 
+LADDER_UI_ENABLED = False
+
 
 class AppRoute(str, Enum):
     HOME = "home"

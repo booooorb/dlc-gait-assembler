@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox, QToolButton
+from PySide6.QtWidgets import QListWidgetItem, QMessageBox, QToolButton
 
 from dlc_gait_assembly.runway.manual.calibration.business.calibration_assessment_contracts import CalibrationReport
 from dlc_gait_assembly.runway.manual.calibration.business.calibration_measurements import CalibrationStick
@@ -50,7 +48,7 @@ class CalibrationController:
         self.view.preview.stick_delete_requested.connect(self._confirm_delete_calibration_stick)
         self.view.timeline.valueChanged.connect(self.view.media_panel._timeline_changed)
         self.view.timeline.sliderReleased.connect(self.view.media_panel._flush_pending_frame)
-        self.view.export_conversion_button.clicked.connect(self._export_conversion_map)
+        self.view.save_to_gait_button.clicked.connect(self.view.save_to_gait_requested.emit)
 
     def _clear_calibration(self) -> None:
         if not self.view.preview.calibration_sticks():
@@ -121,39 +119,8 @@ class CalibrationController:
         if hasattr(self.view, "preview") and (not self.view.state.loading_media):
             self._update_location_failure_highlights(report)
         self.view.results_label.setText(report_to_html(report))
-        if hasattr(self.view, "export_conversion_button"):
-            self.view.export_conversion_button.setEnabled(bool(report.view_axis))
-
-    def _export_conversion_map(self) -> None:
-        sticks = self._all_calibration_sticks()
-        report = self.view.use_cases.assess(
-            sticks,
-            self.view.tau_spin.value(),
-            self.view.euclidean_lengths_checkbox.isChecked(),
-            self.view.marker_interval_spin.value(),
-            self.view.marker_unit_combo.currentText(),
-        )
-        if not report.view_axis:
-            QMessageBox.information(
-                self.view, "No calibration data", "Create calibration sticks before exporting a conversion map."
-            )
-            return
-        output_root = self.view._default_output_root()
-        directory = QFileDialog.getExistingDirectory(self.view, "Choose calibration output folder", str(output_root))
-        if not directory:
-            return
-        try:
-            paths = self.view.use_cases.export_session(directory, sticks, report)
-            session_dir = paths["map"].parent
-        except Exception as exc:
-            QMessageBox.critical(self.view, "Export failed", str(exc))
-            return
-        self.view.state.profile_calibration_map_path = Path(paths["map"]).expanduser().resolve()
-        QMessageBox.information(
-            self.view,
-            "Conversion map exported",
-            f"Output folder:\n{session_dir}\n\nMap:\n{paths['map'].name}\nReport:\n{paths['report'].name}",
-        )
+        if hasattr(self.view, "save_to_gait_button"):
+            self.view.save_to_gait_button.setEnabled(bool(report.view_axis))
 
     def _save_media_state(self, item: QListWidgetItem | None = None) -> None:
         if self.view.state.loading_media or not hasattr(self.view, "preview"):

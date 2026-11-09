@@ -6,9 +6,7 @@ from typing import Protocol
 
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt, lfilter_zi
 
-from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import detect_strides
 from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_calibration import view_scale
 
 
@@ -34,6 +32,8 @@ def validate_r_settings(settings):
 
 
 def r_filter_configuration(settings):
+    from scipy.signal import butter, lfilter_zi
+
     b, a = butter(5, settings.filter_cutoff / (settings.frame_rate / 2), "low")
     return {"filter_b": b.tolist(), "filter_a": a.tolist(), "filter_zi": lfilter_zi(b, a).tolist()}
 
@@ -85,6 +85,10 @@ def detect_r_gmm_phases(merged, settings):
     frame_count = len(merged)
     if frame_count < 2:
         raise ValueError("RustLab1 needs at least two coordinate frames.")
+    from scipy.signal import butter, filtfilt
+
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import detect_strides
+
     b, a = butter(5, settings.filter_cutoff / (settings.frame_rate / 2), "low")
     labels, next_id = [], 1
     for side, prefix in (("left", "l"), ("right", "r")):

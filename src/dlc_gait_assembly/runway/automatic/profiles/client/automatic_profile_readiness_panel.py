@@ -106,7 +106,7 @@ def build_automatic_profile_readiness(self):
         readiness_layout.addLayout(row)
         self.profile_readiness_values[key] = value
     readiness_layout.addStretch(1)
-    self.status_label = QLabel("Start with the video processing manifest in step 1.")
+    self.status_label = QLabel("Save Video settings to define the regions that need models.")
     self.status_label.setObjectName("ProfileStatusLabel")
     self.status_label.setWordWrap(True)
     readiness_layout.addWidget(self.status_label)

@@ -12,6 +12,32 @@ from dlc_gait_assembly.runway.manual.knee_correction.business.knee_correction_co
     KneeCorrectionResult,
     KneeCorrectionSettings,
 )
+from dlc_gait_assembly.runway.manual.knee_correction.business.knee_preview_sampling import previewable_frame_positions
+
+
+class KneePreviewThread(QThread):
+    """Calculate preview data without accessing the workspace widgets."""
+
+    def __init__(self, pairs, settings, *, use_cases, parent):
+        super().__init__(parent)
+        self._pairs = pairs
+        self._settings = settings
+        self._use_cases = use_cases
+        self.previews = {}
+        self.errors: list[str] = []
+
+    def run(self) -> None:
+        for pair in self._pairs:
+            if self.isInterruptionRequested():
+                return
+            try:
+                original, corrected, reports = self._use_cases.preview(pair, self._settings)
+                report = reports[0]
+                positions = previewable_frame_positions(report.frame_statuses)
+            except Exception as exc:
+                self.errors.append(f"{pair.stem}: {exc}")
+            else:
+                self.previews[pair] = (original, corrected, report, positions)
 
 
 class KneeCorrectionThread(QThread):

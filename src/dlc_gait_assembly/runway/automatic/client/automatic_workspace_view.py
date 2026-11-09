@@ -77,7 +77,7 @@ PIPELINE_STAGE_GRAPHICS = (
     ("Knee correction", "paw-knee"),
     ("Labeled videos", "paw-labeled-videos"),
     ("Stickplots", "paw-stickplot"),
-    ("Gait metrics", "paw-gait"),
+    ("Gait analysis", "paw-gait"),
 )
 
 
@@ -207,7 +207,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         run_row = QHBoxLayout(run_bar)
         run_row.setContentsMargins(12, 10, 12, 10)
         run_row.setSpacing(10)
-        self.run_readiness_label = QLabel("●  Ready")
+        self.run_readiness_label = QLabel()
+        self.run_readiness_label.hide()
         self.run_readiness_label.setObjectName("RunReadinessBadge")
         self.run_readiness_label.setProperty("readinessState", "ready")
         self.run_readiness_label.setAccessibleName("Run status")
@@ -401,11 +402,11 @@ class AutomatedPipelineProfilesWidget(QWidget):
                 surface.setGraphicsEffect(None)
         icon_specs = (
             (self.remove_videos_button, "trash", theme.STATUS_ERROR),
-            (self.clear_videos_button, "clear", theme.STATUS_ERROR),
+            (self.clear_videos_button, "clear", "#FFFFFF"),
             (self.back_to_automation_button, "arrow-left", theme.TEXT),
             (self.new_profile_button, "plus", theme.PRIMARY_TEXT),
             (self.duplicate_profile_button, "copy", theme.TOOL_1),
-            (self.delete_profile_button, "trash", theme.STATUS_ERROR),
+            (self.delete_profile_button, "trash", "#FFFFFF"),
             (self.open_video_settings_button, "external", theme.PRIMARY),
             (self.open_calibration_settings_button, "external", theme.PRIMARY),
             (self.open_gait_settings_button, "external", theme.PRIMARY),

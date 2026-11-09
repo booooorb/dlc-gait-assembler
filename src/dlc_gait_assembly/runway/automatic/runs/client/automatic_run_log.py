@@ -45,7 +45,8 @@ class AutomaticRunLog:
         self.view.automation_console.ensureCursorVisible()
 
     def _set_pipeline_log_state(self, text: str, state: str) -> None:
-        self.view.pipeline_log_state.setText(f"●  {text}")
+        self.view.pipeline_log_state.setText(f"●  {text}" if state != "ready" else "")
+        self.view.pipeline_log_state.setVisible(state != "ready")
         self.view.pipeline_log_state.setProperty("logState", state)
         self.view.pipeline_log_state.style().unpolish(self.view.pipeline_log_state)
         self.view.pipeline_log_state.style().polish(self.view.pipeline_log_state)

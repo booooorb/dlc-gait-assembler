@@ -232,8 +232,8 @@ def test_every_tool_workspace_uses_the_shared_workspace_contract(monkeypatch):
     for widget in widgets:
         stylesheet = widget.styleSheet()
         assert "QLabel#TitleLabel, QLabel#PreviewTitle" in stylesheet
-        assert "QPushButton#RemoveButton, QPushButton#ClearButton" in stylesheet
-        assert "border-radius: 2px" in stylesheet
+        assert "QPushButton#RemoveButton {" in stylesheet
+        assert "border-radius: 0;" in stylesheet
     video_editor = widgets[1]
     assert not video_editor.remove_videos_button.icon().isNull()
     assert not video_editor.clear_videos_button.icon().isNull()
@@ -288,12 +288,10 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     assert menu.findChild(QWidget, "ManualPipelineMenuPage") is None
     automated_profiles = menu.automated_profiles
     assert isinstance(automated_profiles, AutomatedPipelineProfilesWidget)
-    configuration_tabs = automated_profiles.findChild(QTabWidget, "ProfileConfigurationTabs")
-    assert [configuration_tabs.tabText(index) for index in range(configuration_tabs.count())] == [
-        "1  Video settings",
-        "2  DLC models",
-        "3  Analysis settings",
-    ]
+    assert automated_profiles.findChild(QTabWidget, "ProfileConfigurationTabs") is None
+    content = automated_profiles.configuration_scroll.widget()
+    assert content.isAncestorOf(automated_profiles.include_gait_analysis_button)
+    assert content.isAncestorOf(automated_profiles.models_container)
     assert automated_profiles.run_pipeline_button.text() == "Run pipeline"
     assert automated_profiles.run_pipeline_button.isEnabled()
     assert automated_profiles.workspace_stack.currentWidget() is automated_profiles.automation_page
@@ -304,7 +302,7 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     menu.close()
 
 
-def test_ladder_card_opens_analysis_and_returns_to_the_illustrated_menu():
+def test_ladder_card_is_disabled_and_marked_wip():
     app = QApplication.instance() or QApplication([])
     window = create_main_window()
     window.show()
@@ -312,15 +310,16 @@ def test_ladder_card_opens_analysis_and_returns_to_the_illustrated_menu():
     menu = window._main_menu
     ladder_card = next(card for card in menu.home_page.findChildren(QFrame, "SetupChoiceCard")
                        if card.property("setupAsset") == "ladder-mouse")
+    assert ladder_card.isVisible() and not ladder_card.isEnabled()
+    assert ladder_card.testAttribute(Qt.WA_TransparentForMouseEvents)
+    assert ladder_card.cursor().shape() == Qt.ArrowCursor
+    assert ladder_card.findChild(QLabel, "SetupStatus").text() == "(WIP)"
+    assert window._ladder_button.isHidden() and not window._ladder_button.isEnabled()
     QTest.mouseClick(ladder_card, Qt.LeftButton)
-    assert window.navigation.tool_id == LADDER_TOOL_SPEC.id
-    assert isinstance(window._active_tool, LadderAnalysisWidget)
-    assert not window._manual_stage_expanded
-    assert window.windowTitle() == "DLC Gait Assembler - Ladder Analysis"
-    window._active_tool.back_requested.emit()
-    app.processEvents()
-    assert window._stack.currentWidget() is window._main_menu
-    assert menu.view_stack.currentWidget() is menu.home_page
+    QTest.keyClick(ladder_card, Qt.Key_Return)
+    window.routes._open_tool("ladder_analysis")
+    assert "ladder_analysis" not in window._tool_widgets
+    assert window._stack.currentWidget() is menu
     window.close()
 
 
@@ -376,7 +375,7 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     window.show()
     app.processEvents()
     assert [button.text() for button in window._primary_navigation_buttons] == [
-        "Manual", "Batch run", "Profiles", "Ladder",
+        "Manual", "Batch run", "Profiles",
     ]
     assert window._stack.currentWidget() is window._main_menu
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
@@ -399,7 +398,7 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
         "Video prep",
         "Pose tracking",
         "Knee correction",
-        "Gait metrics",
+        "Gait analysis",
         "PCA + classification",
     ]
     assert all(button.iconSize() == QSize(20, 20) for button in window._manual_stage_buttons.values())

@@ -96,7 +96,8 @@ def build_automatic_run_workspace(self, automation_content, automation_layout):
     console_title.setObjectName("AutomationPanelTitle")
     console_header.addWidget(console_title)
     console_header.addStretch(1)
-    self.pipeline_log_state = QLabel("●  Ready")
+    self.pipeline_log_state = QLabel()
+    self.pipeline_log_state.hide()
     self.pipeline_log_state.setObjectName("PipelineLogState")
     self.pipeline_log_state.setProperty("logState", "ready")
     console_header.addWidget(self.pipeline_log_state)
@@ -110,7 +111,6 @@ def build_automatic_run_workspace(self, automation_content, automation_layout):
     self.automation_console.setToolTip(
         "Read-only activity log for the current automation preview, including stage progress, review pauses, and errors."
     )
-    self.automation_console.setPlainText("[Ready]")
     console_layout.addWidget(self.automation_console, 1)
     automation_content.addWidget(console_panel, 2)
     self.automation_console_panel = console_panel

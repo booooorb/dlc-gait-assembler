@@ -8,7 +8,6 @@ exclusion and omission of the unfinished final cycle are explicit wrapper change
 
 import numpy as np
 import pandas as pd
-from sklearn.mixture import GaussianMixture
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.temporal_speed_mixture import (
     CONTEXT_MIXTURE_METHOD,
@@ -50,6 +49,8 @@ def _mixture_probability(values, trusted, *, high_is_contact=False):
     finite = trusted & np.isfinite(values)
     if finite.sum() < 6 or np.ptp(values[finite]) < 1e-5:
         return np.ones(len(values))
+    from sklearn.mixture import GaussianMixture
+
     model = GaussianMixture(n_components=2, random_state=0, reg_covar=1e-5, n_init=3)
     model.fit(values[finite, None])
     component = int(np.argmax(model.means_) if high_is_contact else np.argmin(model.means_))

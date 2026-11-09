@@ -76,12 +76,12 @@ class AppRouteController:
         self._refresh_stage_navigation()
 
     def _open_tool(self, tool_id: str) -> None:
+        spec = self._tool_spec(tool_id)
+        if spec.widget_factory is None or not spec.enabled:
+            return
         if not self.view.workflows.ensure_profile(lambda: self._open_tool(tool_id)):
             return
         if not self._can_leave_active_tool():
-            return
-        spec = self._tool_spec(tool_id)
-        if spec.widget_factory is None or not spec.enabled:
             return
         tool = self.view._tool_widgets.get(tool_id)
         if tool is None:

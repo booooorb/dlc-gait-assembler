@@ -48,10 +48,10 @@ MANUAL_STAGE_DEFINITIONS = (
     ),
     ManualStageDefinition(
         "gait_parameter_analysis",
-        "Gait Parameter Analysis",
+        "Gait Analysis",
         "Measure stride, stance, and swing",
-        "Gait metrics",
-        "Gait metrics",
+        "Gait analysis",
+        "Gait analysis",
         "paw-gait",
     ),
     ManualStageDefinition(

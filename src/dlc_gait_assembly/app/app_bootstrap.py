@@ -3,9 +3,11 @@
 import sys
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
+from dlc_gait_assembly.app.business.app_navigation_routes import LADDER_UI_ENABLED
 from dlc_gait_assembly.app.infrastructure.app_preferences_store import AppPreferencesStore
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
     AutomaticProfileAssetReader,
@@ -19,6 +21,7 @@ from dlc_gait_assembly.shared.client.theme.theme_font_loader import interface_fo
 from dlc_gait_assembly.shared.client.theme.theme_qt_palette import (
     application_palette as _dependency_theme_application_palette,
 )
+from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
 from dlc_gait_assembly.shared.infrastructure.workspace_path_resolver import resolve_workspace
 
 THEME_MODES = {"light", "dark"}
@@ -148,7 +151,7 @@ def build_tool_specs():
         lambda: LadderAnalysisWidget(
             use_cases=create_ladder_use_cases(), media_access=create_media_access(), workspace=resolve_workspace()
         ),
-        True,
+        LADDER_UI_ENABLED,
         description="Detect, review, and export ladder-rung footfall events.",
     )
     from dataclasses import replace
@@ -157,7 +160,7 @@ def build_tool_specs():
 
     snapshot_providers = {
         "manual_calibration": lambda page: ManualProfileSnapshot(
-            calibration=page.settings_snapshot(), calibration_map=page.profile_calibration_map_path()
+            calibration=page.settings_snapshot()
         ),
         "video_processing": lambda page: ManualProfileSnapshot(
             video=page.settings_snapshot(), processing_manifest=page.profile_manifest_path()
@@ -183,6 +186,7 @@ def build_tool_specs():
 def create_main_window(*, profile_store=None, **options):
     from dlc_gait_assembly.app.client.app_shell_window import MainWindow
 
+    QApplication.setWindowIcon(QIcon(str(resource_path("branding", "paw-track-app.svg"))))
     (tools, ladder) = build_tool_specs()
     return MainWindow(tool_specs=tools, ladder_spec=ladder,
         menu_factory=lambda specs: create_main_menu(specs, profile_store=profile_store), **options)

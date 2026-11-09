@@ -172,6 +172,9 @@ class WorkspaceChoiceCard(QFrame):
         group.start()
 
     def enterEvent(self, event) -> None:
+        if not self.isEnabled():
+            super().enterEvent(event)
+            return
         previous = WorkspaceChoiceCard._active_hover_card
         if previous is not None and previous is not self:
             previous._reset_hover_immediately()

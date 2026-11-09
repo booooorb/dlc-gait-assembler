@@ -181,8 +181,9 @@ def apply_page(tool_id, page, saved, *, restore_files):
     _apply_controls(view, saved)
     if tool_id == "gait_parameter_analysis":
         enabled = set(saved.get("parameters", view.parameter_selection.enabled_parameter_names()))
-        for definition, item in view.parameter_selection._items:
-            item.setCheckState(1, Qt.Checked if definition.name in enabled else Qt.Unchecked)
+        with QSignalBlocker(view.parameter_selection.tree):
+            for definition, item in view.parameter_selection._items:
+                item.setCheckState(1, Qt.Checked if definition.name in enabled else Qt.Unchecked)
         view.setup._update_workflow()
         view.setup._update_input_mode()
         view.setup._update_analysis_mode()
