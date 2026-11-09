@@ -294,8 +294,8 @@ def test_gait_tabs_animate_and_keyboard_navigation_changes_the_settings_page():
     runway.close()
 
 
-def test_gait_tabs_scroll_independently_and_pane_divider_can_be_dragged():
-    app = QApplication.instance() or QApplication([])
+def test_gait_tabs_scroll_independently_and_pane_divider_can_be_dragged(themed_gait_application):
+    app = themed_gait_application
     runway = AlmaKinematicsWidget(
         preview=create_gait_preview(), analysis=create_gait_analysis_operations(), workspace=resolve_workspace()
     )

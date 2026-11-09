@@ -10,7 +10,6 @@ from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox, QPushButt
 from dlc_gait_assembly.app.app_bootstrap import create_gait_analysis_operations, create_gait_preview
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_analysis_contracts import AlmaRunResult
 from dlc_gait_assembly.runway.manual.gait_analysis.client.gait_analysis_view import AlmaKinematicsWidget
-from dlc_gait_assembly.shared.client.theme.theme_application_styles import application_stylesheet
 from dlc_gait_assembly.shared.infrastructure.workspace_path_resolver import resolve_workspace
 
 
@@ -45,10 +44,8 @@ def test_csv_upload_uses_the_available_height_and_does_not_silently_skip_extra_f
 
 
 @pytest.fixture
-def view():
-    app = QApplication.instance() or QApplication([])
-    old_style = app.styleSheet()
-    app.setStyleSheet(application_stylesheet())
+def view(themed_gait_application):
+    app = themed_gait_application
     widget = AlmaKinematicsWidget(
         preview=create_gait_preview(), analysis=create_gait_analysis_operations(), workspace=resolve_workspace()
     )
@@ -57,7 +54,6 @@ def view():
     app.processEvents()
     yield widget
     widget.close()
-    app.setStyleSheet(old_style)
     app.processEvents()
 
 

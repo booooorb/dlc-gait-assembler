@@ -77,6 +77,14 @@ jobs:
           assert not profile.gait_analysis_enabled and profile.knee_correction_enabled
           apply_theme_mode(app, window, "dark")
           QTest.qWait(100)
+          window.routes._open_tool("gait_parameter_analysis")
+          QTest.qWait(100)
+          runway = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
+          for row in runway.settings_section_rows:
+              for tab in range(row.count()):
+                  if row.isTabVisible(tab):
+                      assert row.rect().contains(row.tabRect(tab))
+          assert runway.controls_scroll.horizontalScrollBar().maximum() == 0
           assert window.close()
           '@ | python -
       - name: Run regression tests
