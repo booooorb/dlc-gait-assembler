@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QCompleter,
     QDialog,
@@ -30,14 +31,19 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_coordinate_cont
     AlmaViewCsvSet,
     StrokeStudyMetadata,
 )
-from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_input_pairing import build_view_pair_rows
+from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_input_pairing import (
+    build_view_pair_rows,
+    csv_view_evidence,
+    csv_view_from_bodyparts,
+    csv_view_group_key,
+)
 from dlc_gait_assembly.shared.client.theme.theme_application_styles import workspace_stylesheet
 
 VIEWS = ("left", "right", "bottom")
 
 
 class CsvPairingDialog(QDialog):
-    def __init__(self, csv_files: list[Path], initial_sets: list[AlmaViewCsvSet], parent=None):
+    def __init__(self, csv_files: list[Path], initial_sets: list[AlmaViewCsvSet], parent=None, *, bodyparts_by_path=None):
         super().__init__(parent)
         self.setObjectName("CsvPairingDialog")
         self.setWindowTitle("Pair recording views")
@@ -46,14 +52,11 @@ class CsvPairingDialog(QDialog):
         self._csv_files = list(dict.fromkeys(Path(path).expanduser().resolve() for path in csv_files))
         self._rows = []
         self._pairings = []
+        self._bodyparts = bodyparts_by_path or {}
+        self._unused = []
         layout = QVBoxLayout(self)
         title = QLabel("One recording per row · left, right, and bottom views")
         layout.addWidget(title)
-        guidance = QLabel(
-            "Type in a file field to search. Uncertain matches stay empty for you to choose. Full paths appear on hover."
-        )
-        guidance.setWordWrap(True)
-        layout.addWidget(guidance)
         actions = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Find a recording or filename…")
@@ -61,7 +64,7 @@ class CsvPairingDialog(QDialog):
         self.auto_pair_button = QPushButton("Auto-fill unmatched views")
         self.remove_button = QPushButton("Remove selected")
         self.auto_pair_button.setToolTip(
-            "Fill unassigned views using filenames or view folders. Keep existing assignments and study details."
+            "Match recording names and camera folders, using explicit body-part labels when available. Keep existing assignments and study details."
         )
         for widget in (self.search_edit, self.auto_pair_button, self.add_set_button, self.remove_button):
             actions.addWidget(widget)
@@ -82,6 +85,10 @@ class CsvPairingDialog(QDialog):
         self.unassigned_label.setWordWrap(True)
         self.unassigned_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.unassigned_label)
+        self.exclude_unassigned = QCheckBox("Exclude unassigned CSVs from this workflow")
+        self.exclude_unassigned.setToolTip("Remove these CSVs from the input list when you apply the pairings.")
+        self.exclude_unassigned.toggled.connect(self._refresh_status)
+        layout.addWidget(self.exclude_unassigned)
         self.details_toggle = QToolButton()
         self.details_toggle.setText("Study details for selected recording")
         self.details_toggle.setCheckable(True)
@@ -121,7 +128,7 @@ class CsvPairingDialog(QDialog):
         self.table.setCellWidget(index, 0, row["name"])
         for column, view in enumerate(VIEWS, start=1):
             selected = getattr(view_set, f"{view}_csv") if view_set else suggestion.get(view) if suggestion else None
-            combo = self._path_combo(selected)
+            combo = self._path_combo(selected, view=view, recording=row["name"].text())
             row[view] = combo
             self.table.setCellWidget(index, column, combo)
             combo.currentIndexChanged.connect(self._refresh_status)
@@ -148,7 +155,7 @@ class CsvPairingDialog(QDialog):
             grid.addWidget(QLabel(label), field_index // 2, (field_index % 2) * 2)
             grid.addWidget(editor, field_index // 2, (field_index % 2) * 2 + 1)
         lesion = QComboBox()
-        lesion.addItems(["unknown", "left", "right"])
+        lesion.addItems(["unknown", "none", "left", "right"])
         lesion.setCurrentText(metadata.lesion_hemisphere if metadata else "unknown")
         row["lesion_hemisphere"] = lesion
         grid.addWidget(QLabel("Lesion hemisphere"), 3, 0)
@@ -176,7 +183,7 @@ class CsvPairingDialog(QDialog):
         row["details"].deleteLater()
         self._refresh_status()
 
-    def _path_combo(self, selected=None):
+    def _path_combo(self, selected=None, *, view=None, recording=""):
         combo = QComboBox()
         combo.setEditable(True)
         combo.setInsertPolicy(QComboBox.NoInsert)
@@ -184,7 +191,12 @@ class CsvPairingDialog(QDialog):
         combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         combo.setMinimumContentsLength(10)
         combo.addItem("Choose CSV…", "")
-        for path in self._csv_files:
+        def rank(path):
+            inferred, _ = csv_view_evidence(path, self._bodyparts.get(path, ()))
+            return (inferred != view, csv_view_group_key(path) != recording,
+                    inferred is not None and inferred != view, path.name.casefold(), str(path.parent))
+
+        for path in sorted(self._csv_files, key=rank):
             combo.addItem(csv_choice_label(path, self._csv_files), str(path))
             combo.setItemData(combo.count() - 1, str(path), Qt.ToolTipRole)
         combo.completer().setCompletionMode(QCompleter.PopupCompletion)
@@ -198,7 +210,7 @@ class CsvPairingDialog(QDialog):
         return combo
 
     def _use_filename_pairs(self):
-        for suggestion in build_view_pair_rows(self._csv_files):
+        for suggestion in build_view_pair_rows(self._csv_files, self._bodyparts):
             candidates = {view: suggestion.get(view) for view in VIEWS}
             if not any(candidates.values()):
                 continue
@@ -238,6 +250,11 @@ class CsvPairingDialog(QDialog):
                     missing.append(view)
                 else:
                     paths.setdefault(path, []).append(index)
+                    inferred = csv_view_from_bodyparts(self._bodyparts.get(path, ()))
+                    if inferred is None:
+                        inferred, _ = csv_view_evidence(path)
+                    if inferred is not None and inferred != view:
+                        errors[index].append(f"{view.title()} CSV appears to be {inferred} view")
             if missing:
                 errors[index].append("Missing " + ", ".join(missing))
         for indices in names.values():
@@ -257,14 +274,24 @@ class CsvPairingDialog(QDialog):
             for view in VIEWS:
                 row[view].setToolTip(str(combo_path(row[view]) or "Search and select a CSV"))
         ready = sum(not problems for problems in errors)
-        self.summary_label.setText(f"{ready} ready · {len(errors) - ready} need attention")
         used = {combo_path(row[view]) for row in self._rows for view in VIEWS}
         unused = [path for path in self._csv_files if path not in used]
+        self._unused = unused
+        summary = f"{ready} recording{'s' if ready != 1 else ''} ready"
+        if ready != len(errors):
+            summary += f" · {len(errors) - ready} need attention"
+        if unused:
+            summary += f" · {len(unused)} unassigned CSV{'s' if len(unused) != 1 else ''}"
+        self.summary_label.setText(summary)
         names = ", ".join(path.name for path in unused[:4])
         extra = f" (+{len(unused) - 4} more)" if len(unused) > 4 else ""
         self.unassigned_label.setText(f"{len(unused)} unassigned CSVs" + (f": {names}{extra}" if unused else ""))
         self.unassigned_label.setToolTip("\n".join(str(path) for path in unused))
-        self.buttons.button(QDialogButtonBox.Save).setEnabled(bool(self._rows) and ready == len(self._rows))
+        self.exclude_unassigned.setVisible(bool(unused))
+        self.exclude_unassigned.setText(f"Exclude {len(unused)} unassigned CSV{'s' if len(unused) != 1 else ''} from this workflow")
+        self.buttons.button(QDialogButtonBox.Save).setEnabled(
+            bool(self._rows) and ready == len(self._rows) and (not unused or self.exclude_unassigned.isChecked())
+        )
         self.remove_button.setEnabled(bool(self._rows))
         self._filter_rows()
 
@@ -290,6 +317,8 @@ class CsvPairingDialog(QDialog):
                 raise ValueError(f"{row['name'].text()}: {'; '.join(problems)}")
         if not self._rows:
             raise ValueError("Add at least one recording.")
+        if self._unused and not self.exclude_unassigned.isChecked():
+            raise ValueError("Assign every CSV or select Exclude unassigned CSVs.")
         return [
             AlmaViewCsvSet(
                 name=row["name"].text().strip(),
@@ -315,6 +344,9 @@ class CsvPairingDialog(QDialog):
 
     def pairings(self):
         return list(self._pairings)
+
+    def excluded_paths(self):
+        return list(self._unused) if self.exclude_unassigned.isChecked() else []
 
 
 def combo_path(combo):

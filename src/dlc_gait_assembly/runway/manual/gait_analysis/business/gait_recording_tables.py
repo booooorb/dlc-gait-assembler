@@ -12,12 +12,6 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_det
     BOTTOM_METHODS,
     bottom_detection,
 )
-from dlc_gait_assembly.runway.manual.gait_analysis.business.custom_features.custom_sop_feature_calculations import (
-    extract_custom_sop_parameters,
-)
-from dlc_gait_assembly.runway.manual.gait_analysis.business.custom_features.custom_sop_feature_definitions import (
-    CUSTOM_SOP_PARAMETER_NAMES,
-)
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_bottom_windows import (
     BOTTOM_FORE_NAMES,
     BOTTOM_STRIDE_NAMES,
@@ -25,13 +19,18 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_bottom_windows 
     BottomWindows,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_coordinate_contracts import AlmaViewCsvSet
+from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_recovery_summary import recovery_summary
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_stride_export import (
     FRAME_COLUMNS,
     STRIDE_DETAIL_COLUMNS,
     validate_stride_rows,
 )
+from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_swing_extraction import extract_swing_features
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.alma_parameter_definitions import (
     ALMA_PARAMETER_NAMES,
+)
+from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.gait_export_dictionary import (
+    parameter_dictionary,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.gait_parameter_registry import (
     rustlab1_definition,
@@ -59,6 +58,7 @@ PARAMETER_FILENAMES = {
     "right": "right_stride_parameters.csv",
     "side": "side_stride_parameters.csv",
     "general": "general_parameters/general_parameters.csv",
+    "dictionary": "general_parameters/parameter_dictionary.csv",
 }
 
 
@@ -68,12 +68,7 @@ def side_feature_names(side, scope):
         for name in rustlab1_parameter_names_for_scope(scope)
         if rustlab1_definition(name).views == f"{side.title()} side view"
     )
-    custom = tuple(
-        name
-        for name in CUSTOM_SOP_PARAMETER_NAMES
-        if name.startswith(f"{side}_") and name != "left_right_hindlimb_phase_offset"
-    )
-    return rustlab, custom
+    return rustlab
 
 
 def metadata(table, item, side):
@@ -158,12 +153,18 @@ def calculate_recording_tables(item, settings, outputs, *, figures, calculate=ca
         table["source_start_frame"] = [track.frame_ids[int(a)] for a in cycles[FRAME_COLUMNS[0]]]
         table["source_end_frame"] = [track.frame_ids[int(b)] for b in cycles[FRAME_COLUMNS[1]]]
         table.insert(0, "gait_cycle", range(1, len(table) + 1))
+        current = replace(settings_for_view(settings, side), frame_rate=track.frame_rate)
+        swing = extract_swing_features(
+            track.frame, cycles, current, alma_signal_filter,
+            result[1].attrs.get("pixels_per_cm") if result[1] is not None else None,
+            view_mapping_for(mappings, side) if paired else None,
+        )
+        table = pd.concat([table, swing], axis=1)
         if paired:
             raw, prepared = aligned_features(tracks, side, settings, mappings, alma_signal_filter)
             current = replace(settings, frame_rate=track.frame_rate)
             rustlab = extract_rustlab1_parameters(raw, cycles, current, alma_signal_filter, prepared)
-            custom = extract_custom_sop_parameters(raw, cycles, current, alma_signal_filter, prepared)
-            rust_names, custom_names = side_feature_names(side, settings.limb_scope)
+            rust_names = side_feature_names(side, settings.limb_scope)
             rust_frame = rustlab.dataframe if rustlab.dataframe is not None else pd.DataFrame(index=table.index)
             forelimbs = settings.limb_scope == "Hindlimb + Forelimb"
             bottom_names = (*BOTTOM_STRIDE_NAMES, *(BOTTOM_FORE_NAMES if forelimbs else ()), *BOTTOM_TIME_COLUMNS)
@@ -172,7 +173,6 @@ def calculate_recording_tables(item, settings, outputs, *, figures, calculate=ca
                 [
                     table,
                     rust_frame.reindex(columns=rust_names),
-                    custom.dataframe.reindex(columns=custom_names),
                     bottom_frame,
                 ],
                 axis=1,
@@ -202,7 +202,12 @@ def calculate_recording_tables(item, settings, outputs, *, figures, calculate=ca
         messages.append(
             f"{side.title()}: {len(cycles)} stride rows; {accepted} accepted for ALMA measurements. No opposite-side stride pairing is applied."
         )
-    general = {"recording": item.name if isinstance(item, AlmaViewCsvSet) else Path(item).stem}
+    general = {
+        "recording": item.name if isinstance(item, AlmaViewCsvSet) else Path(item).stem,
+        "calibration_method": settings.calibration_method,
+    }
+    for side, result in figures.sides.items():
+        general[f"{side}_pixels_per_cm"] = result[1].attrs.get("pixels_per_cm") if result[1] is not None else None
     for side, track in tracks.items():
         general.update(
             {
@@ -225,9 +230,15 @@ def calculate_recording_tables(item, settings, outputs, *, figures, calculate=ca
                 **bottom.general(common_start, common_stop),
             }
         )
+        lesion = item.metadata.lesion_hemisphere if item.metadata else "unknown"
+        general.update(recovery_summary(tables, settings, common_start, common_stop, lesion))
+        messages.append(
+            f"Stroke recovery: independent side medians in the common interval; at least {settings.minimum_synchronized_cycles} valid strides per side for asymmetry. Signed results require lesion hemisphere metadata."
+        )
     else:
         general["synchronization_status"] = "Unavailable: single side recording"
     if isinstance(item, AlmaViewCsvSet) and item.metadata:
         general.update(asdict(item.metadata))
     tables["general"] = pd.DataFrame([general])
+    tables["dictionary"] = parameter_dictionary(tables)
     return tables, tuple(messages)

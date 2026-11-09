@@ -24,22 +24,26 @@ The existing `python gait_assembler.py` and `python -m dlc_gait_assembly` launch
 
 Installed wheels contain their fonts, icons, branding, scientific defaults, environment recipes, and preview examples. Neither the working directory nor a root `assets/` or upstream checkout is required. Scientific analysis uses the application environment by default. `DLC_GAIT_ALMA_PYTHON` optionally selects an external scientific interpreter; that environment must contain the same installed application version and scientific dependencies.
 
-## Choose a workflow
+## Manual workflow
 
-**Runway → Manual** presents these stages in application order:
+The app opens on the illustrated Runway and Ladder menu. Choose **Runway analysis** to load or create the profile shared by the manual tools and automated runs. Runway opens the saved manual stage when available and starts at Calibration otherwise. Switch stages from the toolbar.
 
 | Stage | Inputs and responsibility | Main handoff |
 | --- | --- | --- |
 | Calibration | Measure reference sticks on images/video frames; assess spatial scale by location, axis, and camera. | Conversion-map JSON and assessment report. |
-| Video Processing | Select crop and inversion rectangles, per-video flips, trim ranges, enhancements, quality, and encoding preset. | Processed videos grouped by region, plus reusable settings and session manifests. |
+| Video Processing | Select crop and inversion rectangles, per-video flips, trim ranges, enhancements, quality, and encoding preset. | Processed videos grouped by region, plus settings saved with the active workflow. |
 | DeepLabCut | Use the separately installed pose-estimation environment and inspect project/model availability. | Paired CSV/H5 coordinates and labeled review videos in separate folders. |
 | Knee Correction | Pair coordinate datasets, choose markers, segment lengths, direction, likelihood, and calibration. Review original and reconstructed knees. | Paired corrected CSV/H5 coordinates and correction reports. |
 | Gait Analysis | Pair cameras, map body parts, configure calibration/timing/detection/filtering, review the full-recording preview, then analyze. | Per-recording stride/general tables, supported figures, stickplots, and run reports. |
 | PCA / Random Forest | Combine recording summaries, audit eligible features, and run cohort analyses. | PCA, animal-grouped classification, repeated-measures models, tables, and figures. |
 
-For gait analysis, choose **ALMA + post-ALMA features** or **RustLab1 standalone (three-view)**. ALMA supports single-side or matched left/right/bottom input. Standalone RustLab1 requires all three views, its own bottom reference paw, and its own stride-QC settings. It runs independently of ALMA and custom/synchronized post-ALMA calculations.
+For gait analysis, choose **ALMA + post-ALMA features** or **RustLab1 standalone (three-view)**. ALMA supports single-side or matched left/right/bottom input. Standalone RustLab1 runs the packaged `Run_GMM_Adapted_RustLab1.R` analysis supplied with the GX10564 reference recording. It requires all three synchronized views and detects each side's hind-toe Speed GMM cycles independently. R retains finite parameter coordinates, repairs short missing-coordinate gaps only within accepted cycles, applies fifth-order zero-phase Butterworth filtering, and exports the full 106-row catalog. Forelimb entries remain missing by the script's hindlimb scope. It runs independently of ALMA and custom/synchronized post-ALMA measurements.
 
-**Runway → Automatic** has three responsibilities: profiles store configuration and owned assets; runs execute the six stages; review approves the produced videos and stickplots or links to the manual stage for corrections. Create a profile from typed manual-settings snapshots or imported manifests, assign a DeepLabCut model to each processing region, add videos, and start the run. Review gates follow processed videos, labeled videos, and stickplots. Cancellation also releases a waiting review. Automatic stages call the same manual business operations.
+Standalone RustLab1 requires **Rscript** with the R packages **dplyr**, **tidyr**, and **jsonlite**. Install these with `Rscript -e 'install.packages(c("dplyr", "tidyr", "jsonlite"), repos="https://cloud.r-project.org")'`. `DLC_GAIT_RSCRIPT` optionally selects the Rscript executable. Missing R or packages produce an explicit error; the application does not substitute the Python measurement implementation. Set the recording's actual frame rate and calibration before analysis. Without an explicit scale in manual mode, the adapted script's arbitrary reference scale of 31.3667 px/cm is retained and recorded in the manifest; it is not a measured calibration of a new recording.
+
+Each recording gets a separate session directory containing `all_raw_data.csv`, `all_summarized_data.csv`, `Per_stride_parameters.csv`, `Stride_detection.csv`, side-specific SVG previews, optional PNG stick plots, a run configuration, R log, and a provenance manifest. Preview and export both use R-smoothed coordinates and the same independently computed phase labels. The GX10564 regression fixture uses 239.76 fps, 6 Hz, timing likelihood 0.5, 11-frame coordinate-gap repair, and the supplied 31.3667 px/cm reference scale (31.37 px/cm for the original stride-length formula).
+
+Use **Automation settings** in the toolbar to assign a DeepLabCut model to each processing region and select stages for the active profile. Save video, calibration, gait, and knee settings directly from the manual tools. Use **Automated** to add videos and start the run with that profile. Review gates follow processed videos, labeled videos, and stickplots and link to manual tools for corrections. Cancellation also releases a waiting review. Automatic stages call the same manual business operations.
 
 **Ladder** is an independent workflow: select single/dual coordinate inputs and matching videos, configure paw markers/confidence/detection thresholds, detect events, review or reclassify them, and export the reviewed collection.
 
@@ -49,9 +53,7 @@ For gait analysis, choose **ALMA + post-ALMA features** or **RustLab1 standalone
 src/dlc_gait_assembly/
   app/                       Application shell, routing, preferences, and dependency assembly
   runway/
-    client/                  Runway entry menu
     manual/
-      client/                Ordered manual-stage directory
       business/              Manual-stage identities and labels
       calibration/
       video_processing/
@@ -111,7 +113,7 @@ workspace/
   migrations/                Plans, journals, original metadata backups, and preserved output context
 ```
 
-Recording names and paired coordinate filenames remain intact. Processing sessions allocate unique directories; automatic runs keep numbered stage directories and a final run manifest. Existing profile formats 1–5 retain their meaning and IDs unless divergent saved profiles collide. Generated Markdown reports are supported within ignored session data.
+Recording names and paired coordinate filenames remain intact. Processing sessions allocate unique directories; automatic runs keep numbered stage directories and a final run manifest. Existing profile formats 1–5 open as workflow profiles and retain their IDs unless divergent saved profiles collide. Generated Markdown reports are supported within ignored session data.
 
 Migration is an explicit maintenance operation; application startup never relocates data. First create and inspect a dry-run plan, then apply it with a new journal:
 
@@ -128,18 +130,64 @@ Local context is preserved under `references/DLC-Gait-Analysis-main/`, `referenc
 
 ## Scientific outputs and controls
 
-Each recording retains independent `left_stride_parameters.csv`, `right_stride_parameters.csv`, and `general_parameters/general_parameters.csv` outputs (single-side inputs use `side_stride_parameters.csv`). The default Hindlimb side file contains 53 measurement columns; Hindlimb + Forelimb contains 75 per side. Unavailable measurements remain blank. ALMA's multi-stride variability over 5 or 10 strides is excluded; within-cycle standard deviations remain available.
+Gait analysis uses **Files → Preview → Results**, with a separate **Log** tab.
+All settings are directly visible in two rows: **Setup**, **Calibration**,
+**Strides**, **Output**, **Filters**, **Movement**, **Labels**, and **Parameters**.
+**Camera timing (optional)** expands when needed and opens
+automatically when a camera override is entered or loaded. Choose the save folder
+and load or save reusable settings under **Output**; open completed files or their
+folder under **Results**. The **Help** menu contains both reference guides.
 
-ALMA, RustLab1, and custom measurements share the configured confidence, interpolation, and Butterworth-filtering pass. Post-ALMA features retain the selected detector's exact canonical cycle boundaries. Each side keeps all its own strides; camera data are aligned by timestamps, never by left/right row number. Bottom-view calculations use the four paw labels `lhpaw`, `rhpaw`, `lfpaw`, and `rfpaw`; tail-base and bottom-center markers are not required.
+The active profile stays visible in the toolbar. **Save** (Ctrl/Cmd+S) saves settings from all open tools, CSV pairings and study metadata, video regions, per-video trims, calibration drawings, output locations, and the automation queue. You can save incomplete setups. The app checks requirements when you start a run. **Save as…** makes a separate profile. Switching or closing offers Save, Discard or Cancel when there are edits.
 
-Choose **Output → Save results to**, review a current stickplot, and run analysis. The default export includes supported ALMA/RustLab1 figures, side stickplots, and a report explaining accepted strides and unavailable measurements. **Output → View all parameter figures…** displays every exported measurement and cycle. Changes to inputs or analysis settings invalidate the preview; stale worker results cannot re-enable analysis.
+Reopening a profile always restores settings. If it has previous videos or CSVs, choose **Restore files** or **Settings only**; missing files are skipped. Source videos and coordinate CSVs are referenced in place. Existing automation profiles remain readable, and pipeline settings/assets are still stored internally in their established formats for the analysis runners. Per-tool manifest import/export controls are replaced by the shared profile controls in the application. Automation uses the saved ALMA side workflow (including the combined underside R analysis). Standalone RustLab1 settings are retained for manual analysis; automation preflight prevents silently substituting ALMA for that choice.
+
+The CSV area fills the Files page and accepts dropped CSVs. Pairing uses matching recording identities and camera filenames/folders, with explicit body-part labels as additional evidence. Ambiguous, duplicate, or conflicting files remain visible. Resolve them, remove selected recordings, or explicitly exclude unassigned CSVs in the pairing dialog before preview or analysis. Manual names, assignments, and study metadata are retained when adding more recordings.
+
+The **Calibration checks** panel replaces the former SOP-check label. The retired Custom SOP family is absent from selection, documentation, and exports, including legacy workflow exports.
+
+In **Manual → Gait analysis**, choose a workflow:
+
+| Workflow | CSV outputs per recording |
+| --- | --- |
+| **ALMA** | Native `left_stride_parameters.csv` and `right_stride_parameters.csv`, or `side_stride_parameters.csv` for a single side. No additional measurement families or comparison calculations. |
+| **ALMA side + rust bottom** | Both native ALMA side-stride files, plus RustLab-format `all_raw_data.csv` and `all_summarized_data.csv`. Requires matched left, right and bottom inputs. |
+| **RustLab1 standalone (three-view)** | Existing independent R workflow and its original 106-row catalog. |
+
+ALMA CSVs retain the original column order, index column, values and fractional percentage convention. Only the twelve multi-stride variability columns are removed. Each side retains every one of its own detected strides. Within-stride standard deviations remain. Stick plots use the same side calculations as the CSVs. Choose **Output → Save results to**, review a current stickplot, and run analysis.
+
+The combined workflow executes the separate packaged script `resources/analysis/rustlab1/Run_ALMA_Side_Rust_Bottom.R`. It calculates only the original twenty underside measures: two diagonal coordination ratios, six timing/stride-length measures, and twelve paw-to-body-center angle measures. It uses RustLab's original bottom-paw speed rule (default 7 px/frame, tracking cutoff 100 px/frame), the configured likelihood cutoff, and the bottom camera's FPS and horizontal calibration. It does not calculate RustLab side-view measures. Missing forepaws or measured body centers leave their dependent rows `NA`; centers are never inferred. The original requirement of more than ten phase transitions is retained. Missing bottom calibration leaves distance measures `NA`.
+
+For each participant/session, the RustLab raw file also contains `left__<ALMA parameter>__mean`, `left__<ALMA parameter>__sd`, and corresponding right-side measures. These use every finite stride measurement from that side's entire session, with sample SD (`n - 1`). A singleton SD and statistics with no valid observations remain `NA`. There are 148 rows: twenty underside measures plus 128 ALMA statistics. ALMA statistics use the same native units as the ALMA CSVs.
+
+RustLab CSV serialization is unchanged: `all_raw_data.csv` has R row names followed by `full_id,day,mouse,Measure,Value,ParameterGroup`; `all_summarized_data.csv` has R row names followed by `day,Measure,ParameterGroup,Mean,median,sd,sem`. Strings are quoted and missing values are unquoted `NA`. ALMA session mean and stride SD are separate `Measure` rows in both files. The summary file's statistical columns retain their original role of summarizing participant-level values; for a single participant, its `sd` and `sem` columns are `NA`. This keeps stride SD distinct from between-participant SD while preserving both original schemas.
+
+The combined workflow needs R with `dplyr`, `tidyr` and `jsonlite`; set `DLC_GAIT_RSCRIPT` if `Rscript` is not on PATH. Exported manifests retain the workflow through `output_format: alma` or `alma_side_rust_bottom`. Older manifests without this field retain their legacy augmented exports when executed through the API or automatic pipeline. The legacy details below describe those older exports and the retained reference browser.
+
+### Legacy stroke recovery extraction types
+
+The parameter browser separates spatiotemporal measures, limb kinematics, swing-phase kinematics, interlimb coordination, bilateral asymmetry, and stride variability. Its type filter changes the displayed rows; all applicable measurements remain in the export. The parameter reference gives formulas, units, measurement level, paper links, and interpretation notes.
+
+[Weber et al. (2022)](https://doi.org/10.1186/s12915-022-01434-9) motivates retaining paw vertical movement, protraction/retraction, stance timing, and diagonal coordination, including forepaw/wrist outcomes when **Hindlimb + Forelimb** is selected. [ALMA](https://doi.org/10.1038/s42003-022-03077-6) remains the source of the authoritative stride boundaries and core hindlimb kinematics. New swing and asymmetry measures are explicitly labelled study-derived extensions rather than additional validated endpoints from those papers.
+
+| Extraction type | Added outputs | Measurement contract |
+| --- | --- | --- |
+| Limb kinematics | `hindpaw_robust_excursion (cm)` | P95 minus P5 of toe position relative to hip along camera X, with the side's own scale. |
+| Swing-phase kinematics | Mean toe clearance, time of peak clearance, knee and ankle swing ROM | Use the ALMA stance/swing split and configured filtering/FPS. Clearance is relative to the cycle's median stance toe Y; image Y must increase downward. All required samples in a measurement window must be observed. Flat or below-ground traces have no identifiable clearance-peak time. |
+| Interlimb coordination | Reference/opposite hindlimb single support and departure from 50% alternation | Time-weighted bottom windows. Hindlimb single support describes the two hindpaws, not the total number of paws contacting the floor. Alternation error is not deviation from an animal's baseline. |
+| Bilateral asymmetry | Absolute symmetry index and signed lesion asymmetry for eight hindlimb outcomes; three additional forelimb outcomes in combined scope | Compare independent side medians of complete accepted strides within the common camera interval. Record both medians and valid-stride counts. ALMA step height supplies the existing hindpaw vertical excursion, avoiding a duplicate RustLab1 column. No row pairing or stride truncation. |
+| Stride variability | Per-side CV of stride duration, stride length, and step height | `100 × sample SD / abs(mean)` across complete accepted same-side strides; requires at least three strides and the configured minimum count. This differs from within-cycle SD and the retired ALMA trajectory-variability measures. |
+
+The [rodent symmetry-index convention](https://doi.org/10.1007/s11357-024-01210-3) is `200 × abs(L - R) / (abs(L) + abs(R))`, with 0 indicating symmetry. This application applies it to recording-level side medians, not matched stride pairs. Signed lesion asymmetry uses `200 × (contralesional - ipsilesional) / (abs(contralesional) + abs(ipsilesional))`; positive means the contralesional measurement is larger, not necessarily better. Set the **lesion hemisphere** in recording pairing. Unknown/none leaves signed results blank while absolute symmetry remains available. Zero denominators and insufficient counts remain blank with a status. **Filters → Minimum strides per side** defaults to five as a study QC choice. Median cycle velocity is retained for each side because speed can affect gait comparisons. These descriptive values do not establish recovery or substitute for longitudinal baseline comparisons.
+
+Main multiview bottom contact states use the calibrated cm/s threshold (default 10 cm/s), including diagonal coordination and forepaw cycle duration. **Filters → Use Weber tracking and contact thresholds** sets the shared likelihood cutoff to 0.95 and swing speed to 10 cm/s; it preserves the recording's actual FPS and calibration. The independent standalone RustLab1 R workflow uses side-toe Speed GMM timing. The legacy `mean_hindlimb_base_support` remains a Euclidean paw-separation measure, not anatomical transverse step width. A common field of view alone does not establish camera synchronization; review offsets and timing provenance.
 
 ### Troubleshooting
 
 - **Run Gait Analysis is disabled:** complete the inputs/output folder and generate a current preview.
 - **No strides are found:** check marker mapping, walking direction, calibration, likelihood, frame rate, and stride filters.
 - **Multi-view measurements are missing:** review camera pairing, timestamps, body-part mappings, and per-camera scale.
-- **Standalone RustLab1 has fewer than two onsets:** review the bottom reference paw, confidence default (0.95), and stance-speed default (7 px/frame).
+- **Standalone RustLab1 has too few complete cycles:** review each side's hind-toe labels, timing likelihood (default 0.5), frame rate, and **Speed GMM → Minimum cycles per side**.
 - **Cohort analysis cannot run:** check animal/group identifiers, baseline phases, eligible features, and the run log's data requirements.
 
 Use **Review pairings…** (or double-click a recording) for missing/duplicate camera assignments. Matching recognizes camera names in files or sibling folders and ignores DeepLabCut scorer suffixes; ambiguous files stay unassigned. Auto-fill preserves explicit assignments and study metadata. Side-view `back_toe` maps to ALMA's `toe`.
@@ -160,7 +208,7 @@ Architecture tests enforce unique shipped module names and ownership docstrings,
 
 ## Provenance and licenses
 
-ALMA is the Automated Limb Motion Analysis toolbox by Aljovic, Zhao et al. ([Communications Biology, 2022](https://doi.org/10.1038/s42003-022-03077-6); [upstream source](https://github.com/sollan/alma)). The maintained ALMA calculations derive from the preserved ALMA implementation; their GPL-3.0 license text ships in `resources/licenses/ALMA-LICENSE`. Attribution and original context remain locally under ignored references. RustLab1 and custom SOP implementations, parameter metadata, and example-preview provenance remain identifiable by their named modules and in-app documentation. Noto Sans, Geist, and Tabler notices are packaged under `resources/licenses/`. These resources are included in both source installations and wheels.
+ALMA is the Automated Limb Motion Analysis toolbox by Aljovic, Zhao et al. ([Communications Biology, 2022](https://doi.org/10.1038/s42003-022-03077-6); [upstream source](https://github.com/sollan/alma)). The maintained ALMA calculations derive from the preserved ALMA implementation; their GPL-3.0 license text ships in `resources/licenses/ALMA-LICENSE`. Attribution and original context remain locally under ignored references. RustLab1 calculations, parameter metadata, and example-preview provenance remain identifiable by their named modules and in-app documentation. Retired custom calculations are retained only as reference helpers and are excluded from the workflow catalog and exports. Noto Sans, Geist, and Tabler notices are packaged under `resources/licenses/`. These resources are included in both source installations and wheels.
 
 <details>
 <summary>Bottom-view inputs and supported parameters</summary>
@@ -192,13 +240,16 @@ body-reference, rear-center, or front-center label is required.
 | `opposite_hindlimb_phase_offset (%)` | `lhpaw`, `rhpaw` | Actual opposite-paw stance onset as a percentage of this side’s gait cycle | Hindlimb |
 | `hindlimb_stance_overlap_fraction` | `lhpaw`, `rhpaw` | Percentage of the cycle with both hindpaws in stance | Hindlimb |
 | `hindlimb_swing_overlap_fraction` | `lhpaw`, `rhpaw` | Percentage of the cycle with both hindpaws in swing | Hindlimb |
+| `hindlimb_single_support (%)` | `lhpaw`, `rhpaw` | Reference hindpaw in stance while opposite hindpaw is in swing | Hindlimb |
+| `opposite_hindlimb_single_support (%)` | `lhpaw`, `rhpaw` | Opposite hindpaw in stance while reference hindpaw is in swing | Hindlimb |
+| `hindlimb_phase_alternation_error (%)` | `lhpaw`, `rhpaw` | Absolute difference between opposite stance-onset phase and 50% alternation | Hindlimb |
 | `left__front__seconds` | `lfpaw` | Median interval between left forepaw stance onsets, seconds | Hindlimb + Forelimb |
 | `right__front__seconds` | `rfpaw` | Median interval between right forepaw stance onsets, seconds | Hindlimb + Forelimb |
 | `FLBR_RATIO` | All four paws | Fraction of non-all-stance frames with left forepaw and right hindpaw in different phases | Hindlimb + Forelimb |
 | `FRBL_RATIO` | All four paws | Fraction of non-all-stance frames with right forepaw and left hindpaw in different phases | Hindlimb + Forelimb |
 
 “Scope” refers to the app's limb-scope setting. All four bottom mapping fields are
-shown in either scope. The default Hindlimb side export contains the first five
+shown in either scope. The default Hindlimb side export contains the first eight
 measurements; the combined scope adds the last four along with supported side-view
 forelimb features. The original ALMA stride boundaries, frame rate, confidence
 filtering, and spatial calibration still apply. These are bottom-marker
@@ -233,9 +284,9 @@ never pooled. Left and right files each contain that side's own complete strides
 there is no opposite-side row pairing. Bottom features are recomputed for each
 side's actual video-time interval and included in both side files.
 
-Hindlimb side files have 53 measurement columns each: 32 ALMA, 12 RustLab1, four
-custom side measurements and five shared bottom measurements. Forelimb scope
-adds 18 own-side and four bottom measurements, for 75 per side. Identifiers,
+Hindlimb side files have 61 measurement columns each: 32 ALMA, 12 RustLab1, four
+custom side measurements, five stroke kinematics and eight shared bottom measurements. Forelimb scope
+adds 18 own-side and four bottom measurements, for 83 per side. Identifiers,
 source/video frame bounds and quality fields are additional. Missing measurements
 remain blank and all headers remain present even when no complete strides exist.
 The new opposite-paw phase offset replaces the old fixed-right-paw offset name;
@@ -243,14 +294,17 @@ bottom swing overlap is now also explicit. Whole-recording synchronization is
 saved only as a recording-level summary, not repeated as a per-stride value.
 
 See [export layout and timestamp rules](#per-recording-export-details) for
-the three files, per-camera timing controls, coverage and measurement definitions.
+the files, per-camera timing controls, coverage and measurement definitions. The
+parameter dictionary accompanies the three measurement tables.
 The earlier 100/140 catalogs counted distinct side-specific measurements in one
 wide table; their supported measurements are retained across the new side files.
 
 Only ALMA's **between-stride variability** measures are removed: all
 `Variability {x|y|xy} plane {5|10} strides {mean|SD}` columns. These are dynamic
 time-warping comparisons across five or ten strides: 12 per side, 24 total.
-This reduces the four-paw catalogs from 124 to 100 and from 164 to 140.
+At that stage this reduced the four-paw catalogs from 124 to 100 and from 164 to 140.
+The current typed catalog includes stroke extensions and recording-level outcomes:
+140 applicable hindlimb definitions or 186 with forelimbs, plus 37 single-view definitions.
 
 Within-cycle standard deviations remain: `toe-to-crest distance SD (cm)` and
 `mtp joint SD (deg)`, `ankle joint SD (deg)`, `knee joint SD (deg)`, and
@@ -292,12 +346,8 @@ variability plots remain excluded. Choose the destination folder in Output.
 <summary>Parameter exports by recording and side</summary>
 <a id="per-recording-export-details"></a>
 
-Choose **ALMA + post-ALMA features**, then choose **Output → Save results to**.
-Use **Import analysis manifest** beside **Export analysis manifest** at the bottom
-of the settings sidebar to restore a saved analysis JSON. It restores detection,
-filters, timing, calibration values, label mappings and figure options while keeping
-the selected CSVs and destination folder. Generate a new stick-plot preview after
-importing. Invalid manifests are rejected before settings are applied.
+The legacy API export keeps separate files by recording and side. In the current UI, choose **ALMA** or **ALMA side + rust bottom**, then choose **Output → Save results to**.
+Use **Save** in the profile bar to save detection, filters, timing, calibration, label mappings, output options and current file selections together. Reopening a profile restores its settings and asks whether to restore the previous videos and CSVs. Generate a new stick-plot preview after reopening.
 
 Each paired recording has its own folder. Videos are never pooled into a parameter
 CSV, and left/right strides are not paired into wide rows.
@@ -329,10 +379,10 @@ because it has no matching right stride. `passed_stride_filters` indicates wheth
 ALMA accepted the stride's spatial measurements; rejected measurements stay blank
 while the stride's bounds and quality fields remain available.
 
-Each hindlimb side table contains 53 measurement columns: 32 ALMA measurements,
-12 RustLab1 measurements from that side, four custom side measurements, and five
+Each hindlimb side table contains 61 measurement columns: 32 ALMA measurements,
+12 RustLab1 measurements from that side, four custom side measurements, five stroke kinematics, and eight
 bottom-paw measurements. Identifiers, times, frame bounds and coverage columns
-are additional. Forelimb scope has 75 measurement columns per side: 18 more
+are additional. Forelimb scope has 83 measurement columns per side: 18 more
 side measurements and four more bottom measurements. Within-stride standard
 deviations remain; ALMA variability across groups of 5 or 10 strides is excluded.
 
@@ -346,6 +396,8 @@ time interval** and appear in both files:
 | `opposite_hindlimb_phase_offset (%)` | First actual opposite hind-paw touchdown relative to this side's stride start; blank if no observed onset occurs |
 | `hindlimb_stance_overlap_fraction` | Percentage of this stride with both hind paws in stance (legacy column name; values are 0–100) |
 | `hindlimb_swing_overlap_fraction` | Percentage of this stride with both hind paws in swing (0–100) |
+| `hindlimb_single_support (%)`, `opposite_hindlimb_single_support (%)` | Percentage with only the named hindpaw in stance among the two hindpaws |
+| `hindlimb_phase_alternation_error (%)` | Absolute departure of opposite hindpaw onset from 50% of the reference cycle |
 | `left__front__seconds`, `right__front__seconds` | With forelimb scope: median duration of fully tracked forepaw cycles intersecting this stride |
 | `FLBR_RATIO`, `FRBL_RATIO` | With forelimb scope: diagonal-paw phase disagreement within this stride, as a 0–1 ratio |
 
@@ -362,6 +414,10 @@ rates, timing sources, side stride counts, bottom scales and synchronization
 coverage. These statistics use the common recording time interval, including
 usable time outside detected strides. They are not averages of stride rows and
 are not copied into either side table as if they were per-stride observations.
+This file also contains [stroke recovery summaries](#stroke-recovery-extraction-types)
+from complete accepted strides, with per-outcome counts, medians, asymmetry status,
+and the common analysis interval. The companion `parameter_dictionary.csv` records
+the formula and provenance for the scientific columns that actually occur in these files.
 
 Bottom phase measurements retain their documented speed-threshold definitions:
 calibrated 2D speed for hind-paw custom features and RustLab1 horizontal paw speed
@@ -437,7 +493,7 @@ The dedicated **Stride detection** tab is now in the first navigation row, next 
 **Calibration**. It contains the method selector and **Compare all 13 stick plots…**.
 Camera maps and independent left, right and bottom scales are in **Calibration**.
 Treadmill mode keeps its existing detector; the thirteen-method comparison is for
-spontaneous/overground recordings. RustLab1 standalone retains its own Stride QC settings.
+spontaneous/overground recordings. Adapted RustLab1 standalone uses its separate **Speed GMM** settings.
 
 ## Reading the stick plots
 
@@ -494,12 +550,12 @@ gaps, and suppress recordings whose trusted X/Y range is below 0.5 pixels. This 
 original **spontaneous contact rule**, not a claim to reproduce every original ALMA
 preprocessing step, treadmill rule or parameter formula.
 
-RustLab1 calls the same `detect_rustlab1_strides` and `rustlab1_stance_mask` functions as
-standalone mode. Its default stance limit is 7 px/frame; tracking-jump limit is 100
+The comparison option **RustLab1 (bottom paw)** retains the Python
+`detect_rustlab1_strides` and `rustlab1_stance_mask` rule. Its default stance limit is 7 px/frame; tracking-jump limit is 100
 px/frame. Speed and minimum phase lengths are editable in **Stride detection** when
 selected and persist in manifests. `lhpaw` sets left timing and `rhpaw` right timing.
-Standalone RustLab1 instead uses its selected single reference paw for both views,
-matching that workflow's exported measurements.
+The standalone adapted R workflow is distinct: independent side-toe Speed GMM cycles
+provide its timing, and the supplied R script calculates its measurements.
 
 Side and bottom signals use the configured low-pass filter; original ALMA's strict
 contact rule intentionally examines raw toe X. This distinction affects phase labels,
@@ -522,32 +578,49 @@ reproduced false cycles in the legacy, histogram and relative-velocity detectors
 
 ## Independent spatial scales
 
-In **Calibration → Calibration by view**, enter left/right pixels per cm
-or import a separate map for each camera. For a map containing multiple views,
-choose the camera entry explicitly. Bottom X and Y remain independently editable.
-Importing one camera's map does not change the others. Zero side values use the
-shared setting for compatibility with existing profiles.
+In **Calibration → Spatial calibration**, select one mode:
+
+| Mode | Applied calibration |
+| --- | --- |
+| Reference body segment | Estimate each side camera's scale from its own selected reference markers and known segment length. Works for spontaneous and treadmill recordings. |
+| Manual pixel-to-cm ratio | Apply the entered shared ratio to every camera. |
+| Shared calibration map | Apply the imported map's overall scale to every camera. |
+| Calibration by view | Apply each camera's imported map or entered scale independently; bottom X and Y remain separate. |
+| Treadmill speed | Derive each side camera's scale from paw motion and the configured belt speed. Available for treadmill analysis only. |
+
+Only the active mode contributes calibration to preview, analysis, and exported
+settings. Switching modes preserves the other controls for later use. In
+**Calibration by view**, choose the camera entry explicitly when importing a map
+with multiple views. Importing one camera's map changes only that camera. An unset
+side scale produces an actionable error; unset bottom axes leave the corresponding
+physical measurements blank. Reference and treadmill modes do not borrow side
+scales for the bottom camera.
 
 Each side's scale applies to its ALMA spatial parameters, RustLab1 side-view
-features, and custom side-view measurements. A manual side scale also overrides
-the treadmill-derived spatial scale. Isotropic scale changes do not change joint
+features, and custom side-view measurements. Isotropic scale changes do not change joint
 angles. The selected numeric scales, map provenance, method, and gap setting are
 saved in exported analysis-settings manifests.
 
 File-only camera calibrations are resolved before both preview and export. A
 separate map with multiple camera entries requires a selected view index; it does
 not silently use the first camera. Bottom map imports preserve separate X and Y
-scales. Importing a shared map leaves already configured bottom values alone.
+scales.
 Saved numeric values are calibration snapshots and remain usable if their original
-map is moved. When an automatic profile explicitly selects a new shared map, that
-map replaces the shared snapshot while preserving independent camera overrides.
+map is moved. Profile saving also resolves file-only camera maps into owned numeric
+snapshots. A profile's optional shared map replaces calibration only in **Shared
+calibration map** mode; other modes retain their selected settings. Automatic runs
+resolve calibration before video processing and retain the same scales for both
+stickplot review and final analysis. The general CSV and export report record the
+selected mode and the scales actually used.
 
-For spontaneous walking with anatomical-reference calibration, the selected
+For anatomical-reference calibration, the selected
 segment length is now estimated in each side camera independently. That exact
 scale is also used by the post-ALMA measures. Unusable reference markers produce
 an actionable calibration message instead of silently assuming 49.143 px/cm.
-The legacy treadmill scale calculation remains available when no manual camera
-override is selected.
+The legacy treadmill scale calculation remains available as **Treadmill speed**.
+Version 1 analysis manifests retain their historical treadmill-speed behavior;
+saved camera overrides migrate to **Calibration by view**. New manifests use
+version 2 to preserve the selected mode explicitly.
 
 ## Speed Mixture + Nearby Confidence
 
@@ -575,13 +648,13 @@ In **Output → Save results to → Choose folder…**, choose the destination, 
 are enabled by default and visible. The Inputs page's destination field and this picker
 stay synchronized. **Open saved results folder** opens the actual completed destination.
 
-A paired hindlimb recording exports three CSVs and 48 SVG figures, plus the run's
+A paired hindlimb recording exports four CSVs and 48 SVG figures, plus the run's
 shared `export_report.txt`. Every recording has a separate folder containing
 `left_stride_parameters.csv`, `right_stride_parameters.csv`, and
-`general_parameters/general_parameters.csv`. Each side uses its own strides;
+`general_parameters/general_parameters.csv`, and `general_parameters/parameter_dictionary.csv`. Each side uses its own strides;
 bottom features are recomputed for each side's video-time windows. Whole-recording
-synchronization belongs in the general file. Hindlimb tables contain 53 measurement
-columns per side, or 75 with forelimbs, plus identifiers and quality fields.
+synchronization belongs in the general file. Hindlimb tables contain 61 measurement
+columns per side, or 83 with forelimbs, plus identifiers and quality fields.
 
 There are two full-recording stick plots, seven ALMA figures per side, and 16
 RustLab1 figures per reference side (18 with forelimbs) in
@@ -622,8 +695,8 @@ and the CSVs. Existing unrelated files in the destination are not removed.
 in pages of 12 plots per recording and side, including missing-value counts. Figure documentation examples are
 historical reference illustrations, not outputs from the current recording.
 
-Standalone RustLab1 remains a separate workflow: it exports its own tables and supported
-figures plus two full-recording side stick plots (replacing its old speed-chart preview).
+Standalone RustLab1 remains a separate R workflow: it exports its full-catalog tables
+and two full-recording side stick plots from the same R-smoothed measurement coordinates.
 Use **ALMA + post-ALMA features** for the per-recording bundle described above.
 
 ## Reproducing the verification
@@ -651,31 +724,13 @@ Paths below are relative to `src/dlc_gait_assembly/`. Package marker files (`__i
 | `client/app_branding_widgets.py` | Render application and partner logos, credits buttons, and menu illustrations. |
 | `client/app_credits_menu.py` | Build attribution actions and open the associated project and partner links. |
 | `client/app_header_navigation.py` | Assemble primary and workflow navigation, branding, and theme controls. |
-| `client/app_home_view.py` | Present the Ladder and Runway entry choices and animate the existing menu artwork. |
-| `client/app_navigation_animations.py` | Animate workflow expansion, navigation highlights, and page transitions. |
+| `client/app_home_view.py` | Present the illustrated setup menu and host the automated workspace. |
+| `client/app_navigation_animations.py` | Animate the manual stage toolbar and navigation highlights. |
 | `client/app_page_contracts.py` | Define page factories, typed manual snapshots, and public page lifecycle contracts. |
 | `client/app_route_controller.py` | Select application pages and enforce their public leave and resource-release contracts. |
 | `client/app_shell_styles.py` | Style the application shell, navigation, and active workspace surfaces. |
 | `client/app_shell_window.py` | Own the main window, content host, theme propagation, and page cleanup. |
 | `infrastructure/app_preferences_store.py` | Persist theme and serialized window geometry in the existing QSettings namespace. |
-
-</details>
-
-<details>
-<summary>runway/client — 1 module</summary>
-
-| Module | Responsibility |
-| --- | --- |
-| `runway_home_view.py` | Present Manual and Automatic choices within the Runway workflow. |
-
-</details>
-
-<details>
-<summary>runway/manual/client — 1 module</summary>
-
-| Module | Responsibility |
-| --- | --- |
-| `manual_stage_directory.py` | Present the six manual Runway stages in their declared application order. |
 
 </details>
 
@@ -838,7 +893,7 @@ Paths below are relative to `src/dlc_gait_assembly/`. Package marker files (`__i
 | `business/alma/stride_candidates.py` | Experimental phase estimators. They label frames; none may transform plot geometry. |
 | `business/alma/temporal_speed_mixture.py` | Neighbour-conditioned GMM probabilities without changing tracking coordinates. |
 | `business/alma/tracking_gap_policy.py` | A frame-rate independent allowance for brief losses of the timing marker. |
-| `business/custom_features/custom_sop_feature_calculations.py` | Calculate the maintained custom SOP measurements on authoritative ALMA cycles. |
+| `business/custom_features/custom_sop_feature_calculations.py` | Reference helpers for the retired custom parameter family; not used by workflow exports. |
 | `business/custom_features/custom_sop_feature_definitions.py` | Define custom SOP parameter names, units, and marker requirements. |
 | `business/gait_analysis_contracts.py` | Define gait-analysis results and returned recording artifacts. |
 | `business/gait_analysis_ports.py` | Input tables, result storage, and rendering required by gait use cases. |
@@ -850,14 +905,18 @@ Paths below are relative to `src/dlc_gait_assembly/`. Package marker files (`__i
 | `business/gait_preview_use_cases.py` | Prepare full-recording scientific previews and detector comparisons without running the export pipeline. |
 | `business/gait_preview_validity.py` | Track preview generations and reject results invalidated by input or settings changes. |
 | `business/gait_recording_tables.py` | Independent left/right stride tables and one recording-level general table. |
+| `business/gait_recovery_summary.py` | Summarize independently observed strides for bilateral asymmetry and variability. |
+| `business/gait_swing_extraction.py` | Extract conservative swing-phase and paw-excursion measures on accepted ALMA cycles. |
 | `business/gait_standalone_contracts.py` | Define standalone gait inputs, calibrated view data, and numerical result contracts. |
 | `business/gait_stride_export.py` | Stride identity and quality fields, and checks against accidental row loss. |
 | `business/parameters/alma_parameter_definitions.py` | Define ALMA measurement names, units, descriptions, and marker requirements. |
 | `business/parameters/bottom_paw_parameter_contract.py` | Supported bottom-paw outputs and retired center-marker measurements. |
 | `business/parameters/gait_parameter_contracts.py` | Define parameter metadata, source categories, and limb-scope selection contracts. |
+| `business/parameters/gait_export_dictionary.py` | Describe exported scientific columns using the same typed definitions as the UI. |
 | `business/parameters/gait_parameter_registry.py` | Combine maintained parameter definitions for selection, documentation, and export. |
 | `business/parameters/rustlab1_parameter_definitions.py` | Define RustLab1 measurement metadata and supported limb scopes. |
 | `business/parameters/synchronized_parameter_definitions.py` | Define synchronized and asymmetry measurement names, units, and requirements. |
+| `business/parameters/stroke_recovery_parameter_definitions.py` | Define research outcomes, extraction types, units, and provenance for stroke recovery. |
 | `business/preprocessing/gait_confidence_masking.py` | Apply confidence masks without inventing low-confidence joint coordinates. |
 | `business/preprocessing/gait_coordinate_normalization.py` | Normalize coordinate columns and prepare canonical marker series for shared scientific calculations. |
 | `business/preprocessing/gait_signal_filtering.py` | Interpolate and Butterworth-filter marker series using the established preprocessing contract. |
@@ -873,6 +932,7 @@ Paths below are relative to `src/dlc_gait_assembly/`. Package marker files (`__i
 | `business/rustlab1/rustlab1_interlimb_features.py` | Calculate coordination and support measurements between bottom-view paws. |
 | `business/rustlab1/rustlab1_joint_features.py` | Calculate side-view hindlimb and forelimb joint-angle measurements. |
 | `business/rustlab1/rustlab1_recording_summary.py` | Aggregate RustLab1 stride features into recording-level statistics and quality summaries. |
+| `business/rustlab1/rustlab1_r_analysis.py` | Recompute independent side-toe GMM phases and coordinate the adapted R measurements through an execution port. |
 | `business/rustlab1/rustlab1_standalone_engine.py` | Coordinate RustLab1-only detection and measurement results independently of ALMA execution. |
 | `business/rustlab1/rustlab1_stride_detection.py` | Detect standalone stance onsets and accepted reference-paw stride intervals. |
 | `business/rustlab1/rustlab1_vertical_features.py` | Calculate vertical displacement, height, and related trajectory measurements. |
@@ -934,6 +994,7 @@ Paths below are relative to `src/dlc_gait_assembly/`. Package marker files (`__i
 | `infrastructure/gait_scientific_worker_entry.py` | Execute a serialized gait request in the explicitly configured scientific runtime. |
 | `infrastructure/gait_settings_manifest_store.py` | Read and write gait settings manifests and inspect imported calibration-map settings. |
 | `infrastructure/rustlab1_recording_writer.py` | Persist already-calculated RustLab1 tables and render their recording figures. |
+| `infrastructure/rustlab1_r_executor.py` | Execute the packaged R analysis, record provenance, and render previews/exports from its smoothed coordinates. |
 | `infrastructure/synchronized_result_writer.py` | Persist calculated synchronized cycle tables, session summaries, and QC metadata. |
 
 </details>

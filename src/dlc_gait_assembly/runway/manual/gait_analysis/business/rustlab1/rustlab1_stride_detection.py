@@ -132,13 +132,6 @@ def limb_label(marker: str) -> str:
 
 
 def bottom_pixels_per_cm(settings: RustLab1StandaloneSettings) -> float | None:
-    configured = (settings.view_calibration or {}).get("bottom")
-    if isinstance(configured, (int, float)) and float(configured) > 0:
-        return float(configured)
-    if isinstance(configured, dict):
-        value = configured.get("x_pixels_per_cm", configured.get("pixels_per_cm"))
-        if value and float(value) > 0:
-            return float(value)
-    if settings.pixels_per_cm and settings.pixels_per_cm > 0:
-        return float(settings.pixels_per_cm)
-    return None
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_calibration import view_scale
+
+    return view_scale(settings, "bottom", "x")

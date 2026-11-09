@@ -12,8 +12,12 @@ def rustlab1_figure_context(
     raw_dataframe, alma_parameters, extraction, settings, kinematics, np, pd, preprocessed=None
 ):
     columns = coordinate_columns(raw_dataframe)
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_spatial_scaling import (
+        resolve_reference_scales,
+    )
     from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_calibration import view_scale
 
+    settings = resolve_reference_scales(raw_dataframe, columns, settings)
     preprocessed = preprocessed or prepare_alma_coordinates(raw_dataframe, settings, kinematics)
     markers = sorted({marker for (marker, _coord) in columns})
     raw: dict[str, dict[str, object]] = {}
@@ -49,14 +53,9 @@ def rustlab1_figure_context(
 
 
 def bottom_x_pixels_per_cm(settings, fallback):
-    configured = (getattr(settings, "view_calibration", None) or {}).get("bottom")
-    if isinstance(configured, (int, float)) and float(configured) > 0:
-        return float(configured)
-    if isinstance(configured, dict):
-        value = configured.get("x_pixels_per_cm", configured.get("pixels_per_cm"))
-        if value and float(value) > 0:
-            return float(value)
-    return fallback
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_calibration import view_scale
+
+    return view_scale(settings, "bottom", "x", fallback)
 
 
 def marker_reliability(context, marker: str) -> float:

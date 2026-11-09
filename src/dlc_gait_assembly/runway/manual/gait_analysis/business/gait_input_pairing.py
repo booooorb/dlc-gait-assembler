@@ -8,9 +8,9 @@ from pathlib import Path
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_coordinate_contracts import AlmaViewCsvSet
 
 VIEW_ALIASES = {
-    "left": {"left", "lhs", "lview", "leftview"},
-    "right": {"right", "rhs", "rview", "rightview"},
-    "bottom": {"bottom", "down", "ventral", "below", "bview", "dview", "bottomview", "downview"},
+    "left": {"left", "lhs", "lview", "leftview", "leftside"},
+    "right": {"right", "rhs", "rview", "rightview", "rightside"},
+    "bottom": {"bottom", "down", "ventral", "below", "bview", "dview", "bottomview", "downview", "underside", "underneath"},
 }
 VIEW_TOKENS = set().union(*VIEW_ALIASES.values())
 
@@ -22,9 +22,9 @@ def suggest_view_set(paths: list[Path]) -> AlmaViewCsvSet:
     return sets[0]
 
 
-def build_view_csv_sets(paths: list[Path]) -> tuple[list[AlmaViewCsvSet], list[str]]:
+def build_view_csv_sets(paths: list[Path], bodyparts_by_path=None) -> tuple[list[AlmaViewCsvSet], list[str]]:
     sets, errors = [], []
-    for row in build_view_pair_rows(paths):
+    for row in build_view_pair_rows(paths, bodyparts_by_path):
         if row["status"] != "Ready":
             errors.append(f"{row['name']}: {row['status']}.")
         else:
@@ -32,11 +32,11 @@ def build_view_csv_sets(paths: list[Path]) -> tuple[list[AlmaViewCsvSet], list[s
     return sets, errors
 
 
-def build_view_pair_rows(paths: list[Path]) -> list[dict[str, object]]:
+def build_view_pair_rows(paths: list[Path], bodyparts_by_path=None) -> list[dict[str, object]]:
     grouped = {}
     rows = []
     for path in sorted(set(Path(p).expanduser().resolve() for p in paths)):
-        view = csv_view_from_name(path)
+        view, issue = csv_view_evidence(path, (bodyparts_by_path or {}).get(path, ()))
         if view is None:
             rows.append(
                 {
@@ -44,12 +44,12 @@ def build_view_pair_rows(paths: list[Path]) -> list[dict[str, object]]:
                     "left": None,
                     "right": None,
                     "bottom": None,
-                    "status": "Unclassified view",
+                    "status": issue or "Unclassified view",
                     "unassigned": (path,),
                 }
             )
             continue
-        parent = path.parent.parent if _directory_view(path.parent) else path.parent
+        parent = recording_folder(path)
         group = grouped.setdefault((parent, csv_view_group_key(path)), {})
         group.setdefault(view, []).append(path)
     for group_key, group in sorted(grouped.items(), key=lambda item: (str(item[0][0]), item[0][1])):
@@ -74,13 +74,7 @@ def build_view_pair_rows(paths: list[Path]) -> list[dict[str, object]]:
         if counts[base] > 1:
             path = next((row[v] for v in VIEW_ALIASES if row[v] is not None), None)
             path = path or next(iter(row.get("unassigned", ())), None)
-            folder = (
-                path.parent.parent.name
-                if path and _directory_view(path.parent)
-                else path.parent.name
-                if path
-                else "set"
-            )
+            folder = recording_folder(path).name if path else "set"
             base = f"{folder}_{base}"
         name, suffix = base, 2
         while name in used:
@@ -106,16 +100,55 @@ def _directory_view(directory: Path) -> str | None:
     return None
 
 
+def recording_folder(path):
+    directory = path.parent
+    camera_folder = re.fullmatch(r"cam(?:era)?[_ -]?[a-z0-9]+", directory.name.lower())
+    return directory.parent if _directory_view(directory) or camera_folder else directory
+
+
 def csv_view_from_name(path: Path) -> str | None:
     tokens = filename_token_list(path)
     matches = [view for view, aliases in VIEW_ALIASES.items() if set(tokens) & aliases]
     if len(matches) > 1:
         return None
-    return matches[0] if matches else _directory_view(path.parent)
+    folder = _directory_view(path.parent)
+    if matches and folder and matches[0] != folder:
+        return None
+    return matches[0] if matches else folder
+
+
+def csv_view_from_bodyparts(bodyparts) -> str | None:
+    """Only infer laterality from explicit labels; generic toe/ankle labels are insufficient."""
+    labels = {re.sub("[^a-z0-9]", "", str(label).lower()) for label in bodyparts}
+    left_paws = {"lhpaw", "dbackleft", "lefthindpaw", "hindpawleft"}
+    right_paws = {"rhpaw", "dbackright", "righthindpaw", "hindpawright"}
+    matches = ["bottom"] if labels & left_paws and labels & right_paws else []
+    for side, prefix in (("left", "l"), ("right", "r")):
+        count = sum(any(label in labels for label in (
+            f"{prefix}back{marker}", f"{side}{marker}", f"{marker}{prefix}", f"{side}hind{marker}",
+        )) for marker in ("toe", "ankle", "knee", "mtp", "hip"))
+        if count >= 2:
+            matches.append(side)
+    return matches[0] if len(matches) == 1 else None
+
+
+def csv_view_evidence(path, bodyparts=()):
+    filename_views = {view for view, aliases in VIEW_ALIASES.items() if set(filename_token_list(path)) & aliases}
+    folder_view = _directory_view(path.parent)
+    if len(filename_views) > 1:
+        return None, "Conflicting camera names"
+    named = next(iter(filename_views), None)
+    if named and folder_view and named != folder_view:
+        return None, "Filename and folder disagree"
+    marker_view = csv_view_from_bodyparts(bodyparts)
+    named = named or folder_view
+    if named and marker_view and named != marker_view:
+        return None, f"Camera name says {named}; labels say {marker_view}"
+    return named or marker_view, ""
 
 
 def csv_view_group_key(path: Path) -> str:
-    tokens = [token for token in filename_token_list(path) if token not in VIEW_TOKENS | {"view", "camera"}]
+    tokens = [token for token in filename_token_list(path) if token not in VIEW_TOKENS | {"view", "camera", "side"}]
     return "_".join(tokens) or "recording"
 
 

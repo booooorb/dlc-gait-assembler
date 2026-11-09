@@ -133,7 +133,7 @@ def test_method_description_and_selection_invalidate_previous_stickplot():
     view.state.preview_validity.complete()
     view.stride_method_combo.setCurrentText("Bottom paw speed")
     assert not view.state.preview_validity.ready
-    assert "lhpaw sets left timing" in view.stride_method_description.text()
+    assert "lhpaw sets left timing" in view.stride_method_combo.toolTip()
     assert view.setup._collect_settings().stride_detection_method == "Bottom paw speed"
     view.close()
     app.processEvents()

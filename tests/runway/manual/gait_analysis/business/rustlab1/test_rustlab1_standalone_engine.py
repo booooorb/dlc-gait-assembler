@@ -1,5 +1,4 @@
 from __future__ import annotations
-from dlc_gait_assembly.app.app_bootstrap import create_rustlab1_use_cases
 from types import SimpleNamespace
 import numpy as np
 import pandas as pd
@@ -14,6 +13,7 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_st
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.figures.rustlab1_step_figures import (
     generate_rustlab1_stride_preview,
 )
+from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab1_recording_writer import RustLab1RecordingWriter
 from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_standalone_engine import (
     run_rustlab1_analysis,
 )
@@ -136,7 +136,7 @@ def test_standalone_runner_writes_only_rustlab1_outputs(tmp_path, monkeypatch):
         columns[marker, "likelihood"] = np.ones(frames)
     merged = pd.DataFrame(columns)
     merged.columns = pd.MultiIndex.from_tuples(merged.columns)
-    outputs = create_rustlab1_use_cases().outputs
+    outputs = RustLab1RecordingWriter()
     monkeypatch.setattr(outputs, "read_views", lambda *_args, **_kwargs: merged)
     monkeypatch.setattr(
         "dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_signal_filter.butterworth_filter",

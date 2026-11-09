@@ -66,7 +66,7 @@ def multiview_fixture(tmp_path, alma_fixtures_dir):
     return AlmaViewCsvSet("test", side, side, path)
 
 
-def test_each_view_scale_applies_to_alma_rustlab_and_custom(tmp_path, alma_fixtures_dir):
+def test_each_view_scale_applies_to_alma_and_retained_rustlab_parameters(tmp_path, alma_fixtures_dir):
     item = multiview_fixture(tmp_path, alma_fixtures_dir)
     settings = AlmaSettings(
         analysis_type="Spontaneous walking",
@@ -80,6 +80,7 @@ def test_each_view_scale_applies_to_alma_rustlab_and_custom(tmp_path, alma_fixtu
         item,
         replace(
             settings,
+            calibration_method="per_view",
             view_calibration={
                 "left": {"pixels_per_cm": 25.0},
                 "right": {"pixels_per_cm": 100.0},
@@ -94,7 +95,7 @@ def test_each_view_scale_applies_to_alma_rustlab_and_custom(tmp_path, alma_fixtu
         for name in (
             f"{side}__stride length (cm)",
             f"{prefix}-back-ankle__Movement",
-            f"{side}_knee_vertical_excursion",
+            f"{prefix}-back-ankle__Average_Height",
         ):
             np.testing.assert_allclose(calibrated[name], base[name] * factor, equal_nan=True)
         np.testing.assert_allclose(

@@ -4,15 +4,10 @@ from dlc_gait_assembly.app.app_bootstrap import create_main_menu
 from dlc_gait_assembly.app.app_bootstrap import create_gait_analysis_operations
 
 
-from dlc_gait_assembly.app.app_bootstrap import create_profile_use_cases
 
 
-from dlc_gait_assembly.runway.manual.calibration.business.calibration_assessment_contracts import (
-    CalibrationSettingsSnapshot,
-)
 
 
-from dlc_gait_assembly.runway.manual.calibration.business.calibration_use_cases import calculate_calibration_report
 
 
 from dlc_gait_assembly.runway.manual.deeplabcut.client.deeplabcut_controller import DeepLabCutController
@@ -24,7 +19,7 @@ from dlc_gait_assembly.app.app_bootstrap import (
     create_gait_preview,
     create_knee_correction_use_cases,
     create_ladder_use_cases,
-    create_main_window,
+    create_main_window as _create_main_window,
     create_media_access,
     create_video_processing_use_cases,
 )
@@ -85,10 +80,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QInputDialog,
     QLabel,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QTabWidget,
     QWidget,
@@ -142,13 +135,10 @@ from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profil
 )
 
 
-from dlc_gait_assembly.runway.manual.knee_correction.business.knee_correction_contracts import KneeCorrectionSettings
 
 
-from dlc_gait_assembly.runway.manual.calibration.business.calibration_measurements import CalibrationPoint
 
 
-from dlc_gait_assembly.runway.manual.calibration.business.calibration_measurements import CalibrationStick
 
 
 def _wait_for_animation(animation, timeout_ms: int = 1500) -> None:
@@ -173,6 +163,24 @@ from dlc_gait_assembly.app.infrastructure.app_preferences_store import (
     THEME_SETTING_KEY,
     WINDOW_GEOMETRY_SETTING_KEY,
 )
+
+
+@pytest.fixture(autouse=True)
+def discard_navigation_test_edits(monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.Discard)
+
+
+def create_main_window(**options):
+    """Navigation tests start inside a saved workflow; profile entry has its own tests."""
+    from tempfile import TemporaryDirectory
+    temporary = TemporaryDirectory(prefix="gait-navigation-test-")
+    window = _create_main_window(profile_store=AutomatedProfileStore(temporary.name), **options)
+    window._test_profile_directory = temporary
+    window.workflows.new(name="Navigation test")
+    if options.get("initial_tool_id") is None:
+        window.routes._show_home_menu()
+        QTest.qWait(250)
+    return window
 
 
 def test_application_stylesheet_uses_one_plain_component_system():
@@ -267,7 +275,7 @@ def test_visible_settings_dropdown_emits_theme_choices_without_reemitting_update
     assert window._brand_logo_filename == "DLC-Gait-Assembler-logo-light-original-clean.png"
     assert window._settings_button.isVisible()
     assert not window._settings_button.icon().isNull()
-    expected_style = Qt.ToolButtonIconOnly if window.width() < 1240 else Qt.ToolButtonTextBesideIcon
+    expected_style = Qt.ToolButtonIconOnly if window.width() < 1600 else Qt.ToolButtonTextBesideIcon
     assert window._settings_button.toolButtonStyle() == expected_style
     assert [action.text() for action in window._settings_menu.actions()] == ["Light mode", "Dark mode"]
     window._theme_actions["dark"].trigger()
@@ -281,33 +289,15 @@ def test_visible_settings_dropdown_emits_theme_choices_without_reemitting_update
 def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     app = QApplication.instance() or QApplication([])
     menu = create_main_menu(TOOL_SPECS)
-    tabs = menu.findChild(QTabWidget, "PipelineTabs")
-    assert tabs is not None
-    assert tabs.tabBar().expanding()
-    assert tabs.tabBar().isHidden()
-    assert [tabs.tabText(index) for index in range(tabs.count())] == ["Manual pipeline", "Automated pipeline"]
     assert menu.view_stack.currentWidget() is menu.home_page
-    assert menu.automated_choice_button.text() == "Run automated pipeline"
-    assert menu.configure_profiles_button.text() == "Configure profiles"
-    assert menu.configure_profiles_button.sizeHint().height() < menu.automated_choice_button.sizeHint().height()
-    assert menu.manual_choice_button.text() == "Open Runway"
-    assert menu.ladder_choice_button.text() == "Open ladder analysis"
-    assert not menu.runway_choice_illustration.pixmap().isNull()
-    assert not menu.ladder_choice_illustration.pixmap().isNull()
-    assert menu.runway_choice_illustration.accessibleName() == "Laboratory mouse walking through a runway enclosure"
-    assert menu.ladder_choice_illustration.accessibleName() == "Laboratory mouse walking across a horizontal ladder"
-    assert not menu.automated_choice_button.icon().isNull()
-    assert not menu.configure_profiles_button.icon().isNull()
-    assert not menu.manual_choice_button.icon().isNull()
-    expected_stages = [spec.label for spec in TOOL_SPECS]
-    manual_page = tabs.widget(0)
-    automated_page = tabs.widget(1)
-    assert [label.text() for label in manual_page.findChildren(QLabel, "StepTitle")] == expected_stages
-    assert all(button.isEnabled() for button in manual_page.findChildren(QPushButton, "OpenToolButton"))
-    automated_profiles = automated_page.findChild(AutomatedPipelineProfilesWidget)
-    assert automated_profiles is not None
-    assert automated_page.findChild(QScrollArea, "AutomatedPipelineScroll") is None
-    assert not automated_page.findChildren(QPushButton, "OpenToolButton")
+    assert menu.view_stack.count() == 2
+    illustrations = menu.home_page.findChildren(QLabel, "WorkspaceChoiceIllustration")
+    assert len(illustrations) == 2
+    assert all(not illustration.pixmap().isNull() for illustration in illustrations)
+    assert menu.findChild(QWidget, "RunwayHomePage") is None
+    assert menu.findChild(QWidget, "ManualPipelineMenuPage") is None
+    automated_profiles = menu.automated_profiles
+    assert isinstance(automated_profiles, AutomatedPipelineProfilesWidget)
     configuration_tabs = automated_profiles.findChild(QTabWidget, "ProfileConfigurationTabs")
     assert [configuration_tabs.tabText(index) for index in range(configuration_tabs.count())] == [
         "1  Video settings",
@@ -324,11 +314,15 @@ def test_main_menu_exposes_manual_workflow_and_automated_profiles():
     menu.close()
 
 
-def test_ladder_analysis_opens_from_secondary_home_workflow_and_returns_home():
+def test_ladder_card_opens_analysis_and_returns_to_the_illustrated_menu():
     app = QApplication.instance() or QApplication([])
     window = create_main_window()
-    window._main_menu.ladder_choice_button.click()
+    window.show()
     app.processEvents()
+    menu = window._main_menu
+    ladder_card = next(card for card in menu.home_page.findChildren(QFrame, "SetupChoiceCard")
+                       if card.property("setupAsset") == "ladder-mouse")
+    QTest.mouseClick(ladder_card, Qt.LeftButton)
     assert window.navigation.tool_id == LADDER_TOOL_SPEC.id
     assert isinstance(window._active_tool, LadderAnalysisWidget)
     assert not window._manual_stage_expanded
@@ -336,107 +330,52 @@ def test_ladder_analysis_opens_from_secondary_home_workflow_and_returns_home():
     window._active_tool.back_requested.emit()
     app.processEvents()
     assert window._stack.currentWidget() is window._main_menu
-    assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
+    assert menu.view_stack.currentWidget() is menu.home_page
     window.close()
 
 
-def test_entire_runway_and_ladder_cards_are_clickable():
+def test_runway_card_opens_the_profile_picker_directly():
     app = QApplication.instance() or QApplication([])
     window = create_main_window()
     window.resize(1180, 700)
     window.show()
-    QTest.qWait(600)
-    runway_card = window._main_menu._runway_choice_card_widget
-    runway_point = window._main_menu.runway_choice_illustration.mapToGlobal(
-        window._main_menu.runway_choice_illustration.rect().center()
-    )
-    runway_target = QApplication.widgetAt(runway_point)
-    assert runway_target is runway_card
-    QTest.mouseClick(runway_target, Qt.LeftButton, pos=runway_target.mapFromGlobal(runway_point))
     app.processEvents()
-    assert window._main_menu.view_stack.currentWidget() is window._main_menu.runway_home_page
-    window.close()
-    window = create_main_window()
-    window.resize(1180, 700)
-    window.show()
-    QTest.qWait(600)
-    ladder_card = window._main_menu._ladder_choice_card_widget
-    assert window._main_menu.ladder_choice_illustration.testAttribute(Qt.WA_TransparentForMouseEvents)
-    QTest.mouseClick(ladder_card, Qt.LeftButton, pos=ladder_card.rect().center())
+    menu = window._main_menu
+    picker = window.workflows
+    assert menu.view_stack.currentWidget() is menu.home_page
+    assert not picker.open_button.isVisible()
+    runway_card = next(card for card in menu.home_page.findChildren(QFrame, "SetupChoiceCard")
+                       if card.property("setupAsset") == "runway-mouse")
+    QTest.mouseClick(runway_card, Qt.LeftButton)
     app.processEvents()
-    assert window.navigation.tool_id == LADDER_TOOL_SPEC.id
-    window.close()
-
-
-def test_manual_pipeline_card_zooms_into_an_actionable_manual_only_menu():
-    app = QApplication.instance() or QApplication([])
-    window = create_main_window()
-    window.resize(1180, 700)
-    window.show()
-    window.routes._show_runway_menu()
-    QTest.qWait(100)
-    source_width = window._main_menu._manual_choice_card_widget.width()
-    window._main_menu.runway_manual_choice_button.click()
-    app.processEvents()
-    assert window._main_menu.view_stack.currentWidget() is window._main_menu.manual_pipeline_page
-    assert window._main_menu._manual_zoom_animation.state() == QAbstractAnimation.State.Running
-    overlay_effect = window._main_menu._manual_zoom_overlay.graphicsEffect()
-    assert overlay_effect is None
-    QTest.qWait(380)
-    assert window._main_menu._manual_zoom_overlay is None
-    assert window._main_menu._expanded_manual_card_widget.width() > source_width
-    assert not window._main_menu._automated_choice_card_widget.isVisible()
-    stages = window._main_menu.manual_pipeline_page.findChildren(QFrame, "ManualMiniStage")
-    assert len(stages) == 6
-    assert all(stage.cursor().shape() == Qt.PointingHandCursor for stage in stages)
-    stages[0].clicked.emit("manual_calibration")
-    app.processEvents()
+    assert window._stack.currentWidget() is picker.picker
+    assert picker.new_profile_button.isVisible()
+    assert picker.open_button.isVisible()
+    picker.profile_list.setCurrentRow(0)
+    picker.open_button.click()
     assert window.navigation.tool_id == "manual_calibration"
+    _wait_for_animation(window._manual_stage_animation)
+    assert window._manual_stage_frame.isVisible()
     window.close()
 
 
-def test_manual_navigation_exports_current_settings_and_summarizes_saved_profile(tmp_path, monkeypatch):
+def test_manual_navigation_saves_settings_in_the_active_profile():
     app = QApplication.instance() or QApplication([])
     window = create_main_window()
-    editor = window._main_menu.automated_profiles
-    editor.profile_use_cases = create_profile_use_cases(AutomatedProfileStore(tmp_path / "profiles"))
-    editor.profiles._refresh_profiles()
-    assert window._manual_preset_profile_button.text() == "Create\nprofile"
-    assert not window._manual_preset_profile_button.icon().isNull()
     for stage in ("video_processing", "manual_calibration", "gait_parameter_analysis", "knee_correction"):
         window.routes._open_tool(stage)
-    calibration = window._tool_widgets["manual_calibration"]
-    calibration.media_panel._add_media_paths([])
-    sticks = (CalibrationStick("x", 1, CalibrationPoint(0, 0), CalibrationPoint(42, 0)),)
-    calibration.settings_snapshot = lambda: CalibrationSettingsSnapshot(
-        sticks, calculate_calibration_report(list(sticks))
-    )
     gait = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
     gait.frame_rate_spin.setValue(240.0)
-    knee = window._tool_widgets["knee_correction"]
-    knee.settings_snapshot = lambda: KneeCorrectionSettings(
-        hip_knee_length_cm=1.5, knee_ankle_length_cm=1.7, pixels_per_cm=42.0
-    )
-    messages = []
-    monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("Treadmill preset", True))
-    monkeypatch.setattr(QMessageBox, "information", lambda _parent, title, body: messages.append((title, body)))
-    window.routes._create_profile_from_manual_presets()
-    app.processEvents()
-    profile = editor.profile_use_cases.list_profiles()[0]
-    assert profile.name == "Treadmill preset"
-    assert editor.workspace_stack.currentWidget() is editor.configuration_page
+    window.workflows.save_button.click()
+    profile = window.workflows.use_cases.load(window.workflows.active.id)
+    assert profile.name == "Navigation test"
     assert profile.processing_manifest is not None
-    assert profile.calibration_map is not None
     assert profile.analysis_manifest is not None
-    assert profile.knee_manifest is not None
-    assert editor.include_gait_analysis_button.isChecked()
-    assert editor.include_knee_correction_button.isChecked()
-    assert messages[0][0] == "Profile created"
-    assert "✓  Video settings manifest" in messages[0][1]
-    assert "✓  Calibration map" in messages[0][1]
-    assert "✓  Gait analysis manifest" in messages[0][1]
-    assert "✓  Knee correction manifest" in messages[0][1]
-    assert "—  DeepLabCut models" in messages[0][1]
+    assert set(profile.workspace_state["pages"]) == {
+        "video_processing", "manual_calibration", "gait_parameter_analysis", "knee_correction"
+    }
+    assert profile.workspace_state["pages"]["gait_parameter_analysis"]["controls"]["frame_rate_spin"] == 240
+    assert window.workflows.status.text() == "Saved"
     window.close()
 
 
@@ -446,46 +385,21 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     window.resize(1180, 700)
     window.show()
     app.processEvents()
-    automation_buttons = window.findChildren(QPushButton, "RunwayOptionButton")
-    assert [button.text() for button in automation_buttons] == ["Automated", "Profiles"]
+    assert [button.text() for button in window._primary_navigation_buttons] == [
+        "Manual", "Automated", "Automation settings", "Ladder",
+    ]
     assert window._stack.currentWidget() is window._main_menu
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
     assert window._home_button.property("activeNavigation") is True
-    assert window._automation_run_button.property("activeNavigation") is False
-    assert window._automation_run_button.property("runwayOption") == "automated"
-    assert window._automation_profiles_button.property("runwayOption") == "profiles"
-    assert not window._automation_run_button.icon().isNull()
-    assert not window._automation_profiles_button.icon().isNull()
-    assert not window._runway_manual_button.icon().isNull()
-    assert not window._settings_button.icon().isNull()
-    assert window.navigation.tool_id is None
-    assert window._runway_options.isHidden()
     assert window._manual_stage_frame.isHidden()
-    assert window._primary_navigation_highlight.isHidden()
-    window._runway_button.click()
-    QTest.qWait(280)
-    assert not window._runway_options.isHidden()
-    assert window._runway_button.text() == "Runway  ‹"
-    assert window._runway_button.property("activeNavigation") is True
-    assert window._main_menu.view_stack.currentWidget() is window._main_menu.runway_home_page
     window._automation_run_button.click()
-    QTest.qWait(280)
-    assert window._runway_mode_highlight.isVisible()
-    assert window._runway_mode_highlight.geometry() == window.animations._runway_mode_highlight_target()
-    assert window._runway_mode_highlight.property("runwayMode") == "automated"
+    automated = window._main_menu.automated_profiles
+    assert automated.workspace_stack.currentWidget() is automated.automation_page
     window._automation_profiles_button.click()
-    QTest.qWait(280)
-    assert window._runway_mode_highlight.geometry() == window.animations._runway_mode_highlight_target()
-    assert window._runway_mode_highlight.property("runwayMode") == "profiles"
-    assert (
-        window._main_menu.automated_profiles.workspace_stack.currentWidget()
-        is window._main_menu.automated_profiles.configuration_page
-    )
-    window._runway_manual_button.click()
-    assert window._manual_stage_animation.state() == QAbstractAnimation.State.Running
-    _wait_for_animation(window._manual_stage_animation)
-    QTest.qWait(40)
-    assert window._runway_mode_highlight.property("runwayMode") == "manual"
+    assert automated.workspace_stack.currentWidget() is automated.configuration_page
+    window._manual_tools_button.click()
+    assert window._stack.currentWidget() is window._tool_widgets["manual_calibration"]
+    QTest.qWait(300)
     assert not window._manual_stage_frame.isHidden()
     assert window._partner_marks.isVisible()
     assert window._toolbar.height() == APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT
@@ -501,30 +415,15 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert all(button.iconSize() == QSize(20, 20) for button in window._manual_stage_buttons.values())
     assert all(not button.icon().isNull() for button in window._manual_stage_buttons.values())
     assert [label.text() for label in window._manual_stage_frame.findChildren(QLabel, "ManualStageSeparator")] == [
-        ">",
-        ">",
-        ">",
-        ">",
-        ">",
-        ">",
+        ">", ">", ">", ">", ">",
     ]
     stage_buttons = list(window._manual_stage_buttons.values())
     assert len({button.y() for button in stage_buttons}) == 1
     assert all(button.width() >= 28 for button in stage_buttons)
     assert [button.x() for button in stage_buttons] == sorted(button.x() for button in stage_buttons)
     assert window._manual_stage_animation.duration() == 210
-    assert window._main_menu.pipeline_tabs.currentIndex() == 0
-    assert window._main_menu.view_stack.currentWidget() is window._main_menu.manual_pipeline_page
-    assert window._manual_tools_button.property("activeManual") is True
-    expanded_stages = window._main_menu.manual_pipeline_page.findChildren(QFrame, "ManualMiniStage")
-    assert len(expanded_stages) == 6
-    assert len({stage.y() for stage in expanded_stages}) == 3
-    assert len({stage.x() for stage in expanded_stages}) == 2
-    window._manual_stage_buttons["manual_calibration"].click()
-    QTest.qWait(300)
-    assert not window._manual_stage_frame.isHidden()
+    assert window._manual_tools_button.property("activeNavigation") is True
     assert window.navigation.tool_id == "manual_calibration"
-    assert window._toolbar.height() == APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT
     window._automation_profiles_button.click()
     _wait_for_animation(window._manual_stage_animation)
     assert (
@@ -535,11 +434,6 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert window._manual_stage_frame.isHidden()
     assert window._partner_marks.isVisible()
     assert window._toolbar.height() == 64
-    window._runway_manual_button.click()
-    QTest.qWait(240)
-    assert window._main_menu.pipeline_tabs.currentIndex() == 0
-    assert window._manual_tools_button.property("activeManual") is True
-    assert window.navigation.tool_id is None
     window._home_button.click()
     QTest.qWait(300)
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
@@ -555,7 +449,7 @@ def test_navigation_does_not_override_the_user_window_size():
     window.resize(1180, 700)
     app.processEvents()
     chosen_size = window.size()
-    window.routes._show_main_menu()
+    window.routes._open_tool("manual_calibration")
     _wait_for_animation(window._manual_stage_animation)
     assert window._toolbar.height() == APP_TOOLBAR_HEIGHT + WORKFLOW_ROW_HEIGHT
     assert window._manual_stage_frame.isVisible()
@@ -686,7 +580,7 @@ def test_gait_and_pca_stay_embedded_with_clear_workspace_navigation():
     assert [
         gait.kinematics_widget.workspace_tabs.tabText(index)
         for index in range(gait.kinematics_widget.workspace_tabs.count())
-    ] == ["1. Inputs", "2. Preview / results", "3. Run log"]
+    ] == ["Files", "Preview", "Results", "Log"]
     window.routes._open_tool("pca_random_forest")
     pca = window._tool_widgets["pca_random_forest"]
     app.processEvents()
@@ -709,15 +603,15 @@ def test_main_navigation_uses_one_primary_bar_instead_of_a_duplicate_tab_strip()
         theme.set_dark_mode(False)
         window = create_main_window(initial_theme_mode="light")
         menu = window._main_menu
-        assert menu.pipeline_tabs.tabBar().isHidden()
+        assert menu.findChild(QTabWidget, "PipelineTabs") is None
         assert window._toolbar.height() == 64
         assert window._home_button.size().width() == 168
         assert window._home_button.size().height() == 44
         assert not window._home_button.icon().isNull()
         assert window._brand_logo_filename == "DLC-Gait-Assembler-logo-light-original-clean.png"
-        assert window._primary_navigation.objectName() == "PrimaryNavigation"
-        assert "QToolButton#RunwayNavigationButton" in window._shell.styleSheet()
-        assert "QPushButton#RunwayOptionButton" in window._shell.styleSheet()
+        assert window.findChild(QFrame, "PrimaryNavigation") is not None
+        assert "QPushButton#PrimaryNavigationButton" in window._shell.styleSheet()
+        assert window.findChild(QWidget, "RunwayOptions") is None
         window.close()
     finally:
         if menu is not None:
@@ -760,58 +654,44 @@ def test_redesigned_menu_keeps_carbon_and_launch_controls_clear_at_minimum_size(
     try:
         window.resize(1100, 640)
         window.show()
-        window.routes._show_runway_menu()
-        QTest.qWait(650)
+        app.processEvents()
         menu = window._main_menu
         assert window.size() == QSize(1100, 640)
         assert ("carbon-dark.png" if dark else "carbon-light.png") in menu.styleSheet()
         assert theme.SURFACE in menu.styleSheet()
-        bridge = menu._pipeline_handoff_widget
-        for card, button in (
-            (menu._manual_choice_card_widget, menu.runway_manual_choice_button),
-            (menu._automated_choice_card_widget, menu.automated_choice_button),
-        ):
-            assert card.geometry().bottom() < bridge.geometry().top()
-            assert card.rect().contains(button.geometry())
+        for card in menu.home_page.findChildren(QFrame, "SetupChoiceCard"):
+            assert card.isVisible()
+            assert window.rect().contains(card.rect().translated(card.mapTo(window, card.rect().topLeft())))
+        menu.runway_requested.emit()
+        app.processEvents()
+        picker = window.workflows
+        for button in (picker.new_profile_button, picker.open_button, *window._primary_navigation_buttons):
             assert button.isVisible()
-        assert menu.runway_home_page.rect().contains(bridge.geometry())
-        assert all(
-            button.width() >= button.sizeHint().width()
-            for button in (
-                window._automation_run_button,
-                window._automation_profiles_button,
-                window._runway_manual_button,
-            )
-        )
-        requested = []
-        menu.profiles_requested.connect(lambda: requested.append("profiles"))
-        menu.configure_profiles_button.click()
-        assert requested == ["profiles"]
+            assert button.width() >= button.sizeHint().width()
+            assert window.rect().contains(button.rect().translated(button.mapTo(window, button.rect().topLeft())))
     finally:
         window.close()
         theme.set_dark_mode(previous_dark)
 
 
-def test_manual_directory_keyboard_actions_target_each_stage():
+def test_manual_toolbar_keyboard_actions_target_each_stage():
     app = QApplication.instance() or QApplication([])
-    menu = create_main_menu(TOOL_SPECS)
-    requested = []
-    menu.tool_requested.connect(requested.append)
-    menu.show_manual()
-    menu.resize(1100, 600)
-    menu.show()
-    app.processEvents()
+    window = create_main_window()
+    window.resize(1100, 640)
+    window.show()
+    window._manual_tools_button.click()
+    _wait_for_animation(window._manual_stage_animation)
     try:
-        for stage in menu.manual_pipeline_page.findChildren(QFrame, "ManualMiniStage"):
-            stage.setFocus()
-            QTest.keyClick(stage, Qt.Key_Return)
-        assert requested == [spec.id for spec in TOOL_SPECS]
+        for stage_id, button in window._manual_stage_buttons.items():
+            button.setFocus()
+            QTest.keyClick(button, Qt.Key_Space)
+            assert window.navigation.tool_id == stage_id
     finally:
-        menu.close()
+        window.close()
 
 
 @pytest.mark.parametrize("dark", [False, True])
-def test_sliding_mode_highlights_paint_the_original_role_colors(dark):
+def test_primary_navigation_highlights_paint_each_role_color(dark):
     app = QApplication.instance() or QApplication([])
     previous_dark = theme.IS_DARK
     theme.set_dark_mode(dark)
@@ -823,20 +703,21 @@ def test_sliding_mode_highlights_paint_the_original_role_colors(dark):
         for action, color in (
             (window.routes._show_automated_pipeline, theme.TOOL_1),
             (window.routes._show_automated_profiles, theme.TOOL_2),
-            (window.routes._show_main_menu, theme.TOOL_3),
+            (window.routes._open_manual_workspace, theme.TOOL_3),
         ):
             action()
             QTest.qWait(350)
-            highlight = window._runway_mode_highlight
-            assert highlight.geometry() == window.animations._runway_mode_highlight_target()
+            highlight = window._primary_navigation_highlight
+            button, _ = window.animations._active_primary_navigation_target()
+            assert highlight.geometry() == window.animations._primary_navigation_target_geometry(button)
             rendered = highlight.grab().toImage()
             assert rendered.pixelColor(rendered.width() // 2, rendered.height() - 2).name() == color.lower()
             window.resize(1280, 720)
             QTest.qWait(30)
-            assert highlight.geometry() == window.animations._runway_mode_highlight_target()
+            assert highlight.geometry() == window.animations._primary_navigation_target_geometry(button)
             window.resize(1100, 640)
             QTest.qWait(30)
-            assert highlight.geometry() == window.animations._runway_mode_highlight_target()
+            assert highlight.geometry() == window.animations._primary_navigation_target_geometry(button)
     finally:
         window.close()
         theme.set_dark_mode(previous_dark)

@@ -17,6 +17,13 @@ from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_coordinat
 
 
 class RustLab1RecordingWriter:
+    def resolve_calibration(self, settings):
+        from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_calibration_loader import (
+            resolve_calibration_settings,
+        )
+
+        return resolve_calibration_settings(settings, allow_unscaled=True)
+
     def prepare(self, path):
         output = Path(path).expanduser().resolve()
         output.mkdir(parents=True, exist_ok=True)

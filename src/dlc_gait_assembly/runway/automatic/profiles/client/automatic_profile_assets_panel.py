@@ -138,6 +138,14 @@ class AutomaticProfileAssetsPanel:
         self._set_path_label(self.view.calibration_path_label, self.view.profile_state.calibration_source)
         self._set_path_label(self.view.analysis_manifest_path_label, self.view.profile_state.analysis_manifest_source)
         self._set_path_label(self.view.knee_manifest_path_label, self.view.profile_state.knee_manifest_source)
+        if getattr(self.view, "workflow_controller", None) is not None:
+            for label, path in (
+                (self.view.manifest_path_label, self.view.profile_state.manifest_source),
+                (self.view.analysis_manifest_path_label, self.view.profile_state.analysis_manifest_source),
+                (self.view.knee_manifest_path_label, self.view.profile_state.knee_manifest_source),
+            ):
+                label.setText("Saved in this workflow" if path else "Open settings, then save the workflow")
+                label.setToolTip("")
         if self.view.profile_state.regions:
             self.view.regions_label.setText("Detected regions: " + " → ".join(self.view.profile_state.regions))
         else:
@@ -173,7 +181,7 @@ def build_automatic_analysis_assets(self):
     analysis_stage_row.addStretch(1)
     calibration_content.addLayout(analysis_stage_row)
     calibration_content.addSpacing(10)
-    calibration_content.addWidget(self._field_label("Calibration map"))
+    calibration_content.addWidget(self._field_label("Shared calibration map (optional)"))
     calibration_row = QHBoxLayout()
     self.calibration_path_label = self._path_label()
     calibration_row.addWidget(self.calibration_path_label, 1)
@@ -184,7 +192,7 @@ def build_automatic_analysis_assets(self):
     self.calibration_upload_button = QPushButton("Upload calibration map")
     self.calibration_upload_button.setObjectName("ProfileUploadButton")
     self.calibration_upload_button.setToolTip(
-        "Choose the calibration-map JSON exported by the Calibration tool. It converts tracked image coordinates into physical measurements."
+        "Choose a replacement map for Shared calibration map mode. Other calibration modes use their saved gait settings."
     )
     calibration_row.addWidget(self.calibration_upload_button)
     calibration_content.addLayout(calibration_row)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, QEvent, Qt, Signal
-from PySide6.QtWidgets import QLabel, QSizePolicy, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 
 from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_result_browser import OutputPreviewWidget
 from dlc_gait_assembly.shared.client.qt_svg_preview import ClickableSvgWidget, SvgPreviewDialog
@@ -111,10 +111,20 @@ def build_gait_preview_pages(self):
     self.output_preview_view.setObjectName("GaitOutputPreview")
     self.preview_stack.addWidget(self.preview_placeholder)
     self.preview_stack.addWidget(self.stickplot_view)
-    self.preview_stack.addWidget(self.output_preview_view)
     self.preview_stack.setCurrentWidget(self.preview_placeholder)
     self.preview_page = QWidget()
     preview_layout = QVBoxLayout(self.preview_page)
     preview_layout.setContentsMargins(8, 10, 8, 8)
     preview_layout.addWidget(self.preview_stack, 1)
-    self.workspace_tabs.addTab(self.preview_page, "2. Preview / results")
+    self.workspace_tabs.addTab(self.preview_page, "Preview")
+    self.results_page = QWidget()
+    results_layout = QVBoxLayout(self.results_page)
+    results_layout.setContentsMargins(8, 10, 8, 8)
+    toolbar = QHBoxLayout()
+    self.saved_results_label = QLabel("No results yet")
+    self.saved_results_label.setObjectName("MutedLabel")
+    toolbar.addWidget(self.saved_results_label, 1)
+    toolbar.addWidget(self.open_results_button)
+    results_layout.addLayout(toolbar)
+    results_layout.addWidget(self.output_preview_view, 1)
+    self.workspace_tabs.addTab(self.results_page, "Results")

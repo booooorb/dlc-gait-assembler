@@ -17,6 +17,10 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_s
 from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_spatial_scaling import (
     resolve_pixels_per_cm as _resolve_pixels_per_cm,
 )
+from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_spatial_scaling import (
+    resolve_reference_scales,
+)
+from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_calibration import view_scale
 from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_cycle_statistics import (
     cycle_bounds as _cycle_bounds,
 )
@@ -38,6 +42,7 @@ def extract_custom_sop_parameters(
     preprocessed = preprocessed or prepare_alma_coordinates(raw_dataframe, settings, kinematics, CUSTOM_SOP_MARKERS)
     _validate_preprocessed_coordinates(preprocessed, raw_dataframe, settings)
     columns = preprocessed.columns
+    settings = resolve_reference_scales(raw_dataframe, columns, settings)
     present_markers = {marker for (marker, _coord) in columns}
     (scalar_scale, _source) = _resolve_pixels_per_cm(raw_dataframe, columns, settings)
     bottom_x_scale = configured_axis_scale(settings, "bottom", "x", scalar_scale)
@@ -107,14 +112,7 @@ def extract_custom_sop_parameters(
 
 
 def configured_axis_scale(settings, view: str, axis: str, fallback):
-    configured = (settings.view_calibration or {}).get(view)
-    if isinstance(configured, (int, float)) and float(configured) > 0:
-        return float(configured)
-    if isinstance(configured, dict):
-        value = configured.get(f"{axis}_pixels_per_cm", configured.get("pixels_per_cm"))
-        if value and float(value) > 0:
-            return float(value)
-    return float(fallback) if fallback and float(fallback) > 0 else None
+    return view_scale(settings, view, axis, fallback)
 
 
 def stance_mask(series, marker, x_scale, y_scale, settings, np):

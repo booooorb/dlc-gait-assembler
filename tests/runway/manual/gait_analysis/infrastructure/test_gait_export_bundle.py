@@ -22,7 +22,7 @@ def settings():
     return AlmaSettings(
         analysis_type="Spontaneous walking",
         pixels_per_cm=50.0,
-        calibration_method="manual",
+        calibration_method="per_view",
         likelihood_threshold=0.0,
         stride_detection_method=CONTEXT_MIXTURE_METHOD,
         no_outlier_filter=True,
@@ -35,9 +35,9 @@ def test_complete_export_is_readable_and_matches_preview(tmp_path, alma_fixtures
     folder = tmp_path / "user chosen folder"
     results = GaitAnalysisUseCases(GaitResultWriter()).run([item], folder, settings())
     paths = results[0].output_files
-    assert len(paths) == 52  # 3 CSVs + report + 2 stick plots + 14 ALMA + 32 RustLab1
+    assert len(paths) == 53  # 4 CSVs (including dictionary) + report + 2 stick plots + 14 ALMA + 32 RustLab1
     assert set(paths) == {p for p in folder.rglob("*") if p.is_file()}
-    assert len(list(folder.rglob("*.csv"))) == 3
+    assert len(list(folder.rglob("*.csv"))) == 4
     assert not (folder / "gait_parameters.csv").exists()
     assert len(list(folder.rglob("*_ALMA_*.svg"))) == 14
     assert len(list(folder.rglob("rustlab1_figures/*_strides/*.svg"))) == 32
@@ -101,7 +101,7 @@ def test_no_detected_cycles_still_exports_tracking_and_complete_csv_headers(tmp_
         table = pd.read_csv(next(folder.rglob(f"{side}_stride_parameters.csv")))
         assert table.empty and "knee joint SD (deg)" in table
     assert len(pd.read_csv(next(folder.rglob("general_parameters.csv")))) == 1
-    assert len(result.output_files) == 52
+    assert len(result.output_files) == 53
     for side in ("left", "right"):
         svg = next(folder.rglob(f"{side}_stickplot.svg")).read_text()
         assert "stick-frame-" in svg and "0 strides" in svg

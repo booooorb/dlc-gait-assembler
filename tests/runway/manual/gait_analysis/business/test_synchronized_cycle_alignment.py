@@ -245,7 +245,10 @@ def test_forelimb_rustlab_features_merge_on_canonical_alma_stride_rows(tmp_path,
     assert len(merged_features) == 3
     assert merged_features.columns.is_unique
     assert set(RUSTLAB1_PARAMETER_NAMES).issubset(merged_features.columns)
-    assert set(CUSTOM_SOP_PARAMETER_NAMES).issubset(merged_features.columns)
+    assert not set(CUSTOM_SOP_PARAMETER_NAMES).intersection(merged_features.columns)
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.retired_custom_parameters import RETIRED_CUSTOM_NAMES
+    assert not RETIRED_CUSTOM_NAMES.intersection(pd.read_csv(bundle.canonical_cycles))
+    assert not RETIRED_CUSTOM_NAMES.intersection(pd.read_csv(bundle.feature_dictionary)["feature"])
     assert merged_features["left__step height (cm)"].tolist() == [1.0, 2.0, 3.0]
     assert merged_features["right__step height (cm)"].tolist() == [4.0, 5.0, 6.0]
     assert merged_features["left__cycle_match_valid"].all()

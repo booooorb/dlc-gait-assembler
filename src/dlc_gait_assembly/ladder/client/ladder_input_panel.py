@@ -56,8 +56,9 @@ class LadderInputPanel:
             self.view.state.csv_path = path
             self.view.csv_edit.setText(str(path))
             bodyparts_list = self.view.bodyparts_list
+        previous = set(self.view.controller._selected_bodyparts(view))
         bodyparts_list.clear()
-        suggested = set(suggested_ladder_bodyparts(bodyparts))
+        suggested = (previous & set(bodyparts)) or set(suggested_ladder_bodyparts(bodyparts))
         for bodypart in bodyparts:
             item = QListWidgetItem(bodypart)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)

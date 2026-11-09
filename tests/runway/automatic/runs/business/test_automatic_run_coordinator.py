@@ -136,7 +136,8 @@ def test_automated_pipeline_hands_outputs_through_all_six_stages(tmp_path, monke
     def fake_alma(inputs, output_folder, settings, progress_callback=None):
         assert all(isinstance(item, AlmaViewCsvSet) for item in inputs)
         assert all(item.left_csv.is_file() for item in inputs)
-        assert settings.calibration_map_path == calibration_map.resolve()
+        assert settings.calibration_method == "reference"
+        assert settings.calibration_map_path is None
         alma_calls.append((tuple(inputs), settings))
         Path(output_folder).mkdir(parents=True, exist_ok=True)
         results = []

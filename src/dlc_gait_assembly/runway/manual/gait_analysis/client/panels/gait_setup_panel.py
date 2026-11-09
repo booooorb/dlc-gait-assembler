@@ -24,62 +24,74 @@ class GaitSetupPanel:
     def _is_rustlab1_workflow(self) -> bool:
         return self.view.workflow_combo.currentText() == RUSTLAB1_WORKFLOW_LABEL
 
+    def _is_combined_workflow(self) -> bool:
+        return self.view.workflow_combo.currentText() == ALMA_SIDE_RUST_BOTTOM_LABEL
+
     def _set_settings_tab_visible(self, index: int, visible: bool) -> None:
         self.view.settings_tabs.setTabVisible(index, visible)
-        row_index = next(i for i, indices in enumerate(self.view.settings_navigation_indices) if index in indices)
-        local_index = self.view.settings_navigation_indices[row_index].index(index)
-        self.view.settings_section_rows[row_index].setTabVisible(local_index, visible)
+        self.view.settings_navigation.set_section_visible(index, visible)
 
     def _set_settings_tab_text(self, index: int, text: str) -> None:
         self.view.settings_tabs.setTabText(index, text)
-        row_index = next(i for i, indices in enumerate(self.view.settings_navigation_indices) if index in indices)
-        local_index = self.view.settings_navigation_indices[row_index].index(index)
-        self.view.settings_section_rows[row_index].setTabText(local_index, text)
+        self.view.settings_navigation.set_section_text(index, text)
 
     def _update_workflow(self) -> None:
         rustlab1_only = self._is_rustlab1_workflow()
-        if rustlab1_only and self.view.input_mode_combo.currentText() != MULTI_SIDE_VIEW_MODE_LABEL:
+        combined = self._is_combined_workflow()
+        if (rustlab1_only or combined) and self.view.input_mode_combo.currentText() != MULTI_SIDE_VIEW_MODE_LABEL:
             self.view.input_mode_combo.setCurrentText(MULTI_SIDE_VIEW_MODE_LABEL)
-        if rustlab1_only and self.view.settings_tabs.currentIndex() in {2, 4, 7}:
+        if rustlab1_only and self.view.settings_tabs.currentIndex() in {2, 4, 5, 7}:
             self.view.settings_tabs.setCurrentIndex(0)
         self._set_settings_tab_visible(7, not rustlab1_only)
         self._set_settings_tab_visible(2, not rustlab1_only)
         self._set_settings_tab_visible(4, not rustlab1_only)
-        self._set_settings_tab_text(3, "Stride QC" if rustlab1_only else "Filters")
-        self.view.input_mode_combo.setEnabled(not rustlab1_only)
+        self._set_settings_tab_visible(5, not rustlab1_only)
+        self._set_settings_tab_text(3, "Speed GMM" if rustlab1_only else "Filters")
+        self.view.input_mode_combo.setEnabled(not (rustlab1_only or combined))
         self.view.analysis_type_combo.setEnabled(not rustlab1_only)
-        self.view.input_mode_label.setVisible(not rustlab1_only)
-        self.view.input_mode_combo.setVisible(not rustlab1_only)
+        self.view.input_mode_label.setVisible(not (rustlab1_only or combined))
+        self.view.input_mode_combo.setVisible(not (rustlab1_only or combined))
         self.view.analysis_type_label.setVisible(not rustlab1_only)
         self.view.analysis_type_combo.setVisible(not rustlab1_only)
+        self.view.limb_scope_label.hide()
+        self.view.limb_scope_combo.hide()
+        self.view.help_button.setVisible(not rustlab1_only)
         self.view.setup_box.setTitle("RustLab1 recording" if rustlab1_only else "Experimental setup")
         self.view.stride_detection_box.setTitle("Stick-plot preview" if rustlab1_only else "Stride detection method")
         self.view.stride_method_combo.setVisible(not rustlab1_only)
-        self.view.stride_method_description.setVisible(not rustlab1_only)
-        self.view.compare_strides_button.setVisible(not rustlab1_only)
+        self.view.compare_strides_button.hide()
         self.view.comparison_rustlab_box.setVisible(
-            not rustlab1_only and self.view.stride_method_combo.currentText() == "RustLab1 (bottom paw)"
+            combined or (not rustlab1_only and self.view.stride_method_combo.currentText() == "RustLab1 (bottom paw)")
         )
-        self.view.speed_box.setTitle("Recording timing" if rustlab1_only else "Treadmill speed and calibration")
-        self.view.view_timing_box.setVisible(not rustlab1_only)
-        self.view.workspace_title.setText("RustLab1 standalone analysis" if rustlab1_only else "Runway analysis")
-        self.view.file_box.setTitle(
-            "Three-view RustLab1 input and output" if rustlab1_only else "Multi-view ALMA input and output"
-        )
+        self.view.comparison_rustlab_box.setTitle("RustLab underside speed rule" if combined else "RustLab1 speed rule")
+        for row in (2, 3):
+            for column in (0, 1):
+                self.view.comparison_rustlab_box.layout().itemAtPosition(row, column).widget().setVisible(not combined)
+        self.view.speed_box.setTitle("Recording timing")
+        self.view.view_timing_disclosure.setVisible(not rustlab1_only and self.view.inputs._is_three_view_mode())
+        self.view.workspace_title.setText("Gait analysis")
+        self.view.file_box.setTitle("Recording files")
+        managed = bool(self.view.property("workflowProfileManaged"))
+        self.view.saved_settings_box.setVisible(not rustlab1_only and not managed)
         for control in (self.view.direction_combo, self.view.drag_clearance_spin, self.view.drag_frames_spin):
             control.setEnabled(not rustlab1_only)
         self.view.filter_box.setVisible(not rustlab1_only)
-        self.view.stroke_filter_box.setVisible(not rustlab1_only)
+        self.view.stroke_filter_box.hide()
         self.view.rustlab_detector_box.setVisible(rustlab1_only)
         self.view.output_options_box.setVisible(not rustlab1_only)
-        self.view.parameter_selection.set_source_filter("RustLab1" if rustlab1_only else None)
+        self.view.parameter_selection.set_source_filter("RustLab1" if rustlab1_only else "ALMA")
         self.view.rustlab_box.setTitle("Standalone RustLab1 outputs" if rustlab1_only else "RustLab1 multi-view")
-        self.view.rustlab1_checkbox.setVisible(not rustlab1_only)
+        self.view.rustlab1_checkbox.hide()
         self.view.rustlab_box.setVisible(rustlab1_only)
         self.view.rustlab_standalone_figures_checkbox.setVisible(rustlab1_only)
+        self.view.workflow_output_note.setText(
+            "CSV tables include both ALMA sides, 20 RustLab bottom measurements, and ALMA session means and SDs."
+            if combined else "ALMA stride measurements are always saved as CSV."
+        )
+        self.view.workflow_output_note.setVisible(not rustlab1_only)
         set_tooltip(
             self.view.rustlab_standalone_figures_checkbox,
-            "Save supported RustLab1 figures; retired bottom-center angles are excluded.",
+            "Save left and right PNG stick plots from the R-smoothed coordinates. SVG previews are always saved.",
         )
         set_tooltip(
             self.view.output_folder_edit,
@@ -87,13 +99,8 @@ class GaitSetupPanel:
             if rustlab1_only
             else "Folder where ALMA gait-analysis outputs will be saved.",
         )
-        self.view.rustlab_status_label.setText(
-            "Standalone mode uses bottom-paw timing and exports RustLab1 results. Choose ALMA + post-ALMA features for combined ALMA and RustLab1 outputs."
-            if rustlab1_only
-            else "RustLab1 needs paired left, right, and bottom CSVs."
-        )
         self.view.export_manifest_button.setEnabled(not rustlab1_only)
-        self.view.export_manifest_button.setVisible(not rustlab1_only)
+        self.view.export_manifest_button.setVisible(not rustlab1_only and not managed)
         self.view.bottom_y_pixels_per_cm_label.setVisible(not rustlab1_only)
         self.view.bottom_y_pixels_per_cm_spin.setVisible(not rustlab1_only)
         self.view.bottom_x_pixels_per_cm_label.setText(
@@ -105,20 +112,18 @@ class GaitSetupPanel:
             if rustlab1_only
             else "Bottom-view horizontal calibration. Set both bottom values for synchronized stroke outputs.",
         )
-        self.view.preview_button.setText(
-            "1. Generate RustLab1 stick-plot preview" if rustlab1_only else "1. Generate stick-plot preview"
-        )
-        self.view.run_button.setText("2. Run RustLab1 analysis" if rustlab1_only else "2. Analyze and save outputs")
+        self.view.preview_button.setText("Preview strides")
+        self.view.run_button.setText("Analyze and save")
         set_tooltip(
             self.view.preview_button,
-            "Detect RustLab1 stance-onset strides from the selected three-view set and preview the side-view stick plots."
+            "Run the R coordinate preparation and detect each side's hind-toe Speed GMM cycles independently."
             if rustlab1_only
             else "Generate and inspect an ALMA stick plot from the selected left-view CSV before running the full analysis.",
             "Ctrl+P",
         )
         set_tooltip(
             self.view.run_button,
-            "Run standalone RustLab1 analysis after reviewing its stride preview."
+            "Execute the adapted RustLab1 R analysis and export its complete 106-row measurement catalog."
             if rustlab1_only
             else "Run ALMA gait analysis after reviewing the stick plot.",
             "Ctrl+R",
@@ -131,8 +136,10 @@ class GaitSetupPanel:
         three_view = self.view.inputs._is_three_view_mode()
         self.view.view_calibration_box.setEnabled(three_view)
         self.view.view_timing_box.setEnabled(three_view)
-        self.view.view_calibration_hint.setText(
-            "Each camera uses its own map or pixels per cm. Zero side values use the shared/reference calibration."
+        self.view.view_timing_disclosure.setVisible(three_view and not self._is_rustlab1_workflow())
+        set_tooltip(
+            self.view.view_calibration_box,
+            "Import a map or enter pixels per cm for each side. Unset bottom scales leave bottom distances blank."
             if three_view
             else "Choose Multi side view above to calibrate each camera. Single side view uses the Calibration tab."
         )
@@ -153,10 +160,12 @@ class GaitSetupPanel:
             )
         else:
             self.view.inputs._refresh_view_sets()
+        self.view.calibration._update_calibration_method()
         self.view.controller._invalidate_stickplot_preview()
         self.view.controller._update_run_state()
 
     def _update_analysis_mode(self) -> None:
+        self.view.calibration._update_calibration_method()
         if self._is_rustlab1_workflow():
             self.view.treadmill_speed_label.hide()
             self.view.treadmill_speed_spin.hide()
@@ -188,6 +197,8 @@ class GaitSetupPanel:
         else:
             right_to_left = False
         return AlmaSettings(
+            output_format="alma_side_rust_bottom" if self._is_combined_workflow() else "alma",
+            **self.view.calibration.collect_settings(),
             **{
                 name: int(spin.value()) if name.startswith("minimum_") else spin.value()
                 for name, spin in self.view.comparison_rustlab_spins.items()
@@ -197,21 +208,12 @@ class GaitSetupPanel:
             input_mode=MULTI_SIDE_VIEW_MODE_LABEL
             if self.view.inputs._is_three_view_mode()
             else SINGLE_SIDE_VIEW_MODE_LABEL,
-            limb_scope=self.view.limb_scope_combo.currentText(),
+            limb_scope="Hindlimb",
             analysis_type=self.view.analysis_type_combo.currentText(),
             frame_rate=self.view.frame_rate_spin.value(),
             filter_cutoff=self.view.filter_cutoff_spin.value(),
             treadmill_speed_cm_s=self.view.treadmill_speed_spin.value(),
-            calibration_method="reference"
-            if self.view.calibration_method_combo.currentText() == "Reference body segment"
-            else "manual",
-            reference_segment=self.view.reference_segment_combo.currentText().split(" ", 1)[0],
-            reference_length_cm=self.view.reference_length_spin.value(),
-            calibration_map_path=self.view.state.calibration_map_path,
             right_to_left=right_to_left,
-            pixels_per_cm=self.view.pixels_per_cm_spin.value()
-            if self.view.calibration_method_combo.currentText() == "Manual pixel-to-cm ratio"
-            else None,
             no_outlier_filter=self.view.no_outlier_checkbox.isChecked(),
             dragging_filter=self.view.dragging_filter_checkbox.isChecked(),
             likelihood_threshold=self.view.likelihood_threshold_spin.value(),
@@ -223,17 +225,14 @@ class GaitSetupPanel:
             stride_length_max_cm=self.view.stride_length_max_spin.value(),
             generate_stickplot=self.view.stickplot_checkbox.isChecked(),
             generate_alma_representations=self.view.alma_representations_checkbox.isChecked(),
-            generate_rustlab1_parameters=self.view.rustlab1_checkbox.isChecked()
-            and self.view.inputs._is_three_view_mode(),
+            generate_rustlab1_parameters=False,
             custom_bodypart_mapping=self.view.mapping._collect_bodypart_mapping(),
             view_bodypart_mapping=self.view.mapping._collect_view_bodypart_mapping(),
-            stroke_analysis_enabled=self.view.stroke_analysis_checkbox.isChecked()
-            and self.view.inputs._is_three_view_mode(),
+            stroke_analysis_enabled=False,
             stroke_likelihood_threshold=self.view.likelihood_threshold_spin.value(),
             max_interpolation_gap_frames=self.view.detection_gap_spin.value(),
             swing_speed_threshold_cm_s=self.view.stroke_swing_speed_spin.value(),
             minimum_synchronized_cycles=self.view.stroke_min_cycles_spin.value(),
-            view_calibration=self.view.calibration._collect_view_calibration(),
             view_timing={
                 side: {
                     "frame_rate": self.view.view_fps_spins[side].value(),
@@ -246,32 +245,21 @@ class GaitSetupPanel:
 
     def _collect_rustlab1_settings(self) -> RustLab1StandaloneSettings:
         return RustLab1StandaloneSettings(
+            **self.view.calibration.collect_settings(),
             frame_rate=self.view.frame_rate_spin.value(),
             filter_cutoff=self.view.rustlab_filter_cutoff_spin.value(),
             likelihood_threshold=self.view.rustlab_likelihood_spin.value(),
-            stance_speed_threshold_px_frame=self.view.rustlab_stance_speed_spin.value(),
-            maximum_tracking_speed_px_frame=self.view.rustlab_max_tracking_speed_spin.value(),
-            minimum_stance_frames=self.view.rustlab_min_stance_spin.value(),
-            minimum_swing_frames=self.view.rustlab_min_swing_spin.value(),
             minimum_complete_strides=self.view.rustlab_min_strides_spin.value(),
-            reference_paw=RUSTLAB1_PAW_LABELS[self.view.rustlab_reference_paw_combo.currentText()],
-            limb_scope=self.view.limb_scope_combo.currentText(),
-            calibration_method="reference"
-            if self.view.calibration_method_combo.currentText() == "Reference body segment"
-            else "manual",
-            reference_segment=self.view.reference_segment_combo.currentText().split(" ", 1)[0],
-            reference_length_cm=self.view.reference_length_spin.value(),
-            pixels_per_cm=self.view.pixels_per_cm_spin.value()
-            if self.view.calibration_method_combo.currentText() == "Manual pixel-to-cm ratio"
-            else None,
-            view_calibration=self.view.calibration._collect_view_calibration(),
+            maximum_coordinate_gap_frames=self.view.rustlab_coordinate_gap_spin.value(),
+            limb_scope="Hindlimb",
             view_bodypart_mapping=self.view.mapping._collect_view_bodypart_mapping(),
-            enabled_parameter_names=self.view.parameter_selection.enabled_parameter_names(),
+            enabled_parameter_names=None,
             generate_figures=self.view.rustlab_standalone_figures_checkbox.isChecked(),
         )
 
 
-ALMA_WORKFLOW_LABEL = "ALMA + post-ALMA features"
+ALMA_WORKFLOW_LABEL = "ALMA"
+ALMA_SIDE_RUST_BOTTOM_LABEL = "ALMA side + rust bottom"
 RUSTLAB1_WORKFLOW_LABEL = "RustLab1 standalone (three-view)"
 RUSTLAB1_PAW_LABELS = {
     "Left hind paw": "d-back-left",

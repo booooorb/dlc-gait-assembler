@@ -659,7 +659,7 @@ def _treadmill_real_alma_demo_settings() -> AlmaSettings:
         analysis_type="Treadmill",
         treadmill_speed_cm_s=30.0,
         frame_rate=120.0,
-        calibration_method="reference",
+        calibration_method="treadmill",  # The upstream fixture derives scale from belt speed.
         reference_segment="ankle_toe",
         reference_length_cm=1.5,
         right_to_left="auto",
@@ -688,7 +688,7 @@ def _assert_generated_parameters_match_real_alma(
     assert len(results) == 1
     assert actual_output in results[0].output_files
     assert actual_output.exists()
-    assert len(list(tmp_path.rglob("*.csv"))) == 2
+    assert len(list(tmp_path.rglob("*.csv"))) == 3
     assert all(path.is_file() for path in results[0].output_files)
     actual = pd.read_csv(actual_output)
     expected = pd.read_csv(expected_parameters_csv)
@@ -724,6 +724,7 @@ def _assert_robust_spontaneous_parameters(
     assert len(results) == 1
     assert actual_path in results[0].output_files
     from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_stride_export import STRIDE_DETAIL_COLUMNS
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.stroke_recovery_parameter_definitions import STROKE_STRIDE_NAMES
 
     assert list(actual.columns) == [
         "recording",
@@ -737,6 +738,7 @@ def _assert_robust_spontaneous_parameters(
         "stride_stop (s)",
         "source_start_frame",
         "source_end_frame",
+        *STROKE_STRIDE_NAMES,
     ]
     assert actual["stride_number"].tolist() == list(range(1, expected_rows + 1))
     assert len(actual) == expected_rows

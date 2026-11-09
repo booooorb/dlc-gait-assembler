@@ -12,6 +12,9 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.alma_para
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.bottom_paw_parameter_contract import (
     without_retired_bottom_parameters,
 )
+from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.retired_custom_parameters import (
+    without_custom_parameters,
+)
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.rustlab1_parameter_definitions import (
     RUSTLAB1_PARAMETER_NAMES,
 )
@@ -27,7 +30,6 @@ ASYMMETRY_PARAMETER_NAMES = (
 )
 PRIMARY_STROKE_PARAMETER_NAMES = (
     "hindlimb_phase_offset_deviation_from_baseline",
-    "hindlimb_stance_overlap_fraction",
     "step_height_asymmetry",
     "stride_length_asymmetry",
     "knee_range_of_motion_asymmetry",
@@ -101,7 +103,7 @@ def selected_alma_parameters(parameters, settings: AlmaSettings, side: str | Non
 
 
 def build_feature_dictionary(stride_features, pd):
-    stride_features = without_retired_bottom_parameters(stride_features)
+    stride_features = without_custom_parameters(without_retired_bottom_parameters(stride_features))
     rows = []
     for column in stride_features.columns:
         if column in IDENTIFIER_COLUMNS or column.endswith(("valid", "usable")):

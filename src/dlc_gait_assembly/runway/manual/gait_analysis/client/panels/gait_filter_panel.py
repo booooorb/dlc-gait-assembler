@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QGridLayout, QGroupBox, QLabel, QSpinBox
+from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QPushButton, QSpinBox
 
 from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_analysis_settings_panel import double_spin
-from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_setup_panel import RUSTLAB1_PAW_LABELS
 from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 
 
@@ -22,14 +21,6 @@ class GaitFilterPanel:
         set_tooltip(
             self.view.rustlab_filter_cutoff_spin,
             f"Butterworth low-pass cutoff used for all three coordinate views. At {self.view.frame_rate_spin.value():g} fps, it must be at most {maximum:g} Hz.",
-        )
-
-    def _update_rustlab_speed_range(self, *_args) -> None:
-        minimum = self.view.rustlab_stance_speed_spin.value() + 0.1
-        self.view.rustlab_max_tracking_speed_spin.setMinimum(minimum)
-        set_tooltip(
-            self.view.rustlab_max_tracking_speed_spin,
-            f"Reject candidate strides containing implausible paw speeds. The upstream notebook rejects phases at 100 px/frame or more; this value must remain above the {self.view.rustlab_stance_speed_spin.value():g} px/frame stance threshold.",
         )
 
 
@@ -64,91 +55,72 @@ def build_gait_filters(self, analysis_tab_layout, filters_tab_layout):
     filter_layout.addWidget(QLabel("Likelihood min"), 4, 0)
     filter_layout.addWidget(self.likelihood_threshold_spin, 4, 1)
     filters_tab_layout.addWidget(filter_box)
-    stroke_filter_box = QGroupBox("Synchronized stroke-pilot QC")
+    stroke_filter_box = QGroupBox("Stroke recovery and coordination")
     self.stroke_filter_box = stroke_filter_box
     stroke_filter_layout = QGridLayout(stroke_filter_box)
     self.stroke_likelihood_spin = double_spin(0.0, 1.0, self._defaults.likelihood_threshold, 2)
     self.stroke_likelihood_spin.setEnabled(False)
-    set_tooltip(self.stroke_likelihood_spin, "Synchronized outputs use the same likelihood threshold as ALMA.")
+    set_tooltip(self.stroke_likelihood_spin, "All extraction types share the ALMA likelihood threshold. Weber et al. excluded labels below 0.95.")
     self.stroke_gap_spin = QSpinBox()
     self.stroke_gap_spin.setRange(0, 60)
-    self.stroke_gap_spin.setSpecialValueText("ALMA full")
+    self.stroke_gap_spin.setSpecialValueText("Shared filtering")
     self.stroke_gap_spin.setValue(0)
     self.stroke_gap_spin.setEnabled(False)
-    set_tooltip(self.stroke_gap_spin, "Synchronized outputs use ALMA's linear interpolation in both directions.")
+    set_tooltip(self.stroke_gap_spin, "Filtering is shared. New swing measurements require observed samples in their measurement window; bottom coordination excludes long tracking gaps.")
     self.stroke_swing_speed_spin = double_spin(0.1, 100.0, self._defaults.swing_speed_threshold_cm_s, 1)
     self.stroke_min_cycles_spin = QSpinBox()
     self.stroke_min_cycles_spin.setRange(1, 100)
     self.stroke_min_cycles_spin.setValue(self._defaults.minimum_synchronized_cycles)
+    set_tooltip(self.stroke_swing_speed_spin, "Main multiview bottom-paw stance/swing classification uses calibrated cm/s. Weber et al. used 10 cm/s; set each camera's actual FPS in Setup.")
+    set_tooltip(self.stroke_min_cycles_spin, "Minimum valid complete strides per side in the common interval for bilateral asymmetry. CV also requires at least three strides. This is a study QC choice, not a published diagnostic cutoff.")
     stroke_filter_layout.addWidget(QLabel("ALMA likelihood (shared)"), 0, 0)
     stroke_filter_layout.addWidget(self.stroke_likelihood_spin, 0, 1)
     stroke_filter_layout.addWidget(QLabel("Coordinate gap policy"), 1, 0)
     stroke_filter_layout.addWidget(self.stroke_gap_spin, 1, 1)
     stroke_filter_layout.addWidget(QLabel("Swing threshold (cm/s)"), 2, 0)
     stroke_filter_layout.addWidget(self.stroke_swing_speed_spin, 2, 1)
-    stroke_filter_layout.addWidget(QLabel("Minimum synchronized cycles"), 3, 0)
+    stroke_filter_layout.addWidget(QLabel("Minimum strides per side"), 3, 0)
     stroke_filter_layout.addWidget(self.stroke_min_cycles_spin, 3, 1)
+    self.stroke_paper_settings_button = QPushButton("Use Weber tracking and contact thresholds")
+    set_tooltip(self.stroke_paper_settings_button, "Set shared likelihood to 0.95 and bottom swing speed to 10 cm/s (Weber et al., 2022). Camera FPS and spatial calibration must describe your recordings.")
+    self.stroke_paper_settings_button.clicked.connect(lambda: (
+        self.likelihood_threshold_spin.setValue(0.95), self.stroke_swing_speed_spin.setValue(10.0)
+    ))
+    stroke_filter_layout.addWidget(self.stroke_paper_settings_button, 4, 0, 1, 2)
     filters_tab_layout.addWidget(stroke_filter_box)
-    rustlab_detector_box = QGroupBox("Standalone RustLab1 stride detection")
+    rustlab_detector_box = QGroupBox("Adapted RustLab1 R · Speed GMM")
     rustlab_detector_box.setObjectName("RustLab1StrideDetectionSettings")
     rustlab_detector_layout = QGridLayout(rustlab_detector_box)
-    self.rustlab_reference_paw_combo = QComboBox()
-    self.rustlab_reference_paw_combo.addItems(tuple(RUSTLAB1_PAW_LABELS))
-    self.rustlab_likelihood_spin = double_spin(0.0, 1.0, 0.95, 2)
+    self.rustlab_likelihood_spin = double_spin(0.0, 1.0, 0.5, 2)
     self.rustlab_likelihood_spin.setSingleStep(0.01)
-    self.rustlab_filter_cutoff_spin = double_spin(0.1, 50.0, self._defaults.filter_cutoff, 1)
-    self.rustlab_stance_speed_spin = double_spin(0.0, 100.0, 7.0, 1)
-    self.rustlab_max_tracking_speed_spin = double_spin(0.1, 1000.0, 100.0, 1)
-    self.rustlab_min_stance_spin = QSpinBox()
-    self.rustlab_min_stance_spin.setRange(1, 120)
-    self.rustlab_min_stance_spin.setValue(1)
-    self.rustlab_min_swing_spin = QSpinBox()
-    self.rustlab_min_swing_spin.setRange(1, 120)
-    self.rustlab_min_swing_spin.setValue(1)
+    self.rustlab_filter_cutoff_spin = double_spin(0.1, 50.0, 6.0, 1)
+    self.rustlab_coordinate_gap_spin = QSpinBox()
+    self.rustlab_coordinate_gap_spin.setRange(0, 1000)
+    self.rustlab_coordinate_gap_spin.setValue(11)
     self.rustlab_min_strides_spin = QSpinBox()
     self.rustlab_min_strides_spin.setRange(1, 1000)
     self.rustlab_min_strides_spin.setValue(1)
     set_tooltip(
-        self.rustlab_reference_paw_combo, "Bottom-view paw whose stance onsets define standalone RustLab1 strides."
-    )
-    set_tooltip(
         self.rustlab_likelihood_spin,
-        "Minimum DLC likelihood for standalone RustLab1 coordinates. The upstream notebook uses 0.95.",
+        "Likelihood cutoff for side-toe Speed GMM timing only. R measurements retain every finite parameter coordinate.",
     )
     set_tooltip(
         self.rustlab_filter_cutoff_spin,
-        "Butterworth low-pass cutoff used for all three coordinate views; it must be below half the frame rate.",
+        "Fifth-order zero-phase Butterworth cutoff used by timing and R parameter coordinates.",
     )
     set_tooltip(
-        self.rustlab_stance_speed_spin, "RustLab1 stance rule in pixels per frame. The upstream notebook uses 7."
+        self.rustlab_coordinate_gap_spin,
+        "Repair genuinely missing coordinates only within one accepted cycle, with finite endpoints. No extrapolation.",
     )
-    set_tooltip(
-        self.rustlab_max_tracking_speed_spin,
-        "Reject candidate strides containing implausible paw speeds. The upstream notebook rejects phases at 100 px/frame or more.",
-    )
-    set_tooltip(
-        self.rustlab_min_stance_spin, "Minimum consecutive stance frames; raise this to suppress short false contacts."
-    )
-    set_tooltip(self.rustlab_min_swing_spin, "Minimum consecutive swing frames between stance periods.")
-    set_tooltip(
-        self.rustlab_min_strides_spin, "Minimum number of complete, QC-accepted strides required for each trial."
-    )
-    rustlab_detector_layout.addWidget(QLabel("Reference paw"), 0, 0)
-    rustlab_detector_layout.addWidget(self.rustlab_reference_paw_combo, 0, 1)
-    rustlab_detector_layout.addWidget(QLabel("Likelihood min"), 1, 0)
-    rustlab_detector_layout.addWidget(self.rustlab_likelihood_spin, 1, 1)
-    rustlab_detector_layout.addWidget(QLabel("Low-pass cutoff (Hz)"), 2, 0)
-    rustlab_detector_layout.addWidget(self.rustlab_filter_cutoff_spin, 2, 1)
-    rustlab_detector_layout.addWidget(QLabel("Stance speed max (px/frame)"), 3, 0)
-    rustlab_detector_layout.addWidget(self.rustlab_stance_speed_spin, 3, 1)
-    rustlab_detector_layout.addWidget(QLabel("Tracking speed max (px/frame)"), 4, 0)
-    rustlab_detector_layout.addWidget(self.rustlab_max_tracking_speed_spin, 4, 1)
-    rustlab_detector_layout.addWidget(QLabel("Minimum stance frames"), 5, 0)
-    rustlab_detector_layout.addWidget(self.rustlab_min_stance_spin, 5, 1)
-    rustlab_detector_layout.addWidget(QLabel("Minimum swing frames"), 6, 0)
-    rustlab_detector_layout.addWidget(self.rustlab_min_swing_spin, 6, 1)
-    rustlab_detector_layout.addWidget(QLabel("Minimum complete strides"), 7, 0)
-    rustlab_detector_layout.addWidget(self.rustlab_min_strides_spin, 7, 1)
+    set_tooltip(self.rustlab_min_strides_spin, "Minimum complete GMM cycles required independently on each side.")
+    for row, (label, control) in enumerate((
+        ("Timing likelihood min", self.rustlab_likelihood_spin),
+        ("Low-pass cutoff (Hz)", self.rustlab_filter_cutoff_spin),
+        ("Coordinate gap repair (frames)", self.rustlab_coordinate_gap_spin),
+        ("Minimum cycles per side", self.rustlab_min_strides_spin),
+    )):
+        rustlab_detector_layout.addWidget(QLabel(label), row, 0)
+        rustlab_detector_layout.addWidget(control, row, 1)
     rustlab_detector_box.hide()
     self.rustlab_detector_box = rustlab_detector_box
     filters_tab_layout.addWidget(rustlab_detector_box)

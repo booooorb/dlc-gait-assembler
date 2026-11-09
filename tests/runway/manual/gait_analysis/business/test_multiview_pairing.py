@@ -79,7 +79,7 @@ def test_pairing_table_shows_partial_groups_and_does_not_guess_unknown_views(app
 
 def test_auto_fill_preserves_manual_assignments_metadata_and_row_count(app, tmp_path):
     paths = [tmp_path / f"mouse_{view}.csv" for view in ("left", "right", "bottom")]
-    metadata = StrokeStudyMetadata(animal_id="mouse-01", group="sham")
+    metadata = StrokeStudyMetadata(animal_id="mouse-01", group="sham", lesion_hemisphere="none")
     initial = AlmaViewCsvSet("my_session", *paths, metadata=metadata)
     dialog = CsvPairingDialog(paths, [initial])
     dialog._use_filename_pairs()
@@ -89,6 +89,7 @@ def test_auto_fill_preserves_manual_assignments_metadata_and_row_count(app, tmp_
     assert result.name == "my_session"
     assert result.metadata.animal_id == "mouse-01"
     assert result.metadata.group == "sham"
+    assert result.metadata.lesion_hemisphere == "none"
     assert result.left_csv == paths[0]
     dialog.close()
 
@@ -110,3 +111,69 @@ def test_back_toe_alias_is_shared_by_ui_and_analysis(label):
     assert auto_bodypart_label([label], "toe") == label
     mapping, _ = detect_bodypart_mapping([label, "mtp", "ankle", "knee", "hip", "iliac_crest"])
     assert mapping[label] == "toe"
+
+
+def test_explicit_marker_labels_can_identify_camera_folders_without_guessing_laterality(tmp_path):
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_input_pairing import csv_view_from_bodyparts
+    paths = [tmp_path / camera / "mouse01.csv" for camera in ("camera_A", "camera_B", "camera_C")]
+    assert csv_view_from_bodyparts(["toe", "ankle", "knee"]) is None
+    assert csv_view_from_bodyparts(["l-back-toe", "l-back-ankle"]) == "left"
+    assert csv_view_from_bodyparts(["r-back-toe", "r-back-ankle"]) == "right"
+    assert csv_view_from_bodyparts(["lhpaw", "rhpaw", "lfpaw", "rfpaw"]) == "bottom"
+    assert csv_view_from_bodyparts(["lhpaw", "rhpaw", "l-back-toe", "l-back-ankle"]) is None
+    groups, errors = build_view_csv_sets(paths, {
+        paths[0]: ("l-back-toe", "l-back-ankle"), paths[1]: ("r-back-toe", "r-back-ankle"),
+        paths[2]: ("lhpaw", "rhpaw"),
+    })
+    assert not errors and len(groups) == 1
+    assert groups[0].left_csv == paths[0]
+    # Matching recording names in recognized camera folders can use generic filenames.
+    paths = [tmp_path / view / "mouse01.csv" for view in ("left", "right", "underside")]
+    groups, errors = build_view_csv_sets(paths, {paths[2]: ("lhpaw", "rhpaw")})
+    assert not errors and len(groups) == 1
+    assert groups[0].bottom_csv == paths[2]
+
+
+def test_camera_name_and_header_conflicts_do_not_make_a_ready_recording(tmp_path):
+    paths = [tmp_path / f"mouse_{view}.csv" for view in ("left", "right", "bottom")]
+    groups, errors = build_view_csv_sets(paths, {paths[0]: ("r-back-toe", "r-back-ankle")})
+    assert not groups
+    assert any("labels say right" in error for error in errors)
+    assert csv_view_from_name(tmp_path / "right" / "mouse_left.csv") is None
+
+
+def test_pairing_requires_an_explicit_choice_to_exclude_extra_csvs(app, tmp_path):
+    paths = [tmp_path / f"mouse_{view}.csv" for view in ("left", "right", "bottom")]
+    extra = tmp_path / "unclassified.csv"
+    dialog = CsvPairingDialog([*paths, extra], [])
+    assert not dialog.buttons.button(QDialogButtonBox.Save).isEnabled()
+    with pytest.raises(ValueError, match="Assign every CSV"):
+        dialog._collect_pairings()
+    dialog.exclude_unassigned.setChecked(True)
+    assert dialog.buttons.button(QDialogButtonBox.Save).isEnabled()
+    assert dialog.excluded_paths() == [extra]
+    assert len(dialog._collect_pairings()) == 1
+    dialog.close()
+
+
+def test_pairing_rejects_swapped_camera_roles_and_ranks_the_matching_view_first(app, tmp_path):
+    paths = [tmp_path / f"mouse_{view}.csv" for view in ("left", "right", "bottom")]
+    dialog = CsvPairingDialog(paths, [])
+    row = dialog._rows[0]
+    assert row["right"].itemData(1) == str(paths[1])
+    row["left"].setCurrentIndex(row["left"].findData(str(paths[1])))
+    row["right"].setCurrentIndex(row["right"].findData(str(paths[0])))
+    assert "appears to be right view" in row["status"].text()
+    assert not dialog.buttons.button(QDialogButtonBox.Save).isEnabled()
+    dialog.close()
+
+
+def test_explicit_labels_allow_manual_correction_of_misnamed_camera_files(app, tmp_path):
+    paths = [tmp_path / f"mouse_{view}.csv" for view in ("left", "right", "bottom")]
+    labels = {paths[0]: ("r-back-toe", "r-back-ankle"), paths[1]: ("l-back-toe", "l-back-ankle"),
+              paths[2]: ("lhpaw", "rhpaw")}
+    corrected = AlmaViewCsvSet("mouse", paths[1], paths[0], paths[2])
+    dialog = CsvPairingDialog(paths, [corrected], bodyparts_by_path=labels)
+    assert dialog.buttons.button(QDialogButtonBox.Save).isEnabled()
+    assert dialog._collect_pairings()[0].left_csv == paths[1]
+    dialog.close()

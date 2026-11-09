@@ -21,6 +21,7 @@ from dlc_gait_assembly.app.client.app_branding_widgets import (
     BRAND_LOGO_FILENAMES,
     BRAND_LOGO_HEIGHT,
     BRAND_LOGO_MAX_WIDTH,
+    PartnerLogoLabel,
     main_menu_logo_label,
     menu_asset_pixmap,
     navigation_icon,
@@ -69,6 +70,7 @@ class AppHeaderNavigation:
         home_button.clicked.connect(self.view.routes._show_home_menu)
         self.view._home_button = home_button
         primary_layout.addWidget(home_button)
+        primary_layout.addWidget(self.view.workflows.bar)
         divider = QFrame()
         divider.setObjectName("ToolbarDivider")
         divider.setFrameShape(QFrame.VLine)
@@ -79,103 +81,28 @@ class AppHeaderNavigation:
         navigation_layout = QHBoxLayout(primary_navigation)
         navigation_layout.setContentsMargins(0, 0, 0, 0)
         navigation_layout.setSpacing(4)
-        runway_button = QToolButton()
-        runway_button.setObjectName("RunwayNavigationButton")
-        runway_button.setText("Runway  ›")
-        runway_button.setProperty("activeNavigation", False)
-        runway_button.setProperty("navigationRole", "runway")
-        runway_button.setCursor(Qt.PointingHandCursor)
-        runway_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        runway_button.setToolTip("Show automated, profile, and manual runway workflows.")
-        runway_button.clicked.connect(lambda _checked=False: self.view.animations._toggle_runway_options())
-        navigation_layout.addWidget(runway_button)
-        self.view._runway_button = runway_button
-        runway_options = QFrame()
-        runway_options.setObjectName("RunwayOptions")
-        runway_options_layout = QHBoxLayout(runway_options)
-        runway_options_layout.setContentsMargins(9, 0, 9, 0)
-        runway_options_layout.setSpacing(4)
-        automation_group_label = QLabel("AUTOMATION")
-        automation_group_label.setObjectName("RunwayGroupLabel")
-        automation_group_label.hide()
-        automated_button = QPushButton("Automated")
-        automated_button.setObjectName("RunwayOptionButton")
-        automated_button.setProperty("runwayOption", "automated")
-        automated_button.setCursor(Qt.PointingHandCursor)
-        automated_button.setToolTip("Select a profile and process a batch of runway videos.")
-        automated_button.clicked.connect(self.view.routes._show_automated_pipeline)
-        runway_options_layout.addWidget(automated_button)
-        self.view._automation_run_button = automated_button
-        profiles_button = QPushButton("Profiles")
-        profiles_button.setObjectName("RunwayOptionButton")
-        profiles_button.setProperty("runwayOption", "profiles")
-        profiles_button.setCursor(Qt.PointingHandCursor)
-        profiles_button.setToolTip("Create, edit, and manage reusable runway automation profiles.")
-        profiles_button.clicked.connect(self.view.routes._show_automated_profiles)
-        runway_options_layout.addWidget(profiles_button)
-        self.view._automation_profiles_button = profiles_button
-        runway_group_divider = QFrame()
-        runway_group_divider.setObjectName("RunwayGroupDivider")
-        runway_group_divider.setFrameShape(QFrame.VLine)
-        runway_options_layout.addWidget(runway_group_divider)
-        manual_group_label = QLabel("MANUAL")
-        manual_group_label.setObjectName("RunwayManualLabel")
-        manual_group_label.hide()
-        manual_button = QToolButton()
-        manual_button.setObjectName("RunwayManualButton")
-        manual_button.setText("Manual")
-        manual_button.setCursor(Qt.PointingHandCursor)
-        manual_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        manual_button.setToolTip("Slide down the manual runway stages.")
-        manual_button.clicked.connect(self.view.routes._show_main_menu)
-        runway_options_layout.addWidget(manual_button)
-        self.view._runway_manual_button = manual_button
-        runway_mode_highlight = QFrame(runway_options)
-        runway_mode_highlight.setObjectName("RunwayModeHighlight")
-        runway_mode_highlight.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        runway_mode_highlight.hide()
-        self.view._runway_mode_highlight = runway_mode_highlight
-        self.view._runway_mode_highlight_animation = QPropertyAnimation(runway_mode_highlight, b"geometry", self.view)
-        self.view._runway_mode_highlight_animation.setDuration(220)
-        self.view._runway_mode_highlight_animation.finished.connect(self.view.animations._snap_runway_mode_highlight)
-        self.view._runway_mode_highlight_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        runway_options.setFixedHeight(46)
-        runway_options.setMaximumWidth(0)
-        runway_options.hide()
-        navigation_layout.addWidget(runway_options, 0, Qt.AlignVCenter)
-        self.view._runway_options = runway_options
-        self.view._runway_options_expanded = False
-        self.view._runway_options_animation = QPropertyAnimation(runway_options, b"maximumWidth", self.view)
-        self.view._runway_options_animation.setDuration(230)
-        self.view._runway_options_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.view._runway_options_animation.finished.connect(self.view.animations._runway_options_animation_finished)
-        ladder_button = QPushButton("Ladder")
-        ladder_button.setObjectName("LadderNavigationButton")
-        ladder_button.setProperty("activeNavigation", False)
-        ladder_button.setProperty("navigationRole", "ladder")
-        ladder_button.setCursor(Qt.PointingHandCursor)
-        ladder_button.setToolTip("Open ladder analysis.")
-        ladder_button.clicked.connect(lambda _checked=False: self.view.routes._open_tool(self.view._ladder_spec.id))
-        navigation_layout.addWidget(ladder_button)
-        self.view._ladder_button = ladder_button
+        destinations = (
+            ("_manual_tools_button", "Manual", "manual", "Open the manual tools.",
+             self.view.routes._open_manual_workspace),
+            ("_automation_run_button", "Automated", "automated", "Run a batch with the active profile.",
+             self.view.routes._show_automated_pipeline),
+            ("_automation_profiles_button", "Automation settings", "profiles", "Configure the active profile.",
+             self.view.routes._show_automated_profiles),
+            ("_ladder_button", "Ladder", "ladder", "Open ladder analysis.",
+             lambda: self.view.routes._open_tool(self.view._ladder_spec.id)),
+        )
+        self.view._primary_navigation_buttons = []
+        for attribute, label, role, tooltip, route in destinations:
+            button = QPushButton(label)
+            button.setObjectName("PrimaryNavigationButton")
+            button.setProperty("navigationRole", role)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setToolTip(tooltip)
+            button.clicked.connect(route)
+            navigation_layout.addWidget(button)
+            setattr(self.view, attribute, button)
+            self.view._primary_navigation_buttons.append(button)
         primary_layout.addWidget(primary_navigation)
-        self.view._primary_navigation = primary_navigation
-        manual_pipeline_group = QFrame(primary_row)
-        manual_pipeline_group.setObjectName("ManualPipelineGroup")
-        manual_pipeline_layout = QHBoxLayout(manual_pipeline_group)
-        manual_pipeline_layout.setContentsMargins(0, 0, 0, 0)
-        manual_pipeline_layout.setSpacing(0)
-        manual_tools_button = QToolButton(manual_pipeline_group)
-        manual_tools_button.setObjectName("ManualPipelineButton")
-        manual_tools_button.setText("Manual")
-        manual_tools_button.setProperty("navigationRole", "manual")
-        manual_tools_button.setToolTip("Open the manual pipeline and its stages.")
-        manual_tools_button.setCursor(Qt.PointingHandCursor)
-        manual_tools_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        manual_tools_button.setFixedWidth(106)
-        manual_tools_button.clicked.connect(lambda _checked=False: self.view.routes._manual_navigation_clicked())
-        self.view._manual_tools_button = manual_tools_button
-        manual_tools_button.hide()
         navigation_highlight = QFrame(primary_row)
         navigation_highlight.setObjectName("PrimaryNavigationHighlight")
         navigation_highlight.setProperty("navigationRole", "automated")
@@ -216,21 +143,6 @@ class AppHeaderNavigation:
                 separator.setObjectName("ManualStageSeparator")
                 separator.setAlignment(Qt.AlignCenter)
                 manual_stage_layout.addWidget(separator)
-        profile_separator = QLabel(">", manual_stage_frame)
-        profile_separator.setObjectName("ManualStageSeparator")
-        profile_separator.setAlignment(Qt.AlignCenter)
-        manual_stage_layout.addWidget(profile_separator)
-        create_profile_button = QPushButton("Create\nprofile", manual_stage_frame)
-        create_profile_button.setObjectName("ManualPresetProfileButton")
-        create_profile_button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        create_profile_button.setMinimumWidth(0)
-        create_profile_button.setCursor(Qt.PointingHandCursor)
-        create_profile_button.setToolTip(
-            "Create a profile draft from manifests exported in the manual pipeline. Settings without a manifest are left blank."
-        )
-        create_profile_button.clicked.connect(self.view.routes._create_profile_from_manual_presets)
-        manual_stage_layout.addWidget(create_profile_button, 1)
-        self.view._manual_preset_profile_button = create_profile_button
         manual_stage_highlight = QFrame(manual_stage_frame)
         manual_stage_highlight.setObjectName("ManualStageHighlight")
         manual_stage_highlight.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -243,8 +155,6 @@ class AppHeaderNavigation:
         manual_stage_frame.setMaximumHeight(0)
         self.view._manual_stage_frame = manual_stage_frame
         self.view._manual_stage_expanded = False
-        manual_pipeline_group.hide()
-        self.view._manual_pipeline_group = manual_pipeline_group
         self.view._manual_stage_animation = QPropertyAnimation(manual_stage_frame, b"maximumHeight", self.view)
         self.view._manual_stage_animation.setDuration(210)
         self.view._manual_stage_animation.setEasingCurve(QEasingCurve.Type.OutQuart)
@@ -300,33 +210,62 @@ class AppHeaderNavigation:
         self.view._shell = shell
         self.view._toolbar = toolbar
         self.view.styling._apply_shell_style()
-        for widget in (
-            self.view._runway_options,
-            self.view._automation_run_button,
-            self.view._automation_profiles_button,
-            self.view._runway_manual_button,
-        ):
-            widget.installEventFilter(self.view)
+        self._update_header_layout()
+
+    def _update_header_layout(self) -> None:
+        compact = self.view.width() < 1440
+        row = self.view._primary_row
+        changed = row.property("compactHeader") != compact
+        row.setProperty("compactHeader", compact)
+        layout = self.view._primary_layout
+        layout.setContentsMargins(12 if compact else 20, 0, 12 if compact else 16, 0)
+        layout.setSpacing(2 if compact else 10)
+        workflows = self.view.workflows
+        workflows.selector.setFixedWidth(114 if compact else 180)
+        workflows.save_button.setFixedWidth(52 if compact else 60)
+        workflows.bar.layout().setSpacing(2 if compact else 5)
+        for button in (workflows.new_button, workflows.save_as_button, workflows.close_button):
+            button.setFixedWidth(28 if compact else 30)
+        style = Qt.ToolButtonIconOnly if self.view.width() < 1600 else Qt.ToolButtonTextBesideIcon
+        self.view._settings_button.setToolButtonStyle(style)
+        self.view._credits_button.setToolButtonStyle(style)
+        partner_layout = self.view._partner_marks.layout()
+        partner_layout.setContentsMargins(0 if compact else 8, 0 if compact else 4, 0 if compact else 8, 0 if compact else 4)
+        partner_layout.setSpacing(4 if compact else 12)
+        for logo in self.view._partner_marks.findChildren(PartnerLogoLabel):
+            pixmap = logo.pixmap()
+            size = pixmap.deviceIndependentSize().toSize()
+            if compact:
+                size.scale(40, 24, Qt.KeepAspectRatio)
+            logo.setScaledContents(True)
+            logo.setFixedSize(size)
+        if changed:
+            self._apply_navigation_icons()
+            for button in row.findChildren(QPushButton) + row.findChildren(QToolButton):
+                button.style().unpolish(button)
+                button.style().polish(button)
+                button.updateGeometry()
 
     def _apply_navigation_icons(self) -> None:
         self._apply_brand_logo()
         c = menu_colors(theme.IS_DARK)
         navigation_icons = (
-            (self.view._runway_button, "runway", c["text"]),
+            (self.view._manual_tools_button, "manual", theme.TOOL_3),
             (self.view._automation_run_button, "automated", theme.TOOL_1),
             (self.view._automation_profiles_button, "profiles", theme.TOOL_2),
             (self.view._ladder_button, "ladder", theme.TOOL_2),
-            (self.view._runway_manual_button, "manual", c["accent"]),
         )
         for button, icon_name, color in navigation_icons:
-            button.setIcon(navigation_icon(icon_name, color))
+            compact_option = self.view.width() < 1440 and button in (
+                self.view._automation_run_button, self.view._automation_profiles_button,
+                self.view._manual_tools_button,
+            )
+            button.setIcon(QIcon() if compact_option else navigation_icon(icon_name, color))
             button.setIconSize(QSize(18, 18))
         stage_icons = ("ruler-measure", "movie", "topology-star-3", "angle", "walk", "chart-dots-3")
         for button, name in zip(self.view._manual_stage_buttons.values(), stage_icons, strict=True):
             button.setIcon(menu_icon(name, c["muted"], 20))
             button.setIconSize(QSize(20, 20))
-        self.view._manual_preset_profile_button.setIcon(menu_icon("file-settings", theme.TOOL_2, 15))
-        self.view._manual_preset_profile_button.setIconSize(QSize(15, 15))
         self.view._settings_button.setIcon(interface_icon("gear", c["muted"]))
         self.view._settings_button.setIconSize(QSize(16, 16))
         self.view._credits_button.setIcon(menu_icon("arrow-up-right", c["muted"], 16))

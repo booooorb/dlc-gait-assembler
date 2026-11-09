@@ -118,12 +118,12 @@ def test_each_side_extracts_bottom_on_its_own_timestamp_windows(monkeypatch):
     assert left["bottom_end_frame"].tolist() == [49, 89]
     assert right["bottom_start_frame"].tolist() == [50, 90, 110]
     assert right["bottom_end_frame"].tolist() == [69, 109, 129]
-    np.testing.assert_allclose(left["mean_hindlimb_base_support"], [2.975, 4.975])
-    np.testing.assert_allclose(right["mean_hindlimb_base_support"], [3.975, 5.975, 6.975])
+    np.testing.assert_allclose(left["bottom_tracking_coverage (%)"], 100.0)
+    np.testing.assert_allclose(right["bottom_tracking_coverage (%)"], 100.0)
     assert not any(name.startswith("r-") for name in left)
     assert not any(name.startswith("l-") for name in right)
-    np.testing.assert_allclose(left["hindlimb_stance_overlap_fraction"], 100.0)
-    np.testing.assert_allclose(right["hindlimb_stance_overlap_fraction"], 100.0)
+    np.testing.assert_allclose(left["hindlimb_single_support (%)"], 0.0)
+    np.testing.assert_allclose(right["hindlimb_single_support (%)"], 0.0)
 
 
 def test_opposite_phase_uses_real_onsets_and_general_uses_whole_time(monkeypatch):
@@ -136,16 +136,17 @@ def test_opposite_phase_uses_real_onsets_and_general_uses_whole_time(monkeypatch
     cfg = AlmaSettings(frame_rate=1.0, calibration_method="manual", pixels_per_cm=1.0)
     track = read_view_track(raw, Path("bottom.csv"), "bottom", cfg)
     windows = BottomWindows(track, cfg, None, SimpleNamespace(butterworth_filter=lambda a, *_: a), raw)
-    assert windows.stride(2.0, 6.0, "left")["opposite_hindlimb_phase_offset (%)"] == 75.0
-    assert windows.stride(2.0, 6.0, "right")["opposite_hindlimb_phase_offset (%)"] == 50.0
-    assert windows.stride(2.0, 6.0, "left")["hindlimb_stance_overlap_fraction"] == 25.0
-    assert windows.stride(2.0, 6.0, "left")["hindlimb_swing_overlap_fraction"] == 25.0
-    assert windows.stride(2.5, 5.5, "left")["hindlimb_stance_overlap_fraction"] == pytest.approx(100 / 6)
-    assert windows.general(0.0, 8.0)["hindlimb_same_phase (%)"] == 50.0
-    assert windows.general(0.0, 8.0)["hindlimb_stance_overlap (%)"] == 25.0
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.stroke_recovery_parameter_definitions import BOTTOM_RECOVERY_NAMES
+    assert windows.stride(2.0, 6.0, "left")[BOTTOM_RECOVERY_NAMES[2]] == 25.0
+    assert windows.stride(2.0, 6.0, "right")[BOTTOM_RECOVERY_NAMES[2]] == 0.0
+    assert windows.stride(2.0, 6.0, "left")["hindlimb_single_support (%)"] == 25.0
+    assert windows.stride(2.0, 6.0, "left")["opposite_hindlimb_single_support (%)"] == 25.0
+    assert windows.stride(2.5, 5.5, "left")["opposite_hindlimb_single_support (%)"] == pytest.approx(100 / 6)
+    assert windows.general(0.0, 8.0)["synchronization_usable_time (s)"] == 8.0
+    assert windows.general(0.0, 8.0)["synchronization_coverage (%)"] == 100.0
     assert windows.stride(-1.0, 2.0, "left")["bottom_alignment_coverage (%)"] == pytest.approx(200 / 3)
-    assert np.isnan(windows.stride(-1.0, 2.0, "left")["hindlimb_stance_overlap_fraction"])
-    assert np.isnan(windows.stride(-1.0, 2.0, "left")["hindlimb_swing_overlap_fraction"])
+    assert np.isnan(windows.stride(-1.0, 2.0, "left")["hindlimb_single_support (%)"])
+    assert np.isnan(windows.stride(-1.0, 2.0, "left")["opposite_hindlimb_single_support (%)"])
 
 
 def test_no_shared_time_is_reported_instead_of_pairing_unrelated_frames(tmp_path, alma_fixtures_dir):

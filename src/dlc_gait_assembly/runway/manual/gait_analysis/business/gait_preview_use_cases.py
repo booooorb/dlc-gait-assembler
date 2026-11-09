@@ -36,9 +36,10 @@ class StrideComparisonResults(Sequence):
 
 
 class GaitPreviewUseCases:
-    def __init__(self, coordinates, renderer):
+    def __init__(self, coordinates, renderer, *, standalone=None):
         self.coordinates = coordinates
         self.renderer = renderer
+        self.standalone = standalone
 
     def _recordings(self, inputs, settings, progress_callback=None):
         settings = self.coordinates.resolve_calibration(settings)
@@ -178,6 +179,9 @@ class GaitPreviewUseCases:
 
     def prepare_rustlab1(self, view_set, settings, *, calculation=None):
         """Draw side skeletons on the standalone reference paw's actual stride frames."""
+        if self.standalone is not None:
+            return self.standalone.preview(view_set, settings)
+
         from dlc_gait_assembly.runway.manual.gait_analysis.business.alma import alma_signal_filter
         from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_settings import ALMA_BODYPARTS
         from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_coordinate_normalization import (
@@ -192,6 +196,7 @@ class GaitPreviewUseCases:
         )
 
         if calculation is None:
+            settings = self.coordinates.resolve_calibration(settings)
             raw = self.coordinates.read_views(view_set, view_mappings_for_set(settings, view_set.name))
             prepared = prepare_alma_coordinates(raw, settings, alma_signal_filter)
             strides = detect_rustlab1_strides(prepared, settings, pd, np, allow_empty=True)

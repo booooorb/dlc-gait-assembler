@@ -7,6 +7,7 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_input_pairing i
 STANDARD_BODYPARTS = ("toe", "mtp", "ankle", "knee", "hip", "iliac crest")
 SIDE_VIEW_LABELS = STANDARD_BODYPARTS
 BOTTOM_VIEW_LABELS = ("back left", "back right", "front left", "front right")
+BOTTOM_CENTER_LABELS = ("center back", "center front")
 FORELIMB_SIDE_VIEW_LABELS = ("front toe tip", "wrist", "elbow", "shoulder")
 FORELIMB_BOTTOM_VIEW_LABELS = ("front left", "front right")
 MULTI_SIDE_VIEW_MODE_LABEL = "Multi side view"
@@ -45,14 +46,16 @@ BODY_PART_ALIASES = {
         "l-iliac-crest",
         "r-iliac-crest",
     ),
-    "back left": ("back left", "back-left", "left back", "left-back", "d-back-left", "lhpaw"),
-    "back right": ("back right", "back-right", "right back", "right-back", "d-back-right", "rhpaw"),
+    "back left": ("back left", "back-left", "left back", "left-back", "d-back-left", "lhpaw", "lh_paw"),
+    "back right": ("back right", "back-right", "right back", "right-back", "d-back-right", "rhpaw", "rh_paw"),
     "front toe tip": ("front toe tip", "front-toe-tip", "front toe", "front-toe", "l-front-toe-tip", "r-front-toe-tip"),
     "wrist": ("wrist", "l-wrist", "r-wrist"),
     "elbow": ("elbow", "ellbow", "l-elbow", "r-elbow", "l-ellbow", "r-ellbow"),
     "shoulder": ("shoulder", "l-shoulder", "r-shoulder"),
-    "front left": ("front left", "front-left", "left front", "left-front", "d-front-left", "lfpaw"),
-    "front right": ("front right", "front-right", "right front", "right-front", "d-front-right", "rfpaw"),
+    "front left": ("front left", "front-left", "left front", "left-front", "d-front-left", "lfpaw", "lf_paw"),
+    "front right": ("front right", "front-right", "right front", "right-front", "d-front-right", "rfpaw", "rf_paw"),
+    "center back": ("center back", "center-back", "back center", "d-center-back", "centre back"),
+    "center front": ("center front", "center-front", "front center", "d-center-front", "centre front"),
 }
 
 

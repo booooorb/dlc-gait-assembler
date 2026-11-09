@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -18,6 +18,7 @@ class AutomatedPipelineProfile:
     gait_analysis_enabled: bool = True
     knee_correction_enabled: bool = False
     updated_at: str = ""
+    workspace_state: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -102,18 +102,19 @@ def test_gait_parameter_reference_documents_and_filters_exported_parameters():
     runway = AlmaKinematicsWidget(
         preview=create_gait_preview(), analysis=create_gait_analysis_operations(), workspace=resolve_workspace()
     )
-    runway.parameter_reference_button.click()
+    runway.parameter_reference_action.trigger()
     app.processEvents()
     reference = runway.parameter_reference
     assert runway.workspace_stack.currentWidget() is reference
     assert reference.documentation_stack.currentWidget() is reference.parameter_documentation
-    assert reference.parameter_tree.topLevelItemCount() == 140
-    assert reference.count_label.text() == "Showing 140 of 140 gait parameters"
+    assert reference.parameter_tree.topLevelItemCount() == 169
+    assert reference.source_filter.findText("Custom SOP") == -1
+    assert reference.count_label.text() == "Showing 169 of 169 gait parameters"
     reference.view_filter.setCurrentText("Single-view")
     app.processEvents()
-    assert reference.parameter_tree.topLevelItemCount() == 32
-    assert {reference.parameter_tree.topLevelItem(index).text(3) for index in range(32)} == {"ALMA"}
-    assert all(reference.parameter_tree.topLevelItem(index).text(2) for index in range(32))
+    assert reference.parameter_tree.topLevelItemCount() == 37
+    assert {reference.parameter_tree.topLevelItem(index).text(3) for index in range(37)} == {"ALMA", "Stroke recovery"}
+    assert all(reference.parameter_tree.topLevelItem(index).text(2) for index in range(37))
     assert [reference.parameter_tree.topLevelItem(index).text(0) for index in range(3)] == ["1", "2", "3"]
     reference.view_filter.setCurrentText("Multi-view")
     reference.source_filter.setCurrentText("RustLab1")
@@ -136,7 +137,7 @@ def test_gait_parameter_reference_documents_and_filters_exported_parameters():
     runway.documentation_back_button.click()
     app.processEvents()
     assert runway.workspace_stack.currentIndex() == 0
-    assert runway.parameter_reference_button.text() == "Parameter documentation"
+    assert runway.parameter_reference_action.text() == "Parameter guide"
     assert not runway.documentation_back_button.isVisible()
     runway.close()
 
@@ -158,7 +159,7 @@ def test_figure_creator_and_parameters_have_separate_full_width_documentation_pa
     )
     runway.resize(1440, 900)
     runway.show()
-    runway.figure_reference_button.click()
+    runway.figure_reference_action.trigger()
     app.processEvents()
     reference = runway.parameter_reference
     assert runway.workspace_stack.currentWidget() is reference
@@ -191,7 +192,7 @@ def test_figure_creator_and_parameters_have_separate_full_width_documentation_pa
     assert reference._large_figure_dialog is not None
     assert reference._large_figure_dialog.figures[0].renderer().isValid()
     reference._large_figure_dialog.close()
-    runway.parameter_reference_button.click()
+    runway.parameter_reference_action.trigger()
     app.processEvents()
     assert reference.documentation_stack.currentWidget() is reference.parameter_documentation
     assert reference.figure_documentation.isHidden()
@@ -215,11 +216,11 @@ def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings()
     assert sum(name.startswith("left__") for name in multi_alma_names) == 32
     assert sum(name.startswith("right__") for name in multi_alma_names) == 32
     assert not set(ALMA_PARAMETER_NAMES).intersection(multi_names)
-    assert selection.count_label.text() == "100 of 100 parameters enabled"
+    assert selection.count_label.text() == "64 of 64 parameters enabled"
     runway.limb_scope_combo.setCurrentText("Hindlimb + Forelimb")
     app.processEvents()
-    assert selection.count_label.text() == "140 of 140 parameters enabled"
-    assert runway.setup._collect_settings().limb_scope == "Hindlimb + Forelimb"
+    assert selection.count_label.text() == "64 of 64 parameters enabled"
+    assert runway.setup._collect_settings().limb_scope == "Hindlimb"
     runway.limb_scope_combo.setCurrentText("Hindlimb")
     app.processEvents()
     selection.clear_button.click()
@@ -232,8 +233,8 @@ def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings()
     first_visible_item.setCheckState(1, Qt.Checked)
     app.processEvents()
     selected_name = first_visible_item.text(1)
-    assert selection.count_label.text() == "100 of 100 parameters enabled"
-    assert len(runway.setup._collect_settings().enabled_parameter_names) == 100
+    assert selection.count_label.text() == "64 of 64 parameters enabled"
+    assert len(runway.setup._collect_settings().enabled_parameter_names) == 64
     assert not selection.clear_button.isVisible()
     runway.input_mode_combo.setCurrentText("Single side view")
     app.processEvents()
@@ -244,7 +245,7 @@ def test_gait_parameter_selection_is_enumerated_and_saved_in_analysis_settings()
     runway.close()
 
 
-def test_gait_settings_rows_accept_repeated_cross_row_clicks():
+def test_both_settings_rows_accept_repeated_navigation():
     app = QApplication.instance() or QApplication([])
     runway = AlmaKinematicsWidget(
         preview=create_gait_preview(), analysis=create_gait_analysis_operations(), workspace=resolve_workspace()
@@ -252,13 +253,79 @@ def test_gait_settings_rows_accept_repeated_cross_row_clicks():
     runway.resize(1180, 700)
     runway.show()
     app.processEvents()
-    (top_row, bottom_row) = runway.settings_section_rows
-    click_sequence = ((bottom_row, 0), (top_row, 2), (bottom_row, 2), (top_row, 0)) * 3
-    for row, row_index in click_sequence:
-        settings_index = runway.settings_navigation_indices[runway.settings_section_rows.index(row)][row_index]
-        QTest.mouseClick(row, Qt.LeftButton, pos=row.tabRect(row_index).center())
-        app.processEvents()
-        assert runway.settings_tabs.currentIndex() == settings_index
+    for _ in range(3):
+        for row, indices in zip(runway.settings_section_rows, runway.settings_navigation_indices, strict=True):
+            for local in (2, 0, 3, 1):
+                QTest.mouseClick(row, Qt.LeftButton, pos=row.tabRect(local).center())
+                app.processEvents()
+                assert runway.settings_tabs.currentIndex() == indices[local]
+                assert row.property("activeRow")
+    runway.close()
+
+
+def test_gait_tabs_animate_and_keyboard_navigation_changes_the_settings_page():
+    app = QApplication.instance() or QApplication([])
+    runway = AlmaKinematicsWidget(
+        preview=create_gait_preview(), analysis=create_gait_analysis_operations(), workspace=resolve_workspace()
+    )
+    runway.resize(1180, 700)
+    runway.show()
+    app.processEvents()
+    top, bottom = runway.settings_section_rows
+    QTest.mouseClick(top, Qt.LeftButton, pos=top.tabRect(1).center())
+    app.processEvents()
+    assert top._indicator_animation.state() == QAbstractAnimation.State.Running
+    _wait_for_animation(top._indicator_animation)
+    assert top.get_indicator_geometry() == top._target_geometry(1)
+    top.setFocus()
+    QTest.keyClick(top, Qt.Key_Right)
+    app.processEvents()
+    assert runway.settings_tabs.currentWidget() is runway.stride_detection_tab
+    QTest.mouseClick(bottom, Qt.LeftButton, pos=bottom.tabRect(3).center())
+    app.processEvents()
+    assert runway.settings_tabs.currentIndex() == 5
+    assert bottom.property("activeRow")
+    assert not top.property("activeRow")
+    runway.workflow_combo.setCurrentText("RustLab1 standalone (three-view)")
+    app.processEvents()
+    assert not top.isTabVisible(2)
+    assert not bottom.isTabVisible(3)
+    _wait_for_animation(top._indicator_animation)
+    runway.close()
+
+
+def test_gait_tabs_scroll_independently_and_pane_divider_can_be_dragged():
+    app = QApplication.instance() or QApplication([])
+    runway = AlmaKinematicsWidget(
+        preview=create_gait_preview(), analysis=create_gait_analysis_operations(), workspace=resolve_workspace()
+    )
+    runway.resize(1180, 640)
+    runway.show()
+    app.processEvents()
+    runway.view_timing_disclosure.button.click()
+    app.processEvents()
+    setup_scroll = runway.controls_scroll
+    assert setup_scroll.verticalScrollBar().maximum() > 0
+    setup_scroll.verticalScrollBar().setValue(80)
+    value = setup_scroll.verticalScrollBar().value()
+    runway.settings_tabs.setCurrentIndex(3)
+    app.processEvents()
+    assert runway.controls_scroll is not setup_scroll
+    assert runway.controls_scroll.verticalScrollBar().value() == 0
+    runway.settings_tabs.setCurrentWidget(runway.setup_tab)
+    app.processEvents()
+    assert runway.controls_scroll.verticalScrollBar().value() == value
+    splitter = runway.workspace_splitter
+    previous = splitter.sizes()[0]
+    handle = splitter.handle(1)
+    position = handle.rect().center()
+    QTest.mousePress(handle, Qt.LeftButton, pos=position)
+    QTest.mouseMove(handle, position + QPoint(160, 0), delay=20)
+    QTest.mouseRelease(handle, Qt.LeftButton, pos=position + QPoint(160, 0))
+    app.processEvents()
+    assert splitter.sizes()[0] > previous + 100
+    assert runway.run_button.isVisible()
+    assert runway.run_button.mapTo(runway, QPoint()).y() + runway.run_button.height() <= runway.height()
     runway.close()
 
 
@@ -431,8 +498,8 @@ def test_runway_previews_generated_svg_figures_and_csv_tables(tmp_path):
     runway.controller._output_results_ready(
         (AlmaRunResult(input_file=tmp_path / "mouse_left.csv", output_files=(csv_path, ignored_path, svg_path)),)
     )
-    assert runway.preview_stack.currentWidget() is runway.output_preview_view
-    assert runway.workspace_tabs.currentWidget() is runway.preview_page
+    assert runway.results_page.isAncestorOf(runway.output_preview_view)
+    assert runway.workspace_tabs.currentWidget() is runway.results_page
     assert runway.output_preview_view.selected_path == svg_path.resolve()
     assert "Loaded 2 generated output previews" in runway.log.toPlainText()
     preview.close()

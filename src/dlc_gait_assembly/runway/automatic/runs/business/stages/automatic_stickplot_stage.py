@@ -8,7 +8,7 @@ from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts im
 
 
 def execute_stickplot(run, progress_callback: ProgressCallback | None) -> None:
-    settings = run.storage.gait_settings(run.profile.analysis_manifest, run.profile.calibration_map)
+    settings = run.gait_settings
     inputs = run._alma_inputs(settings.input_mode)
     run.stickplot_results = run.operations.stickplots(
         inputs,

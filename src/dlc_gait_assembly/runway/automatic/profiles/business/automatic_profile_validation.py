@@ -45,8 +45,6 @@ def validate_profile_draft(draft: ProfileDraft, *, regions) -> ProfileDraft:
     knee = draft.knee_manifest if draft.knee_manifest is not None else None
     if draft.gait_analysis_enabled and analysis is None:
         raise ValueError("Gait analysis is enabled but no gait analysis manifest was selected.")
-    if draft.gait_analysis_enabled and calibration is None:
-        raise ValueError("Gait analysis is enabled but no calibration map was selected.")
     if draft.knee_correction_enabled and knee is None:
         raise ValueError("Knee correction is enabled but no knee analysis manifest was selected.")
     if not draft.gait_analysis_enabled:
@@ -71,18 +69,20 @@ def validate_profile_draft(draft: ProfileDraft, *, regions) -> ProfileDraft:
 def profile_missing_requirements(profile: AutomatedPipelineProfile, regions, valid_manifest=True) -> list[str]:
     missing: list[str] = []
     if profile.processing_manifest is None:
-        missing.append("Video settings manifest")
+        missing.append("Video settings")
     else:
         if not valid_manifest:
-            missing.append("Valid video settings manifest")
+            missing.append("Valid video settings")
         unassigned = [region for region in regions if region not in profile.deeplabcut_models]
         if unassigned:
             missing.append("DeepLabCut models for: " + ", ".join(unassigned))
     if profile.gait_analysis_enabled:
-        if profile.calibration_map is None:
-            missing.append("Calibration map")
         if profile.analysis_manifest is None:
-            missing.append("Gait analysis manifest")
+            missing.append("Gait settings")
+        workflow = profile.workspace_state.get("pages", {}).get("gait_parameter_analysis", {}).get("controls", {}).get("workflow_combo", "")
+        workflow = workflow.get("text", "") if isinstance(workflow, dict) else workflow
+        if workflow.startswith("RustLab1 standalone"):
+            missing.append("Choose ALMA or ALMA side + rust bottom for automation; RustLab1 standalone runs in Gait analysis")
     if profile.knee_correction_enabled and profile.knee_manifest is None:
-        missing.append("Knee correction manifest")
+        missing.append("Knee correction settings")
     return missing

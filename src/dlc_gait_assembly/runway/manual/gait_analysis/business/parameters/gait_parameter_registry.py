@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_settings import AlmaSettings
-from dlc_gait_assembly.runway.manual.gait_analysis.business.custom_features.custom_sop_feature_definitions import (
-    CUSTOM_SOP_PARAMETER_NAMES,
-)
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.alma_parameter_definitions import (
     ALMA_PARAMETER_NAMES,
     ALMA_REMOVED_VARIABILITY_NAMES,
@@ -21,9 +20,20 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.bottom_pa
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.gait_parameter_contracts import (
     GaitParameterDefinition,
+    ParameterExtractionType,
+)
+from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.retired_custom_parameters import (
+    without_custom_parameters,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.rustlab1_parameter_definitions import (
+    RUSTLAB1_FORELIMB_PARAMETER_NAMES,
     RUSTLAB1_PARAMETER_NAMES,
+)
+from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.stroke_recovery_parameter_definitions import (
+    ALMA_REFERENCE,
+    MOUSEWALKER_REFERENCE,
+    WEBER_REFERENCE,
+    stroke_recovery_definitions,
 )
 
 
@@ -33,8 +43,64 @@ def gait_parameter_catalog() -> tuple[GaitParameterDefinition, ...]:
         _alma_multiview_definition(side, name) for side in ("left", "right") for name in ALMA_PARAMETER_NAMES
     )
     definitions.extend(rustlab1_definition(name) for name in RUSTLAB1_PARAMETER_NAMES)
-    definitions.extend(custom_definition(name) for name in CUSTOM_SOP_PARAMETER_NAMES)
-    return tuple(definitions)
+    return (*(_annotated_definition(d) for d in definitions), *stroke_recovery_definitions())
+
+
+def _annotated_definition(definition):
+    name = definition.name.lower()
+    temporal = any(
+        term in name
+        for term in ("duration", "seconds", "percentage", "cycle velocity", "stride length", "movement_per_step")
+    )
+    coordination = definition.views == "Bottom view"
+    kind = (
+        ParameterExtractionType.COORDINATION
+        if coordination
+        else ParameterExtractionType.SPATIOTEMPORAL
+        if temporal
+        else ParameterExtractionType.KINEMATICS
+    )
+    unit = ""
+    for suffix, value in (("(cm/s)", "cm/s"), ("(cm)", "cm"), ("(deg)", "deg"), ("(s)", "s"), ("(%)", "%")):
+        if suffix in name:
+            unit = value
+            break
+    if not unit:
+        unit = (
+            "frames"
+            if "frames" in name
+            else "cm^2"
+            if name.startswith("variance_hindlimb")
+            else "%"
+            if "fraction" in name
+            else "1"
+            if name in {"flbr_ratio", "frbl_ratio"}
+            else "s"
+            if name.endswith("seconds")
+            else "deg"
+            if "angle" in name
+            else "cm"
+            if "movement_per_step" in name
+            else "mm"
+        )
+    forelimb = definition.name in set(RUSTLAB1_FORELIMB_PARAMETER_NAMES)
+    reference = (
+        ALMA_REFERENCE
+        if definition.source == "ALMA"
+        else WEBER_REFERENCE
+        if definition.source == "RustLab1"
+        else MOUSEWALKER_REFERENCE
+    )
+    note = (
+        "Published ALMA family, with the maintained legacy implementation. Percentages are exported on a 0–100 scale."
+        if definition.source == "ALMA"
+        else "Adapted to authoritative ALMA stride windows; no baseline normalization. Main multiview contact states use the calibrated cm/s swing threshold; standalone RustLab1 retains its separate pixel/frame detector."
+        if definition.source == "RustLab1"
+        else "Study-specific SOP measure; not a validated stroke recovery score. Euclidean paw separation includes longitudinal and transverse components."
+    )
+    return replace(
+        definition, extraction_type=kind, unit=unit, reference=reference, method_note=note, forelimb=forelimb
+    )
 
 
 def rustlab1_definition(name: str) -> GaitParameterDefinition:
@@ -84,7 +150,7 @@ def rustlab1_definition(name: str) -> GaitParameterDefinition:
         calculation = "maximum - minimum vertical marker position within the cycle, converted to millimetres"
         markers = marker
     elif "movement_per_step" in name:
-        calculation = "change in mean hip x-position from the previous same-limb cycle, converted to millimetres"
+        calculation = "change in mean hip x-position from the previous same-limb cycle, converted to centimetres"
         markers = f"{side} hip"
     else:
         statistic = {
@@ -148,28 +214,6 @@ def rustlab1_display_name(name: str) -> str:
     return f"{side} {('forepaw' if forelimb else 'hindpaw')} {measure} relative to {('shoulder' if forelimb else 'hip')} (mm)"
 
 
-def custom_definition(name: str) -> GaitParameterDefinition:
-    formulas = {
-        "mean_hindlimb_base_support": "mean Euclidean separation of left and right hindpaws during bilateral stance",
-        "variance_hindlimb_base_support": "sample variance of hindpaw separation during bilateral stance",
-        "left_right_hindlimb_phase_offset": "100 × first right stance onset offset / gait-cycle frames",
-        "hindlimb_stance_overlap_fraction": "100 × bilateral stance-overlap frames / gait-cycle frames",
-    }
-    if name in formulas:
-        views = "Bottom view"
-        markers = "Left hindpaw (lhpaw) and right hindpaw (rhpaw)"
-        return GaitParameterDefinition(name, "Custom SOP", "Multi-view", views, markers, formulas[name])
-    side = "Left" if name.startswith("left") else "Right"
-    marker = "MTP" if "mtp" in name else "knee"
-    if name.endswith("average_height"):
-        calculation = "mean height above the cycle-local lowest marker position"
-    else:
-        calculation = "maximum - minimum marker height within the gait cycle"
-    return GaitParameterDefinition(
-        name, "Custom SOP", "Multi-view", f"{side} side view", f"{side} {marker}", calculation
-    )
-
-
 def selected_alma_output(parameters, settings: AlmaSettings, side: str | None = None):
     parameters = parameters.drop(
         columns=[
@@ -202,7 +246,7 @@ def selected_alma_output(parameters, settings: AlmaSettings, side: str | None = 
 
 
 def selected_combined_output(parameters, settings: AlmaSettings):
-    parameters = without_retired_bottom_parameters(parameters)
+    parameters = without_custom_parameters(without_retired_bottom_parameters(parameters))
     parameters = parameters.drop(
         columns=[
             name
@@ -216,7 +260,7 @@ def selected_combined_output(parameters, settings: AlmaSettings):
         return parameters
     selected_set = set(selected)
     has_side_selection = any(name.startswith(("left__", "right__")) for name in selected_set)
-    catalog_names = set(ALMA_PARAMETER_NAMES) | set(RUSTLAB1_PARAMETER_NAMES) | set(CUSTOM_SOP_PARAMETER_NAMES)
+    catalog_names = set(ALMA_PARAMETER_NAMES) | set(RUSTLAB1_PARAMETER_NAMES)
 
     def is_enabled(column: str) -> bool:
         if column in catalog_names:

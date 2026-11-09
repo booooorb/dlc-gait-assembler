@@ -19,11 +19,14 @@ class GaitResultWriter:
         self.figures = GaitFigureExporter()
 
     def resolve_calibration(self, settings):
+        from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_analysis_settings import (
+            RustLab1StandaloneSettings,
+        )
         from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_calibration_loader import (
             resolve_calibration_settings,
         )
 
-        return resolve_calibration_settings(settings)
+        return resolve_calibration_settings(settings, allow_unscaled=isinstance(settings, RustLab1StandaloneSettings))
 
     def prepare(self, output_folder):
         Path(output_folder).mkdir(parents=True, exist_ok=True)
@@ -86,6 +89,13 @@ class GaitResultWriter:
 
     def write_synchronized(self, calculation, view_set, destination):
         return write_synchronized_recording(calculation, view_set, destination)
+
+    def write_rustlab_bottom(self, view_set, destination, settings, side_csvs):
+        from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab_bottom_executor import (
+            RustLabBottomExecutor,
+        )
+
+        return RustLabBottomExecutor().run(view_set, destination, settings, side_csvs)
 
     def get_fignums(self):
         from matplotlib import pyplot as plt

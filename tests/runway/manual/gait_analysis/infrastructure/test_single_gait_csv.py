@@ -30,13 +30,14 @@ def recording(tmp_path, alma_fixtures_dir, name):
     return AlmaViewCsvSet(name, side, side, bottom_path, StrokeStudyMetadata(animal_id=name))
 
 
-@pytest.mark.parametrize("scope,count", [("Hindlimb", 53), ("Hindlimb + Forelimb", 75)])
+@pytest.mark.parametrize("scope,count", [("Hindlimb", 52), ("Hindlimb + Forelimb", 74)])
 def test_separate_csvs_contain_every_applicable_parameter_per_recording(tmp_path, alma_fixtures_dir, scope, count):
     from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_bottom_windows import (
         BOTTOM_FORE_NAMES,
         BOTTOM_STRIDE_NAMES,
     )
     from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_recording_tables import side_feature_names
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.stroke_recovery_parameter_definitions import STROKE_STRIDE_NAMES
 
     inputs = [recording(tmp_path, alma_fixtures_dir, name) for name in ("mouse_01", "mouse_02")]
     settings = AlmaSettings(
@@ -53,7 +54,7 @@ def test_separate_csvs_contain_every_applicable_parameter_per_recording(tmp_path
     folder = tmp_path / "outputs"
     results = run_alma_gait_analysis_in_process(inputs, folder, settings)
     assert not (folder / "gait_parameters.csv").exists()
-    assert len(list(folder.rglob("*.csv"))) == 6
+    assert len(list(folder.rglob("*.csv"))) == 8
     assert len(list(folder.rglob("*_stickplot.svg"))) == 4
     assert len(list(folder.rglob("*_ALMA_*.svg"))) == 28
     assert {p for r in results for p in r.output_files} == {p for p in folder.rglob("*") if p.is_file()}
@@ -63,21 +64,22 @@ def test_separate_csvs_contain_every_applicable_parameter_per_recording(tmp_path
             table = pd.read_csv(path)
             assert len(table) == 4 and set(table["recording"]) == {item.name}
             assert set(table["animal_id"]) == {item.name}
-            rust, custom = side_feature_names(side, scope)
-            expected = {*ALMA_PARAMETER_NAMES, *rust, *custom, *BOTTOM_STRIDE_NAMES}
+            rust = side_feature_names(side, scope)
+            expected = {*ALMA_PARAMETER_NAMES, *rust, *BOTTOM_STRIDE_NAMES, *STROKE_STRIDE_NAMES}
             if scope != "Hindlimb":
                 expected.update(BOTTOM_FORE_NAMES)
             assert len(expected) == count
             assert expected.issubset(table)
-            opposite_rust, opposite_custom = side_feature_names("right" if side == "left" else "left", scope)
-            assert not set((*opposite_rust, *opposite_custom)).intersection(table)
+            opposite_rust = side_feature_names("right" if side == "left" else "left", scope)
+            assert not set(opposite_rust).intersection(table)
             assert table.columns.is_unique
             assert not any("Variability " in name for name in table)
-            assert table["variance_hindlimb_base_support"].notna().any()
+            from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.retired_custom_parameters import RETIRED_CUSTOM_NAMES
+            assert not RETIRED_CUSTOM_NAMES.intersection(table)
             assert table["knee joint SD (deg)"].notna().any()
         general = pd.read_csv(next(p for p in result.output_files if p.name == "general_parameters.csv"))
         assert len(general) == 1 and set(general["recording"]) == {item.name}
-        assert "hindlimb_same_phase (%)" in general
+        assert not RETIRED_CUSTOM_NAMES.intersection(general)
 
 
 def test_removed_alma_variability_count():

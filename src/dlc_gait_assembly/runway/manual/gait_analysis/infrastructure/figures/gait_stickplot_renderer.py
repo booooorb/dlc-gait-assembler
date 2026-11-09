@@ -61,6 +61,8 @@ def continuous_stickplot(
     axis_limits=None,
     tracking_only=False,
     phase_confidence=None,
+    output_format="svg",
+    dpi=None,
 ):
     frames = np.arange(start, end + 1)
     phases = stickplot_phase_codes(is_stance, len(filt_corrected_df), trusted, is_drag, phase_confidence)
@@ -164,7 +166,8 @@ def continuous_stickplot(
             fig.text(0.075, 0.02, note, fontsize=9, color="#777777")
             fig.savefig(
                 filename,
-                format="svg",
+                format=output_format,
+                dpi=dpi,
                 metadata={
                     "Description": f"Full recording: frames {start}–{end}. Timing: {timing_source}. "
                     f"{count} detected strides; {accepted} accepted. All finite source segments retained."
@@ -204,7 +207,7 @@ class GaitStickplotRenderer:
         return buffer.getvalue()
 
 
-def render_prepared_stickplot(prepared, destination):
+def render_prepared_stickplot(prepared, destination, *, output_format="svg", dpi=None):
     if prepared is not None:
         continuous_stickplot(
             prepared.coordinates,
@@ -224,4 +227,6 @@ def render_prepared_stickplot(prepared, destination):
             axis_limits=prepared.axis_limits,
             tracking_only=prepared.tracking_only,
             phase_confidence=prepared.phase_confidence,
+            output_format=output_format,
+            dpi=dpi,
         )

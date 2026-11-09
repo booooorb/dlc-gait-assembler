@@ -15,11 +15,6 @@ class StrideComparisonDialog(QDialog):
         self.setWindowTitle("Compare stride detection on this recording")
         self.resize(1100, 800)
         layout = QVBoxLayout(self)
-        note = QLabel(
-            "Compare the stick plots: every method draws the entire recording with identical skeleton frames and axes for each view. Only stance/swing colours and stride markers change; counts may differ. Grey = stance; orange = swing. Asterisked strides fail the current filters and are shown for review only."
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
         self.methods = QComboBox()
         self.methods.addItems([row[0] for row in results])
         layout.addWidget(self.methods)
@@ -33,9 +28,6 @@ class StrideComparisonDialog(QDialog):
         metadata_layout.setContentsMargins(4, 4, 4, 4)
         self.method_details_scroll.setWidget(metadata)
         layout.addWidget(self.method_details_scroll)
-        self.method_description = QLabel()
-        self.method_description.setWordWrap(True)
-        metadata_layout.addWidget(self.method_description)
         self.details = QLabel()
         self.details.setWordWrap(True)
         metadata_layout.addWidget(self.details)
@@ -53,7 +45,7 @@ class StrideComparisonDialog(QDialog):
 
     def _show_method(self, *_):
         method, plots, message = self.results[self.methods.currentIndex()]
-        self.method_description.setText(STRIDE_METHOD_DESCRIPTIONS.get(method, ""))
+        self.methods.setToolTip(STRIDE_METHOD_DESCRIPTIONS.get(method, ""))
         self.details.setText(
             "\n".join(line for line in message.splitlines() if not line.startswith("Tracking confidence filter:"))
         )

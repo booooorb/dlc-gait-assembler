@@ -72,7 +72,9 @@ class GaitMappingPanel:
             labels_by_view,
             self.view.state.view_label_mappings.get(view_set.name, {}),
             self.view,
-            include_forelimb=self.view.limb_scope_combo.currentText() == "Hindlimb + Forelimb",
+            include_forelimb=False,
+            bottom_hindlimbs_only=self.view.setup._is_rustlab1_workflow(),
+            include_bottom_centers=self.view.setup._is_combined_workflow(),
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -82,7 +84,7 @@ class GaitMappingPanel:
         else:
             self.view.state.view_label_mappings.pop(view_set.name, None)
         selected_count = sum(len(view_mapping) for view_mapping in mapping.values())
-        available_count = 27 if self.view.limb_scope_combo.currentText() == "Hindlimb + Forelimb" else 16
+        available_count = 18 if self.view.setup._is_combined_workflow() else 16
         self.view.mapping_status_label.setText(
             f"{selected_count}/{available_count} labels assigned for {view_set.name}."
         )
@@ -141,8 +143,7 @@ def build_gait_marker_mapping(self, mapping_tab_layout):
     set_tooltip(self.use_custom_mapping_checkbox, "Manually map raw DLC labels to the expected ALMA body parts.")
     set_tooltip(self.reload_mapping_button, "Load body-part labels from the first selected CSV.")
     set_tooltip(self.auto_mapping_button, "Automatically match common DLC body-part labels.")
-    mapping_header.addWidget(self.use_custom_mapping_checkbox)
-    mapping_header.addStretch(1)
+    mapping_layout.addWidget(self.use_custom_mapping_checkbox)
     mapping_header.addWidget(self.reload_mapping_button)
     mapping_header.addWidget(self.auto_mapping_button)
     mapping_layout.addLayout(mapping_header)
@@ -154,16 +155,14 @@ def build_gait_marker_mapping(self, mapping_tab_layout):
     mapping_grid.setHorizontalSpacing(12)
     mapping_grid.setVerticalSpacing(8)
     for index, standard_bodypart in enumerate(STANDARD_BODYPARTS):
-        row = index // 2
-        column = index % 2 * 2
         label = QLabel(standard_bodypart)
         combo = QComboBox()
         combo.setMinimumWidth(150)
         combo.setEnabled(False)
         set_tooltip(combo, f"Raw DLC label to use as {standard_bodypart}.")
         self._bodypart_combos[standard_bodypart] = combo
-        mapping_grid.addWidget(label, row, column)
-        mapping_grid.addWidget(combo, row, column + 1)
+        mapping_grid.addWidget(label, index, 0)
+        mapping_grid.addWidget(combo, index, 1)
     mapping_layout.addLayout(mapping_grid)
     mapping_tab_layout.addWidget(mapping_box)
     mapping_tab_layout.addStretch(1)

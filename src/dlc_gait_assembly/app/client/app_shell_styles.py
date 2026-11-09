@@ -33,6 +33,33 @@ class AppShellStyle:
                     background: {theme.SURFACE};
                     border: 0;
                 }
+                QFrame#WorkflowProfileBar {
+                    background: transparent;
+                    border: 0;
+                }
+                QFrame#WorkflowProfileBar QPushButton, QFrame#WorkflowProfileBar QComboBox {
+                    min-height: 30px;
+                }
+                QFrame#WorkflowProfileBar QPushButton { padding: 0; }
+                QWidget#WorkflowPicker { background: {theme.BACKGROUND}; }
+                QLabel#WorkflowPickerTitle { font-size: 30px; font-weight: 600; }
+                QLabel#WorkflowPickerDescription { color: {theme.CONNECTOR}; font-size: 13px; }
+                QWidget#WorkflowPicker QListWidget {
+                    background: {theme.SURFACE}; border: 1px solid {theme.BORDER};
+                    border-radius: 10px; padding: 6px;
+                }
+                QWidget#WorkflowPicker QListWidget::item {
+                    padding: 0; border: 0; border-bottom: 1px solid {theme.BORDER}; border-radius: 6px;
+                }
+                QWidget#WorkflowPicker QListWidget::item:hover { background: {theme.PANEL}; }
+                QWidget#WorkflowPicker QListWidget::item:selected { background: {theme.PANEL}; }
+                QLabel#WorkflowRowTitle { font-size: 16px; font-weight: 600; background: transparent; }
+                QLabel#WorkflowRowDetail { color: {theme.CONNECTOR}; font-size: 12px; background: transparent; }
+                QLabel#WorkflowRowArrow { font-size: 22px; background: transparent; }
+                QLabel#WorkflowEmptyState {
+                    color: {theme.CONNECTOR}; background: {theme.SURFACE};
+                    border: 1px solid {theme.BORDER}; border-radius: 10px; padding: 36px 20px;
+                }
                 QFrame#ContextToolbarRow {
                     background: {theme.PANEL};
                     border: 0;
@@ -80,19 +107,11 @@ class AppShellStyle:
                     background: NAV_MANUAL_FILL;
                     border-bottom-color: {theme.TOOL_3};
                 }
-                QFrame#PrimaryNavigationHighlight[navigationRole="runway"] {
-                    background: NAV_PARENT_FILL;
-                    border-bottom-color: {theme.CONNECTOR};
-                }
                 QFrame#PrimaryNavigationHighlight[navigationRole="ladder"] {
                     background: NAV_PROFILES_FILL;
                     border-bottom-color: {theme.TOOL_2};
                 }
-                QToolButton#RunwayNavigationButton,
-                QPushButton#LadderNavigationButton,
-                QPushButton#RunwayOptionButton,
-                QToolButton#RunwayManualButton,
-                QToolButton#ManualPipelineButton {
+                QPushButton#PrimaryNavigationButton {
                     background: transparent;
                     border: 1px solid transparent;
                     border-bottom-width: 3px;
@@ -102,105 +121,15 @@ class AppShellStyle:
                     font-weight: 600;
                     min-height: 36px;
                     max-height: 36px;
-                    padding: 0 12px;
+                    padding: 0 8px;
                 }
-                QToolButton#RunwayNavigationButton:hover,
-                QPushButton#LadderNavigationButton:hover,
-                QPushButton#RunwayOptionButton:hover,
-                QToolButton#RunwayManualButton:hover,
-                QToolButton#RunwayManualButton:open,
-                QToolButton#ManualPipelineButton:hover {
+                QPushButton#PrimaryNavigationButton:hover,
+                QPushButton#PrimaryNavigationButton:focus {
                     background: {theme.PANEL};
                     color: {theme.TEXT};
                 }
-                QToolButton#RunwayNavigationButton[activeNavigation="true"] {
+                QPushButton#PrimaryNavigationButton[activeNavigation="true"] {
                     background: transparent;
-                    border-color: transparent;
-                    color: {theme.TEXT};
-                    font-weight: 700;
-                }
-                QPushButton#LadderNavigationButton[activeNavigation="true"] {
-                    background: transparent;
-                    border-bottom-color: transparent;
-                    color: {theme.TEXT};
-                    font-weight: 700;
-                }
-                QFrame#RunwayOptions {
-                    background: RUNWAY_GROUP_FILL;
-                    border: 1px solid RUNWAY_GROUP_BORDER;
-                    border-radius: 7px;
-                }
-                QLabel#RunwayGroupLabel,
-                QLabel#RunwayManualLabel {
-                    background: transparent;
-                    border: 0;
-                    color: {theme.CONNECTOR};
-                    font-size: 8px;
-                    font-weight: 700;
-                    padding: 0 2px;
-                }
-                QLabel#RunwayManualLabel {
-                    color: {theme.TOOL_3};
-                }
-                QFrame#RunwayGroupDivider {
-                    background: {theme.BORDER};
-                    border: 0;
-                    min-width: 1px;
-                    max-width: 1px;
-                    min-height: 24px;
-                    max-height: 24px;
-                    margin: 0 4px;
-                }
-                QPushButton#RunwayOptionButton[runwayOption="automated"] {
-                    color: {theme.TOOL_1};
-                    border-color: transparent;
-                    background: transparent;
-                }
-                QPushButton#RunwayOptionButton[runwayOption="profiles"] {
-                    color: {theme.TOOL_2};
-                    border-color: transparent;
-                    background: transparent;
-                }
-                QToolButton#RunwayManualButton {
-                    color: {theme.TOOL_3};
-                    border-color: transparent;
-                    background: transparent;
-                }
-                QPushButton#RunwayOptionButton[runwayOption="automated"][activeNavigation="true"] {
-                    background: transparent;
-                    border-color: transparent;
-                    font-weight: 700;
-                }
-                QPushButton#RunwayOptionButton[runwayOption="profiles"][activeNavigation="true"] {
-                    background: transparent;
-                    border-color: transparent;
-                    font-weight: 700;
-                }
-                QToolButton#RunwayManualButton[activeNavigation="true"] {
-                    background: transparent;
-                    border-color: transparent;
-                    font-weight: 700;
-                }
-                QFrame#RunwayModeHighlight {
-                    background: transparent;
-                    border: 0;
-                    border-radius: 6px;
-                }
-                QFrame#RunwayModeHighlight[runwayMode="automated"] {
-                    background: COLOR_AUTO_FILL;
-                    border-bottom: 3px solid {theme.TOOL_1};
-                }
-                QFrame#RunwayModeHighlight[runwayMode="profiles"] {
-                    background: COLOR_PROFILES_FILL;
-                    border-bottom: 3px solid {theme.TOOL_2};
-                }
-                QFrame#RunwayModeHighlight[runwayMode="manual"] {
-                    background: COLOR_MANUAL_FILL;
-                    border-bottom: 3px solid {theme.TOOL_3};
-                }
-                QToolButton#ManualPipelineButton[activeManual="true"] {
-                    background: transparent;
-                    border-bottom-color: transparent;
                     color: {theme.TEXT};
                     font-weight: 700;
                 }
@@ -209,10 +138,6 @@ class AppShellStyle:
                     border: 0;
                     border-top: 1px solid {theme.BORDER};
                     border-bottom: 1px solid {theme.BORDER};
-                }
-                QFrame#ManualPipelineGroup {
-                    background: transparent;
-                    border: 0;
                 }
                 QPushButton#ManualStageButton {
                     background: transparent;
@@ -249,21 +174,6 @@ class AppShellStyle:
                     font-weight: 600;
                     padding: 0 1px;
                 }
-                QPushButton#ManualPresetProfileButton {
-                    background: transparent;
-                    border: 0;
-                    border-radius: 0;
-                    color: {theme.TOOL_2};
-                    font-size: 11px;
-                    font-weight: 600;
-                    min-height: 34px;
-                    max-height: 34px;
-                    padding: 0 5px;
-                }
-                QPushButton#ManualPresetProfileButton:hover {
-                    background: transparent;
-                    color: {theme.TEXT};
-                }
                 QToolButton#SettingsButton,
                 QToolButton#CreditsButton {
                     background: transparent;
@@ -286,6 +196,9 @@ class AppShellStyle:
                     border: 0;
                     margin-left: 10px;
                 }
+                QFrame#PrimaryToolbarRow[compactHeader="true"] QPushButton#PrimaryNavigationButton {
+                    padding-left: 5px; padding-right: 5px;
+                }
                 QLabel#MainMenuLogo {
                     background: transparent;
                 }
@@ -294,22 +207,9 @@ class AppShellStyle:
         stylesheet = (
             stylesheet.replace("NAV_HOME_FILL", _dependency_theme_mix_hex(theme.TOOL_1, theme.SURFACE, 0.9))
             .replace("NAV_RUN_FILL", _dependency_theme_mix_hex(theme.TOOL_1, theme.SURFACE, 0.84))
-            .replace("NAV_PARENT_FILL", _dependency_theme_mix_hex(theme.CONNECTOR, theme.SURFACE, 0.9))
             .replace("NAV_PROFILES_FILL", _dependency_theme_mix_hex(theme.TOOL_2, theme.SURFACE, 0.86))
             .replace("NAV_MANUAL_FILL", _dependency_theme_mix_hex(theme.TOOL_3, theme.SURFACE, 0.86))
-            .replace("COLOR_AUTO_BORDER", _dependency_theme_mix_hex(theme.TOOL_1, theme.BORDER, 0.35))
-            .replace("COLOR_AUTO_FILL", _dependency_theme_mix_hex(theme.TOOL_1, theme.SURFACE, 0.92))
-            .replace("COLOR_PROFILES_BORDER", _dependency_theme_mix_hex(theme.TOOL_2, theme.BORDER, 0.35))
-            .replace("COLOR_PROFILES_FILL", _dependency_theme_mix_hex(theme.TOOL_2, theme.SURFACE, 0.92))
-            .replace("COLOR_MANUAL_BORDER", _dependency_theme_mix_hex(theme.TOOL_3, theme.BORDER, 0.35))
-            .replace("COLOR_MANUAL_FILL", _dependency_theme_mix_hex(theme.TOOL_3, theme.SURFACE, 0.92))
-            .replace("RUNWAY_GROUP_BORDER", _dependency_theme_mix_hex(theme.TOOL_1, theme.BORDER, 0.65))
-            .replace("RUNWAY_GROUP_FILL", _dependency_theme_mix_hex(theme.TOOL_1, theme.SURFACE, 0.95))
-            .replace("RUNWAY_SELECTED_FILL", _dependency_theme_mix_hex(theme.CONNECTOR, theme.SURFACE, 0.9))
-            .replace("RUNWAY_SELECTED_BORDER", _dependency_theme_mix_hex(theme.CONNECTOR, theme.BORDER, 0.45))
-            .replace("RUNWAY_SELECTED_ACCENT", theme.CONNECTOR)
         )
-        stylesheet += "\n            QToolButton#RunwayNavigationButton, QPushButton#LadderNavigationButton,\n            QPushButton#RunwayOptionButton, QToolButton#RunwayManualButton {\n                padding: 0 8px; font-size: 12px;\n            }\n        "
         self.view._shell.setStyleSheet(stylesheet)
         self.view.header._apply_navigation_icons()
 

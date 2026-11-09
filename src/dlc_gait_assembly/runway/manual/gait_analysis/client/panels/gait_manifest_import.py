@@ -6,6 +6,11 @@ from copy import deepcopy
 from PySide6.QtCore import QSignalBlocker
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_marker_requirements import reference_segment_label
+from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_calibration_panel import CALIBRATION_METHOD_LABELS
+from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_setup_panel import (
+    ALMA_SIDE_RUST_BOTTOM_LABEL,
+    ALMA_WORKFLOW_LABEL,
+)
 
 SPINS = {
     "frame_rate": "frame_rate_spin",
@@ -36,7 +41,8 @@ CHECKS = {
 
 def apply_manifest_settings(view, settings):
     """Preflight all values, then update controls together without intermediate previews."""
-    if settings.calibration_method not in {"reference", "manual"}:
+    settings = view.analysis.settings.resolve_calibration(settings)
+    if settings.calibration_method not in CALIBRATION_METHOD_LABELS:
         raise ValueError("Unsupported calibration method.")
     if settings.reference_segment not in {"ankle_toe", "hip_knee", "knee_ankle", "ankle_mtp"}:
         raise ValueError("Unsupported reference body segment.")
@@ -50,19 +56,22 @@ def apply_manifest_settings(view, settings):
         )
     if settings.input_mode not in {"Multi side view", "Three-view", "Single side view", "Single-side ALMA"}:
         raise ValueError("Unsupported input mode.")
+    if settings.calibration_method == "per_view" and settings.input_mode in {"Single side view", "Single-side ALMA"}:
+        raise ValueError("Calibration by view requires Multi side view inputs.")
+    if settings.calibration_method == "treadmill" and settings.analysis_type != "Treadmill":
+        raise ValueError("Treadmill-speed calibration requires Treadmill analysis.")
     if settings.right_to_left != "auto" and not isinstance(settings.right_to_left, bool):
         raise ValueError("Walking direction must be true, false, or auto.")
     combos = {
-        view.workflow_combo: "ALMA + post-ALMA features",
+        view.workflow_combo: ALMA_SIDE_RUST_BOTTOM_LABEL
+        if settings.output_format == "alma_side_rust_bottom" else ALMA_WORKFLOW_LABEL,
         view.input_mode_combo: "Single side view"
         if settings.input_mode in {"Single side view", "Single-side ALMA"}
         else "Multi side view",
         view.analysis_type_combo: settings.analysis_type,
         view.limb_scope_combo: settings.limb_scope,
         view.stride_method_combo: settings.stride_detection_method,
-        view.calibration_method_combo: "Reference body segment"
-        if settings.calibration_method == "reference"
-        else "Manual pixel-to-cm ratio",
+        view.calibration_method_combo: CALIBRATION_METHOD_LABELS[settings.calibration_method],
         view.reference_segment_combo: reference_segment_label(settings.reference_segment),
         view.direction_combo: "Auto-detect"
         if settings.right_to_left == "auto"
@@ -75,7 +84,7 @@ def apply_manifest_settings(view, settings):
             raise ValueError(f"Unsupported manifest setting: {value}")
     spins = {getattr(view, control): getattr(settings, field) for field, control in SPINS.items()}
     spins.update({spin: getattr(settings, name) for name, spin in view.comparison_rustlab_spins.items()})
-    spins[view.pixels_per_cm_spin] = settings.pixels_per_cm if settings.pixels_per_cm is not None else 50.0
+    spins[view.pixels_per_cm_spin] = settings.pixels_per_cm if settings.calibration_method == "manual" else 50.0
     spins[view.stroke_likelihood_spin] = settings.likelihood_threshold
     sources = {}
     for side in ("left", "right", "bottom"):
@@ -138,9 +147,14 @@ def apply_manifest_settings(view, settings):
             spin.setValue(value)
         for check, value in checks.items():
             check.setChecked(value)
-        view.state.calibration_map_path = None
-        view.state.calibration_map_source = ""
-        view.calibration_map_label.setText("Calibration values loaded from analysis manifest.")
+        view.state.calibration_map_path = settings.calibration_map_path
+        view.state.calibration_map_source = "Analysis manifest"
+        view.state.calibration_map_pixels_per_cm = settings.pixels_per_cm if settings.calibration_method == "map" else None
+        view.calibration_map_label.setText(
+            f"Map scale from analysis manifest: {settings.pixels_per_cm:g} px/cm"
+            if settings.calibration_method == "map" and settings.pixels_per_cm is not None
+            else "No calibration map imported."
+        )
         view.view_calibration_sources = sources
         for side, label in view.view_map_labels.items():
             label.setText(str(sources[side].get("map_path") or "Calibration values loaded from manifest"))
@@ -155,6 +169,9 @@ def apply_manifest_settings(view, settings):
         for blocker in blockers:
             blocker.unblock()
     view.setup._update_workflow()
+    view.view_timing_disclosure.set_expanded(any(
+        spin.value() != 0 for spin in (*view.view_fps_spins.values(), *view.view_offset_spins.values())
+    ))
     view.refresh_stride_method_description()
     view.setup._update_input_mode()
     view.calibration._update_calibration_method()

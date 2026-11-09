@@ -76,6 +76,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
 
     workspace_changed = Signal(str)
     manual_tool_requested = Signal(str)
+    profiles_changed = Signal(str)
 
     def __init__(self, *, run_factory, media_access: MediaAccessPort, profile_use_cases, review_artifacts, workspace):
         super().__init__()

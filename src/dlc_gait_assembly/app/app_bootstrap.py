@@ -180,11 +180,12 @@ def build_tool_specs():
     return (TOOL_SPECS, LADDER_TOOL_SPEC)
 
 
-def create_main_window(**options):
+def create_main_window(*, profile_store=None, **options):
     from dlc_gait_assembly.app.client.app_shell_window import MainWindow
 
     (tools, ladder) = build_tool_specs()
-    return MainWindow(tool_specs=tools, ladder_spec=ladder, menu_factory=create_main_menu, **options)
+    return MainWindow(tool_specs=tools, ladder_spec=ladder,
+        menu_factory=lambda specs: create_main_menu(specs, profile_store=profile_store), **options)
 
 
 def create_gait_preview():
@@ -193,8 +194,9 @@ def create_gait_preview():
         GaitStickplotRenderer,
     )
     from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_result_writer import GaitResultWriter
+    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab1_r_executor import RustLab1RExecutor
 
-    return GaitPreviewUseCases(GaitResultWriter(), GaitStickplotRenderer())
+    return GaitPreviewUseCases(GaitResultWriter(), GaitStickplotRenderer(), standalone=RustLab1RExecutor())
 
 
 def create_ladder_use_cases():
@@ -286,14 +288,10 @@ def create_review_artifact_reader():
 
 
 def create_rustlab1_use_cases():
-    from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_standalone_engine import (
-        RustLab1StandaloneUseCases,
-    )
-    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab1_recording_writer import (
-        RustLab1RecordingWriter,
-    )
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_r_analysis import RustLab1RUseCases
+    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab1_r_executor import RustLab1RExecutor
 
-    return RustLab1StandaloneUseCases(RustLab1RecordingWriter())
+    return RustLab1RUseCases(RustLab1RExecutor())
 
 
 def create_gait_analysis_operations():
@@ -365,15 +363,11 @@ def create_gait_result_reader():
     return GaitResultReader()
 
 
-def create_main_menu(tools):
+def create_main_menu(tools, *, profile_store=None):
     """Connect navigation surfaces without coupling the shell to workflow widgets."""
     from dlc_gait_assembly.app.client.app_home_view import MainMenuWidget
-    from dlc_gait_assembly.runway.client.runway_home_view import build_runway_home
-    from dlc_gait_assembly.runway.manual.client.manual_stage_directory import build_manual_stage_directory
 
     return MainMenuWidget(
         tools,
-        automatic_factory=create_automatic_workspace,
-        runway_builder=build_runway_home,
-        manual_builder=build_manual_stage_directory,
+        automatic_factory=lambda: create_automatic_workspace(store=profile_store),
     )

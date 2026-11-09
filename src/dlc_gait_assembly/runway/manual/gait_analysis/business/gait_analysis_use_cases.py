@@ -7,12 +7,6 @@ from pathlib import Path
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma import alma_signal_filter
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_engine import calculate_alma_recording
-from dlc_gait_assembly.runway.manual.gait_analysis.business.custom_features.custom_sop_feature_calculations import (
-    extract_custom_sop_parameters,
-)
-from dlc_gait_assembly.runway.manual.gait_analysis.business.custom_features.custom_sop_feature_definitions import (
-    CUSTOM_SOP_PARAMETER_NAMES,
-)
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_analysis_contracts import AlmaRunResult
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_analysis_ports import GaitOutputPort
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_coordinate_contracts import AlmaViewCsvSet
@@ -154,7 +148,6 @@ def calculate_recording_table(
         raw = outputs.read_views(item, mappings)
         prepared = prepare_alma_coordinates(raw, settings, kinematics)
         rustlab = extract_rustlab1_parameters(raw, cycles, settings, kinematics, prepared)
-        custom = extract_custom_sop_parameters(raw, cycles, settings, kinematics, prepared)
         rustlab_names = rustlab1_parameter_names_for_scope(settings.limb_scope)
         rustlab_table = rustlab.dataframe if rustlab.dataframe is not None else pd.DataFrame(index=range(len(cycles)))
         table = pd.concat(
@@ -162,7 +155,6 @@ def calculate_recording_table(
                 tables["left"],
                 tables["right"],
                 rustlab_table.reindex(columns=rustlab_names).reset_index(drop=True),
-                custom.dataframe.reindex(columns=CUSTOM_SOP_PARAMETER_NAMES).reset_index(drop=True),
             ],
             axis=1,
         )
@@ -176,7 +168,6 @@ def calculate_recording_table(
         extra = other.loc[extra_mask].reset_index(drop=True)
         if len(extra):
             extra_rustlab = extract_rustlab1_parameters(raw, extra, settings, kinematics, prepared)
-            extra_custom = extract_custom_sop_parameters(raw, extra, settings, kinematics, prepared)
             extra_rustlab_table = (
                 extra_rustlab.dataframe
                 if extra_rustlab.dataframe is not None
@@ -186,7 +177,6 @@ def calculate_recording_table(
                 [
                     extra.reindex(columns=side_columns).add_prefix(f"{opposite}__"),
                     extra_rustlab_table.reindex(columns=rustlab_names).reset_index(drop=True),
-                    extra_custom.dataframe.reindex(columns=CUSTOM_SOP_PARAMETER_NAMES).reset_index(drop=True),
                 ],
                 axis=1,
             )
@@ -206,7 +196,7 @@ def calculate_recording_table(
             )
             figures.rustlab = (raw, figure_cycles, rustlab, settings, kinematics, prepared)
 
-        missing = [name for name in (*rustlab_names, *CUSTOM_SOP_PARAMETER_NAMES) if table[name].isna().all()]
+        missing = [name for name in rustlab_names if table[name].isna().all()]
         if missing and len(table):
             messages.append(f"{len(missing)} post-ALMA parameter columns have no valid values and remain blank.")
         unmatched = int((~aligned[f"{opposite}__cycle_match_valid"]).sum()) if len(aligned) else 0
@@ -244,6 +234,16 @@ class GaitAnalysisUseCases:
         self.outputs = outputs
 
     def run(self, csv_files, output_folder, settings, progress_callback=None):
+        if settings.output_format in {"alma", "alma_side_rust_bottom"}:
+            from dlc_gait_assembly.runway.manual.gait_analysis.business.alma_side_rust_bottom import (
+                run_native_gait_analysis,
+            )
+
+            return run_native_gait_analysis(
+                csv_files, output_folder, settings, progress_callback, outputs=self.outputs
+            )
+        if settings.output_format != "legacy":
+            raise ValueError(f"Unsupported gait output format: {settings.output_format}")
         import re
 
         from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_recording_tables import (
@@ -260,8 +260,12 @@ class GaitAnalysisUseCases:
             f"Gait analysis export: {len(csv_files)} separate recording(s).",
             f"Stride detector: {settings.stride_detection_method}",
             f"Likelihood cutoff: {settings.likelihood_threshold:g}.",
+            f"Calibration mode: {settings.calibration_method}.",
             "Each recording has independent left_stride_parameters.csv and right_stride_parameters.csv.",
             "General recording-level synchronization is in general_parameters/general_parameters.csv.",
+            "Stroke recovery summaries include independent side medians, absolute symmetry indices, signed lesion asymmetry, and stride CVs over the common interval. These are descriptive study-derived outcomes, not validated recovery scores.",
+            "general_parameters/parameter_dictionary.csv records extraction type, units, formulas, marker requirements, and paper references for exported measurements.",
+            "Main multiview bottom contact states use the configured calibrated cm/s swing threshold (Weber et al.: 10 cm/s); standalone RustLab1 uses its own pixel/frame detector.",
             "Single-side inputs have side_stride_parameters.csv and a general metadata file.",
             "Each side uses all of its own detected strides; left and right strides are never paired into rows.",
             "Bottom stride features are recalculated over each side’s [stride_start (s), stride_stop (s)) video-time interval.",

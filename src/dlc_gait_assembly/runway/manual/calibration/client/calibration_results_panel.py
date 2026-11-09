@@ -113,7 +113,7 @@ def stick_key(axis: str, view_index: int) -> str:
 
 
 def build_calibration_results(self, left_layout):
-    results_box = QGroupBox("SOP checks")
+    results_box = QGroupBox("Calibration checks")
     results_layout = QVBoxLayout(results_box)
     self.results_label = QLabel()
     self.results_label.setObjectName("ResultsLabel")

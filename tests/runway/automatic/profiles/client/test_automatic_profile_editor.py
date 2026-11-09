@@ -133,6 +133,23 @@ def test_profile_store_rejects_duplicate_names(tmp_path):
         _save(store, "treadmill", _profile_sources(tmp_path, "_other"))
 
 
+def test_saving_a_profile_reuses_owned_weights_and_save_as_keeps_copies_independent(tmp_path):
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    profile = _save(store, "Study", _profile_sources(tmp_path))
+    original_weight = next(profile.deeplabcut_models["Front"].rglob("snapshot-*.pt"))
+    inode = original_weight.stat().st_ino
+    saved = store.save(profile.name, profile.processing_manifest, profile.calibration_map,
+        profile.deeplabcut_models, profile_id=profile.id, analysis_manifest=profile.analysis_manifest)
+    saved_weight = next(saved.deeplabcut_models["Front"].rglob("snapshot-*.pt"))
+    assert saved_weight.stat().st_ino == inode
+    copied = store.save("Study copy", saved.processing_manifest, saved.calibration_map,
+        saved.deeplabcut_models, analysis_manifest=saved.analysis_manifest)
+    copied_weight = next(copied.deeplabcut_models["Front"].rglob("snapshot-*.pt"))
+    assert copied_weight.stat().st_ino != inode
+    copied_weight.write_text("different weights")
+    assert saved_weight.read_text() == "weights-front-first"
+
+
 def test_profile_store_rolls_back_failed_transactional_replacement(tmp_path, monkeypatch):
     store = AutomatedProfileStore(tmp_path / "profiles")
     original = _save(store, "Original profile", _profile_sources(tmp_path))

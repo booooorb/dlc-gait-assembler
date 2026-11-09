@@ -7,7 +7,10 @@ import pandas as pd
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import trusted_samples
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.tracking_gap_policy import tracking_gap_frames
-from dlc_gait_assembly.runway.manual.gait_analysis.business.custom_features.custom_sop_feature_calculations import (
+from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.stroke_recovery_parameter_definitions import (
+    BOTTOM_RECOVERY_NAMES,
+)
+from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_contact_states import (
     configured_axis_scale,
     stance_mask,
 )
@@ -21,17 +24,8 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_s
 from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_alignment import (
     align_multiview_coordinates,
 )
-from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_interlimb_features import (
-    rustlab1_stance_mask,
-)
 
-BOTTOM_STRIDE_NAMES = (
-    "mean_hindlimb_base_support",
-    "variance_hindlimb_base_support",
-    "opposite_hindlimb_phase_offset (%)",
-    "hindlimb_stance_overlap_fraction",
-    "hindlimb_swing_overlap_fraction",
-)
+BOTTOM_STRIDE_NAMES = BOTTOM_RECOVERY_NAMES
 BOTTOM_FORE_NAMES = ("left__front__seconds", "right__front__seconds", "FLBR_RATIO", "FRBL_RATIO")
 BOTTOM_TIME_COLUMNS = (
     "bottom_start_frame",
@@ -39,14 +33,7 @@ BOTTOM_TIME_COLUMNS = (
     "bottom_alignment_coverage (%)",
     "bottom_tracking_coverage (%)",
 )
-GENERAL_PHASE_NAMES = (
-    "hindlimb_stance_overlap (%)",
-    "hindlimb_swing_overlap (%)",
-    "hindlimb_opposite_phase (%)",
-    "hindlimb_same_phase (%)",
-    "FLBR_RATIO",
-    "FRBL_RATIO",
-)
+GENERAL_PHASE_NAMES = ("FLBR_RATIO", "FRBL_RATIO")
 
 
 class BottomWindows:
@@ -61,7 +48,7 @@ class BottomWindows:
         # explicit bottom X/Y scales always take precedence.
         self.x_scale = configured_axis_scale(settings, "bottom", "x", fallback)
         self.y_scale = configured_axis_scale(settings, "bottom", "y", fallback)
-        self.phase, self.rust_phase, self.trusted = {}, {}, {}
+        self.phase, self.trusted = {}, {}
         gap = tracking_gap_frames(settings.max_interpolation_gap_frames, track.frame_rate)
         for marker, axes in self.series.items():
             if axes.get("x") is None or axes.get("y") is None:
@@ -76,9 +63,6 @@ class BottomWindows:
             trusted &= np.isfinite(axes["x"]) & np.isfinite(axes["y"])
             self.trusted[marker] = trusted
             self.phase[marker] = stance_mask(self.series, marker, self.x_scale, self.y_scale, self.settings, np)
-            self.rust_phase[marker] = rustlab1_stance_mask(
-                self.series, marker, np, settings.stance_speed_threshold_px_frame
-            )
 
     def _window(self, start, stop):
         weights = np.maximum(
@@ -110,36 +94,21 @@ class BottomWindows:
         result["bottom_tracking_coverage (%)"] = min(1.0, coverage) * 100
         if alignment >= 1 - 1e-6 and coverage >= 1 - 1e-6:
             left, right = (self.phase[m] for m in hind)
-            bilateral = selected & left & right
-            result["hindlimb_stance_overlap_fraction"] = 100.0 * weights[bilateral].sum() / (stop - start)
-            result["hindlimb_swing_overlap_fraction"] = (
-                100.0 * weights[selected & ~left & ~right].sum() / (stop - start)
-            )
-            if bilateral.any() and self.x_scale and self.y_scale:
-                separation = np.hypot(
-                    (self.series[hind[0]]["x"] - self.series[hind[1]]["x"]) / self.x_scale,
-                    (self.series[hind[0]]["y"] - self.series[hind[1]]["y"]) / self.y_scale,
-                )
-                values = separation[bilateral]
-                support_weights = weights[bilateral]
-                average = np.average(values, weights=support_weights)
-                result["mean_hindlimb_base_support"] = float(average)
-                denominator = support_weights.sum() - np.square(support_weights).sum() / support_weights.sum()
-                if len(values) > 1 and denominator > 0:
-                    result["variance_hindlimb_base_support"] = float(
-                        np.sum(support_weights * (values - average) ** 2) / denominator
-                    )
+            own, other = (left, right) if side == "left" else (right, left)
+            result[BOTTOM_RECOVERY_NAMES[0]] = 100.0 * weights[selected & own & ~other].sum() / (stop - start)
+            result[BOTTOM_RECOVERY_NAMES[1]] = 100.0 * weights[selected & other & ~own].sum() / (stop - start)
             opposite = "d-back-right" if side == "left" else "d-back-left"
             phase = self.phase[opposite]
             onsets = phase & ~np.r_[phase[0], phase[:-1]] & valid & np.r_[False, valid[:-1]]
             times = self.track.times[onsets & (self.track.times >= start - 1e-9) & (self.track.times < stop - 1e-9)]
             if len(times):
-                result["opposite_hindlimb_phase_offset (%)"] = max(0.0, 100.0 * (times[0] - start) / (stop - start))
+                phase_offset = max(0.0, 100.0 * (times[0] - start) / (stop - start))
+                result[BOTTOM_RECOVERY_NAMES[2]] = abs(phase_offset - 50.0)
         if forelimbs and alignment >= 1 - 1e-6:
             result.update(self._diagonal(weights, require_complete=True))
             for paw_side in ("left", "right"):
                 marker = f"d-front-{paw_side}"
-                phase = self.rust_phase.get(marker)
+                phase = self.phase.get(marker)
                 if phase is None or not self.trusted[marker][selected].all():
                     continue
                 onsets = np.flatnonzero(
@@ -164,12 +133,12 @@ class BottomWindows:
     def _diagonal(self, weights, require_complete):
         result = {"FLBR_RATIO": np.nan, "FRBL_RATIO": np.nan}
         markers = ("d-front-left", "d-front-right", "d-back-left", "d-back-right")
-        if any(self.rust_phase.get(m) is None for m in markers):
+        if any(self.phase.get(m) is None for m in markers):
             return result
         valid = self._valid(markers) & self.track.present
         if require_complete and not valid[weights > 0].all():
             return result
-        fl, fr, bl, br = (self.rust_phase[m] for m in markers)
+        fl, fr, bl, br = (self.phase[m] for m in markers)
         include = valid & ~(fl & fr & bl & br)
         denominator = weights[include].sum()
         if denominator > 0:
@@ -184,11 +153,5 @@ class BottomWindows:
         duration = weights[valid].sum()
         result["synchronization_usable_time (s)"] = float(duration)
         result["synchronization_coverage (%)"] = 100.0 * duration / (stop - start) if stop > start else 0.0
-        if duration > 0:
-            left, right = (self.phase[m] for m in ("d-back-left", "d-back-right"))
-            for name, mask in zip(
-                GENERAL_PHASE_NAMES[:4], (left & right, ~left & ~right, left != right, left == right), strict=True
-            ):
-                result[name] = 100.0 * weights[valid & mask].sum() / duration
         result.update(self._diagonal(weights, require_complete=False))
         return result

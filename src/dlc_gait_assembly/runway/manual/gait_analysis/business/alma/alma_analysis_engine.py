@@ -29,11 +29,9 @@ def calculate_alma_recording(
         side_recording_scale,
     )
 
-    pixels_per_cm = (
-        side_recording_scale(settings, dataframe)
-        if settings.analysis_type != "Treadmill" or settings.calibration_method == "manual"
-        else None
-    )
+    if settings.calibration_method == "treadmill" and settings.analysis_type != "Treadmill":
+        raise ValueError("Treadmill-speed calibration requires Treadmill analysis.")
+    pixels_per_cm = None if settings.calibration_method == "treadmill" else side_recording_scale(settings, dataframe)
     original_dataframe = dataframe.copy()
     (dataframe, confidence_mask, confidence_messages) = filter_low_confidence_coordinates(
         dataframe, settings.likelihood_threshold, pd

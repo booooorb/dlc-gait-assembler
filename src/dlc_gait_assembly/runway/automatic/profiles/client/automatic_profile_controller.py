@@ -113,7 +113,7 @@ class AutomaticProfileController:
         self.view.delete_profile_button.setEnabled(False)
         self.view.duplicate_profile_button.setEnabled(False)
         self.view.save_profile_button.setText("Save new profile")
-        self.view.status_label.setText("Start with the video processing manifest in step 1.")
+        self.view.status_label.setText("Open Video settings to start.")
         self.view.profile_state.saved_snapshot = self._snapshot()
 
     def _load_profile(self, profile: AutomatedPipelineProfile) -> None:
@@ -145,9 +145,13 @@ class AutomaticProfileController:
         self.view.delete_profile_button.setEnabled(True)
         self.view.duplicate_profile_button.setEnabled(True)
         self.view.save_profile_button.setText("Save changes")
-        self.view.status_label.setText(f'Profile "{profile.name}" is selected. Saving does not run the pipeline.')
+        self.view.status_label.setText(f'Editing "{profile.name}".')
 
     def _save_profile(self) -> None:
+        workflow = getattr(self.view, "workflow_controller", None)
+        if workflow is not None:
+            workflow.save()
+            return
         name = self.view.profile_name.text().strip()
         if not name:
             QMessageBox.warning(self.view, "Profile name required", "Enter a name for this profile.")
@@ -169,9 +173,6 @@ class AutomaticProfileController:
             return
         gait_enabled = self.view.include_gait_analysis_button.isChecked()
         knee_enabled = self.view.include_knee_correction_button.isChecked()
-        if gait_enabled and self.view.profile_state.calibration_source is None:
-            QMessageBox.warning(self.view, "Calibration required", "Complete step 3 by uploading a calibration map.")
-            return
         if gait_enabled and self.view.profile_state.analysis_manifest_source is None:
             QMessageBox.warning(
                 self.view, "Analysis manifest required", "Complete step 3 by uploading a gait analysis manifest."
@@ -204,6 +205,7 @@ class AutomaticProfileController:
             QMessageBox.critical(self.view, "Could not save profile", str(exc))
             return
         self._refresh_profiles(profile.id)
+        self.view.profiles_changed.emit(profile.id)
         self.view.status_label.setText(f'Profile "{profile.name}" saved. No pipeline was started.')
 
     def _delete_profile(self) -> None:

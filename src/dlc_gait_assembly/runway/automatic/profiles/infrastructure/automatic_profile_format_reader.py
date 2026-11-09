@@ -1,4 +1,4 @@
-"""Read saved profile versions 1–5 and validate owned asset references."""
+"""Read saved workflow profiles and validate owned asset references."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profil
     regions_from_processing_manifest,
 )
 
-PROFILE_FORMAT_VERSION = 5
+PROFILE_FORMAT_VERSION = 6
 
 
 def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
     data = json.loads(metadata_path.read_text(encoding="utf-8"))
     format_version = data.get("format_version")
-    if format_version not in (1, 2, 3, 4, PROFILE_FORMAT_VERSION):
+    if format_version not in (1, 2, 3, 4, 5, PROFILE_FORMAT_VERSION):
         raise ValueError("Unsupported automated profile format.")
     profile_dir = metadata_path.parent.resolve()
     manifest_relative = data["assets"].get("processing_manifest")
@@ -49,6 +49,7 @@ def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
         pipeline_options = {}
     gait_analysis_enabled = bool(pipeline_options.get("gait_analysis_enabled", analysis_manifest is not None))
     knee_correction_enabled = bool(pipeline_options.get("knee_correction_enabled", knee_manifest is not None))
+    workspace_state = validate_workspace_state(data.get("workspace_state", {}))
     return AutomatedPipelineProfile(
         id=str(data["id"]),
         name=str(data["name"]),
@@ -60,7 +61,25 @@ def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
         gait_analysis_enabled=gait_analysis_enabled,
         knee_correction_enabled=knee_correction_enabled,
         updated_at=str(data.get("updated_at", "")),
+        workspace_state=workspace_state,
     )
+
+
+def validate_workspace_state(workspace_state):
+    if not isinstance(workspace_state, dict):
+        raise ValueError("Invalid workflow workspace settings.")
+    if workspace_state and workspace_state.get("version") != 1:
+        raise ValueError("Unsupported workflow workspace format.")
+    pages = workspace_state.get("pages", {})
+    if not isinstance(pages, dict) or any(
+        not isinstance(page, dict) or any(not isinstance(page.get(key, {}), dict) for key in ("controls", "data", "inputs"))
+        for page in pages.values()
+    ):
+        raise ValueError("Invalid workflow page settings.")
+    videos = workspace_state.get("automation_videos", [])
+    if not isinstance(videos, list) or any(not isinstance(path, str) for path in videos):
+        raise ValueError("Invalid workflow video selections.")
+    return workspace_state
 
 
 def resolve_stored_profile_path(profile_dir: Path, relative_path: str) -> Path:

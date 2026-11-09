@@ -48,11 +48,11 @@ class AutomaticProfileModelsPanel:
             if widget is not None:
                 widget.deleteLater()
         if not self.view.profile_state.regions:
-            placeholder = QLabel("Manifest required")
+            placeholder = QLabel("Video settings required")
             placeholder.setObjectName("ModelsPlaceholder")
             placeholder.setWordWrap(True)
             placeholder.setToolTip(
-                "Complete step 1 first. The manifest supplies the region names needed to create one DeepLabCut model slot per region."
+                "Open Video settings and save the workflow first. Each video region gets its own DeepLabCut model."
             )
             self.view.models_layout.addWidget(placeholder)
             return

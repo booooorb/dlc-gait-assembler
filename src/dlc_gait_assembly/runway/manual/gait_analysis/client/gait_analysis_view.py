@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -17,6 +19,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTabWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -64,7 +67,9 @@ from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_output_pan
 from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_parameter_panel import (
     GaitParameterSelectionWidget,
 )
+from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_settings_navigation import GaitSettingsNavigation
 from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_setup_panel import (
+    ALMA_SIDE_RUST_BOTTOM_LABEL,
     ALMA_WORKFLOW_LABEL,
     RUSTLAB1_WORKFLOW_LABEL,
     GaitSetupPanel,
@@ -73,7 +78,7 @@ from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_setup_pane
 from dlc_gait_assembly.runway.manual.gait_analysis.client.previews.gait_stickplot_panel import build_gait_preview_pages
 from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 from dlc_gait_assembly.shared.client.qt_linear_progress import DynamicProgressBar
-from dlc_gait_assembly.shared.client.qt_sliding_tabs import SlidingTabBar, install_sliding_tab_bar
+from dlc_gait_assembly.shared.client.qt_sliding_tabs import install_sliding_tab_bar
 
 
 class AlmaKinematicsWidget(QWidget):
@@ -107,7 +112,6 @@ class AlmaKinematicsWidget(QWidget):
         self.setup._update_analysis_mode()
         self.calibration._update_calibration_method()
         self.filters._update_rustlab_filter_range()
-        self.filters._update_rustlab_speed_range()
         self.controller._update_run_state()
 
     def can_close(self, parent=None) -> bool:
@@ -130,9 +134,9 @@ class AlmaKinematicsWidget(QWidget):
         header.setObjectName("WorkspaceHeader")
         header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(16, 16, 16, 0)
+        header_layout.setContentsMargins(16, 10, 16, 10)
         header_layout.setSpacing(12)
-        title = QLabel("Runway analysis")
+        title = QLabel("Gait analysis")
         title.setObjectName("TitleLabel")
         header_layout.addWidget(title)
         self.workspace_title = title
@@ -141,20 +145,25 @@ class AlmaKinematicsWidget(QWidget):
         header_layout.addWidget(workflow_label)
         self.workflow_combo = QComboBox()
         self.workflow_combo.setObjectName("GaitWorkflowSelector")
-        self.workflow_combo.addItems((ALMA_WORKFLOW_LABEL, RUSTLAB1_WORKFLOW_LABEL))
+        self.workflow_combo.addItems((ALMA_WORKFLOW_LABEL, ALMA_SIDE_RUST_BOTTOM_LABEL, RUSTLAB1_WORKFLOW_LABEL))
         self.workflow_combo.setAccessibleName("Gait analysis workflow")
         set_tooltip(
             self.workflow_combo,
-            "Run ALMA with optional post-ALMA features, or run standalone RustLab1 stride detection on a three-view set.",
+            "ALMA exports native side strides. ALMA side + rust bottom adds 20 underside R measures and "
+            "session ALMA means and standard deviations in RustLab CSV format. Standalone RustLab1 remains available.",
         )
         header_layout.addWidget(self.workflow_combo)
         header_layout.addStretch(1)
-        self.figure_reference_button = QPushButton("Figure documentation")
-        self.figure_reference_button.setObjectName("FigureReferenceButton")
-        header_layout.addWidget(self.figure_reference_button)
-        self.parameter_reference_button = QPushButton("Parameter documentation")
-        self.parameter_reference_button.setObjectName("ParameterReferenceButton")
-        header_layout.addWidget(self.parameter_reference_button)
+        self.help_button = QToolButton()
+        self.help_button.setText("Help")
+        self.help_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        help_menu = QMenu(self.help_button)
+        self.figure_reference_action = QAction("Figure guide", self)
+        self.parameter_reference_action = QAction("Parameter guide", self)
+        help_menu.addAction(self.figure_reference_action)
+        help_menu.addAction(self.parameter_reference_action)
+        self.help_button.setMenu(help_menu)
+        header_layout.addWidget(self.help_button)
         self.documentation_back_button = QPushButton("Back to analysis")
         self.documentation_back_button.setObjectName("DocumentationBackButton")
         self.documentation_back_button.hide()
@@ -165,11 +174,12 @@ class AlmaKinematicsWidget(QWidget):
         root.addWidget(self.workspace_stack, 1)
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(8)
+        splitter.setAccessibleName("Resize gait settings and results")
+        self.workspace_splitter = splitter
         self.workspace_stack.addWidget(splitter)
         left_panel = QWidget()
         left_panel.setObjectName("WorkspaceSidebar")
-        left_panel.setMinimumWidth(410)
-        left_panel.setMaximumWidth(520)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(16, 16, 16, 16)
         left_layout.setSpacing(12)
@@ -218,22 +228,9 @@ class AlmaKinematicsWidget(QWidget):
         stride_layout = QVBoxLayout(self.stride_detection_tab)
         stride_layout.setContentsMargins(6, 6, 6, 6)
         settings_tabs.addTab(self.stride_detection_tab, "Stride detection")
-        self.settings_navigation_indices = ((0, 1, 7, 3), (2, 4, 5, 6))
-        self.settings_section_rows = (SlidingTabBar(theme.TOOL_3), SlidingTabBar(theme.TOOL_3))
-        for row, indices in zip(self.settings_section_rows, self.settings_navigation_indices, strict=True):
-            for index in indices:
-                row.addTab(settings_tabs.tabText(index))
-            row.tabBarClicked.connect(lambda local, indices=indices: settings_tabs.setCurrentIndex(indices[local]))
-
-        def sync_settings_rows(index: int) -> None:
-            for row, indices in zip(self.settings_section_rows, self.settings_navigation_indices, strict=True):
-                row.set_active_row(index in indices)
-                row.blockSignals(True)
-                row.setCurrentIndex(indices.index(index) if index in indices else -1)
-                row.blockSignals(False)
-
-        settings_tabs.currentChanged.connect(sync_settings_rows)
-        sync_settings_rows(0)
+        self.settings_navigation = GaitSettingsNavigation(settings_tabs)
+        self.settings_navigation_indices = self.settings_navigation.section_indices
+        self.settings_section_rows = self.settings_navigation.rows
         self.mapping_tab = mapping_tab
         self.setup_tab = setup_tab
         self.calibration_tab = calibration_tab
@@ -245,23 +242,17 @@ class AlmaKinematicsWidget(QWidget):
         build_gait_timing(self, setup_tab_layout)
         build_gait_movement_settings(self, analysis_tab_layout)
         build_gait_filters(self, analysis_tab_layout, filters_tab_layout)
-        build_gait_output_settings(self, output_tab_layout)
-        settings_navigation = QVBoxLayout()
-        settings_navigation.setSpacing(2)
-        for row in self.settings_section_rows:
-            row.setObjectName("RunwaySettingsSectionRow")
-            row.setExpanding(True)
-            row.setDrawBase(False)
-            settings_navigation.addWidget(row)
-        left_layout.addLayout(settings_navigation)
-        left_layout.addWidget(settings_tabs, 1)
-        self.export_manifest_button = QPushButton("Export analysis manifest")
+        self.import_manifest_button = QPushButton("Load settings…")
+        set_tooltip(self.import_manifest_button, "Load saved gait-analysis settings from a JSON manifest.")
+        self.export_manifest_button = QPushButton("Save settings…")
         set_tooltip(
             self.export_manifest_button,
-            "Export the current gait-analysis settings for an automated pipeline profile.",
+            "Save the current settings as a JSON manifest for reuse or an automatic profile.",
             "Ctrl+Shift+E",
         )
-        left_layout.addWidget(self.export_manifest_button)
+        build_gait_output_settings(self, output_tab_layout)
+        left_layout.addWidget(self.settings_navigation)
+        left_layout.addWidget(settings_tabs, 1)
         self.preview_button = QPushButton("1. Generate stick-plot preview")
         set_tooltip(
             self.preview_button,
@@ -279,11 +270,13 @@ class AlmaKinematicsWidget(QWidget):
         right_layout.setContentsMargins(16, 16, 16, 16)
         right_layout.setSpacing(12)
         self.status_label = QLabel("Select matched left/right/bottom CSV files to begin.")
-        self.status_label.setObjectName("PreviewTitle")
+        self.status_label.setObjectName("StatusLabel")
+        self.status_label.setWordWrap(True)
         right_layout.addWidget(self.status_label)
         self.progress = DynamicProgressBar(accent_role="tool_1")
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
+        self.progress.hide()
         right_layout.addWidget(self.progress)
         self.workspace_tabs = QTabWidget()
         install_sliding_tab_bar(self.workspace_tabs, theme.TOOL_3)
@@ -294,9 +287,8 @@ class AlmaKinematicsWidget(QWidget):
         self.inputs_page = QWidget()
         inputs_layout = QVBoxLayout(self.inputs_page)
         inputs_layout.setContentsMargins(8, 10, 8, 8)
-        inputs_layout.addWidget(file_box)
-        inputs_layout.addStretch(1)
-        self.workspace_tabs.addTab(self.inputs_page, "1. Inputs")
+        inputs_layout.addWidget(file_box, 1)
+        self.workspace_tabs.addTab(self.inputs_page, "Files")
         build_gait_preview_pages(self)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
@@ -306,50 +298,44 @@ class AlmaKinematicsWidget(QWidget):
         log_layout = QVBoxLayout(self.log_page)
         log_layout.setContentsMargins(8, 10, 8, 8)
         log_layout.addWidget(self.log, 1)
-        self.workspace_tabs.addTab(self.log_page, "3. Run log")
+        self.workspace_tabs.addTab(self.log_page, "Log")
         build_gait_marker_mapping(self, mapping_tab_layout)
-        left_layout.removeWidget(self.export_manifest_button)
+        self.settings_scrolls = {}
+        for index in range(settings_tabs.count()):
+            page = settings_tabs.widget(index)
+            content = QWidget()
+            content.setLayout(page.layout())
+            for label in content.findChildren(QLabel):
+                label.setWordWrap(True)
+            for combo in content.findChildren(QComboBox):
+                combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+                combo.setMinimumContentsLength(8)
+            scroll = QScrollArea()
+            scroll.setObjectName("RunwayControlsScroll")
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setWidget(content)
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 0, 0, 0)
+            page_layout.addWidget(scroll)
+            self.settings_scrolls[page] = scroll
         left_layout.removeWidget(self.preview_button)
         left_layout.removeWidget(self.run_button)
         left_column = QWidget()
         left_column.setObjectName("WorkspaceSidebar")
-        left_column.setMinimumWidth(430)
-        left_column.setMaximumWidth(540)
+        left_column.setMinimumWidth(380)
         left_column_layout = QVBoxLayout(left_column)
         left_column_layout.setContentsMargins(0, 0, 0, 0)
         left_column_layout.setSpacing(0)
-        for layout_index in range(left_layout.count()):
-            item = left_layout.itemAt(layout_index)
-            if item.layout() is settings_navigation:
-                left_layout.takeAt(layout_index)
-                break
-        sticky_settings_navigation = QWidget()
-        sticky_settings_navigation.setObjectName("RunwayStickySettingsNavigation")
-        sticky_settings_layout = QVBoxLayout(sticky_settings_navigation)
-        sticky_settings_layout.setContentsMargins(16, 10, 16, 6)
-        sticky_settings_layout.setSpacing(0)
-        sticky_settings_layout.addLayout(settings_navigation)
-        left_column_layout.addWidget(sticky_settings_navigation, 0)
-        self.controls_scroll = QScrollArea()
-        self.controls_scroll.setObjectName("RunwayControlsScroll")
-        self.controls_scroll.setWidgetResizable(True)
-        self.controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.controls_scroll.setWidget(left_panel)
-        left_column_layout.addWidget(self.controls_scroll, 1)
+        left_layout.removeWidget(self.settings_navigation)
+        left_column_layout.addWidget(self.settings_navigation, 0)
+        left_column_layout.addWidget(left_panel, 1)
         action_footer = QWidget()
         action_footer.setObjectName("RunwayActionFooter")
         action_layout = QVBoxLayout(action_footer)
         action_layout.setContentsMargins(16, 8, 16, 16)
         action_layout.setSpacing(8)
-        manifest_actions = QHBoxLayout()
-        self.import_manifest_button = QPushButton("Import analysis manifest")
-        set_tooltip(
-            self.import_manifest_button, "Load saved gait-analysis settings from an analysis manifest JSON file."
-        )
-        manifest_actions.addWidget(self.import_manifest_button)
-        manifest_actions.addWidget(self.export_manifest_button)
-        action_layout.addLayout(manifest_actions)
         action_layout.addWidget(self.preview_button)
         action_layout.addWidget(self.run_button)
         left_column_layout.addWidget(action_footer, 0)
@@ -357,7 +343,7 @@ class AlmaKinematicsWidget(QWidget):
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([500, 780])
+        splitter.setSizes([420, 860])
         self.parameter_reference = GaitParameterReferenceWidget(reader=self.analysis.results)
         self.parameter_reference.set_multiside(initial_multiside)
         self.workspace_stack.addWidget(self.parameter_reference)
@@ -366,11 +352,19 @@ class AlmaKinematicsWidget(QWidget):
         """Return the analysis manifest most recently exported in this workspace."""
         return self.state.profile_analysis_manifest_path
 
+    @property
+    def controls_scroll(self) -> QScrollArea:
+        return self.settings_scrolls[self.settings_tabs.currentWidget()]
+
     def settings_snapshot(self):
         return self.setup._collect_settings()
 
+    def apply_profile_settings(self, settings):
+        from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_manifest_import import apply_manifest_settings
+        apply_manifest_settings(self, settings)
+
     def profile_calibration_map_path(self) -> Path | None:
-        return self.state.calibration_map_path
+        return self.state.calibration_map_path if self.calibration_method_combo.currentData() == "map" else None
 
     def _default_output_root(self) -> Path:
         return self.workspace.manual / "gait_analysis"

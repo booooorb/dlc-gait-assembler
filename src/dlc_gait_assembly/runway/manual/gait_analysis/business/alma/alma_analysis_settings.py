@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 AnalysisType = Literal["Treadmill", "Spontaneous walking"]
-CalibrationMethod = Literal["reference", "manual"]
+CalibrationMethod = Literal["reference", "manual", "map", "per_view", "treadmill"]
 InputMode = Literal["Multi side view", "Single side view", "Three-view", "Single-side ALMA"]
 LimbScope = Literal["Hindlimb", "Hindlimb + Forelimb"]
 LesionHemisphere = Literal["left", "right", "none", "unknown"]
@@ -28,7 +28,7 @@ class AlmaSettings:
     frame_rate: float = 120.0
     filter_cutoff: float = 6.0
     treadmill_speed_cm_s: float = 30.0
-    calibration_method: CalibrationMethod = "reference"
+    calibration_method: CalibrationMethod | None = None
     reference_segment: str = "ankle_toe"
     reference_length_cm: float = 1.5
     calibration_map_path: Path | None = None
@@ -57,6 +57,18 @@ class AlmaSettings:
     view_calibration: dict[str, object] | None = None
     view_timing: dict[str, object] | None = None
     enabled_parameter_names: tuple[str, ...] | None = None
+    # Legacy manifests keep their established augmented exports. The UI uses
+    # native ALMA or the dedicated side/underside workflow explicitly.
+    output_format: Literal["legacy", "alma", "alma_side_rust_bottom"] = "legacy"
+
+    def __post_init__(self):
+        if self.calibration_method is None:
+            # Preserve callers that supply a scale without specifying its mode.
+            method = (
+                "per_view" if self.view_calibration else "map" if self.calibration_map_path
+                else "manual" if self.pixels_per_cm is not None else "reference"
+            )
+            object.__setattr__(self, "calibration_method", method)
 
 
 def settings_from_alma_config(config: dict) -> AlmaSettings:
@@ -77,13 +89,17 @@ def settings_from_alma_config(config: dict) -> AlmaSettings:
     if likelihood_threshold == "":
         likelihood_threshold = 0.5
     return AlmaSettings(
+        output_format=config.get("output_format", "alma"),
         limb_scope="Hindlimb + Forelimb"
         if str(config.get("limb_scope", "Hindlimb")).strip().casefold() == "hindlimb + forelimb".casefold()
         else "Hindlimb",
         frame_rate=float(config.get("frame_rate", 120.0)),
         filter_cutoff=float(config.get("lowpass_filter_cutoff", 6.0)),
         treadmill_speed_cm_s=float(cm_speed),
-        calibration_method="reference" if auto_calibrate_spatial else "manual",
+        calibration_method=config.get("calibration_method") or (
+            "per_view" if config.get("view_calibration") else "reference" if auto_calibrate_spatial else "manual"
+        ),
+        calibration_map_path=Path(config["calibration_map_path"]) if config.get("calibration_map_path") else None,
         reference_segment=str(config.get("reference_segment", "ankle_toe")),
         reference_length_cm=float(reference_length_cm),
         right_to_left=right_to_left,

@@ -3,26 +3,13 @@
 from __future__ import annotations
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_settings import AlmaSettings
+from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_calibration import view_scale
 
 
 def view_calibration(settings: AlmaSettings, view: str) -> dict[str, object] | None:
-    configured = (settings.view_calibration or {}).get(view)
-    if isinstance(configured, (int, float)) and float(configured) > 0:
-        value = float(configured)
-        return {"x_pixels_per_cm": value, "y_pixels_per_cm": value, "source": f"{view} scalar"}
-    if isinstance(configured, dict):
-        scalar = configured.get("pixels_per_cm")
-        x_value = configured.get("x_pixels_per_cm", scalar)
-        y_value = configured.get("y_pixels_per_cm", scalar)
-        if x_value and y_value and (float(x_value) > 0) and (float(y_value) > 0):
-            return {
-                "x_pixels_per_cm": float(x_value),
-                "y_pixels_per_cm": float(y_value),
-                "source": f"{view} axis-specific",
-            }
-    if settings.pixels_per_cm and float(settings.pixels_per_cm) > 0:
-        value = float(settings.pixels_per_cm)
-        return {"x_pixels_per_cm": value, "y_pixels_per_cm": value, "source": "manual scalar"}
+    x_value, y_value = view_scale(settings, view, "x"), view_scale(settings, view, "y")
+    if x_value and y_value:
+        return {"x_pixels_per_cm": x_value, "y_pixels_per_cm": y_value, "source": settings.calibration_method}
     return None
 
 

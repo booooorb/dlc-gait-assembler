@@ -6,7 +6,6 @@ from enum import Enum
 
 class AppRoute(str, Enum):
     HOME = "home"
-    RUNWAY = "runway"
     MANUAL = "manual"
     AUTOMATIC = "automatic"
     PROFILES = "profiles"
@@ -28,4 +27,4 @@ class AppNavigationState:
             return AppRoute.LADDER
         if self.automatic_active:
             return AppRoute.PROFILES if self.automatic_page == "profiles" else AppRoute.AUTOMATIC
-        return AppRoute.MANUAL if self.tool_id is not None else AppRoute.RUNWAY
+        return AppRoute.MANUAL

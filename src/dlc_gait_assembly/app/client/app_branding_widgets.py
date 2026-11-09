@@ -161,65 +161,6 @@ class MenuIllustrationLabel(QLabel):
     zoom = Property(float, _get_zoom, _set_zoom)
 
 
-class HoverPixmapLabel(QLabel):
-    """A compact pixmap label that shares the menu-card hover zoom."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._source_pixmap = QPixmap()
-        self._zoom = 1.0
-
-    def setPixmap(self, pixmap: QPixmap) -> None:
-        self._source_pixmap = pixmap
-        super().setPixmap(pixmap)
-
-    def paintEvent(self, event) -> None:
-        if self._source_pixmap.isNull():
-            super().paintEvent(event)
-            return
-        viewport = self.contentsRect()
-        fitted = self._source_pixmap.size().scaled(viewport.size(), Qt.KeepAspectRatio)
-        draw_size = QSize(round(fitted.width() * self._zoom), round(fitted.height() * self._zoom))
-        target = QRect(QPoint(), draw_size)
-        target.moveCenter(viewport.center())
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.setClipRect(viewport)
-        painter.drawPixmap(target, self._source_pixmap)
-
-    def _get_zoom(self) -> float:
-        return self._zoom
-
-    def _set_zoom(self, zoom: float) -> None:
-        self._zoom = max(1.0, min(float(zoom), 1.05))
-        self.update()
-
-    zoom = Property(float, _get_zoom, _set_zoom)
-
-
-class ManualMiniStage(QFrame):
-    """Keyboard-accessible stage tile for the expanded manual menu."""
-
-    clicked = Signal(str)
-
-    def __init__(self, tool_id: str, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._tool_id = tool_id
-        self.setFocusPolicy(Qt.StrongFocus)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
-            self.clicked.emit(self._tool_id)
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
-            self.clicked.emit(self._tool_id)
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-
 class WorkspaceChoiceCard(QFrame):
     """A setup card whose full visible surface acts as one accessible control."""
 
@@ -234,7 +175,7 @@ class WorkspaceChoiceCard(QFrame):
         self._hover_animation: QParallelAnimationGroup | None = None
 
     def _animate_illustration(self, zoom: float, duration: int) -> None:
-        illustrations = self.findChildren(MenuIllustrationLabel) + self.findChildren(HoverPixmapLabel)
+        illustrations = self.findChildren(MenuIllustrationLabel)
         if not illustrations:
             return
         if self._hover_animation is not None:
@@ -267,7 +208,7 @@ class WorkspaceChoiceCard(QFrame):
     def _reset_hover_immediately(self) -> None:
         if self._hover_animation is not None:
             self._hover_animation.stop()
-        illustrations = self.findChildren(MenuIllustrationLabel) + self.findChildren(HoverPixmapLabel)
+        illustrations = self.findChildren(MenuIllustrationLabel)
         for illustration in illustrations:
             illustration.zoom = 1.0
 

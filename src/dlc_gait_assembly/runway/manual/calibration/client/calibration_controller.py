@@ -175,9 +175,8 @@ class CalibrationController:
         if not self.view.state.loading_media:
             self._save_media_state()
         sticks = []
-        for index in range(self.view.media_list.count()):
-            item = self.view.media_list.item(index)
-            sticks.extend(self.view.state.calibration_sticks_by_media.get(item.data(Qt.UserRole), ()))
+        for saved_sticks in self.view.state.calibration_sticks_by_media.values():
+            sticks.extend(saved_sticks)
         return sticks
 
     def _update_location_failure_highlights(self, report: CalibrationReport) -> None:

@@ -117,6 +117,9 @@ def test_parameter_documentation_lists_paw_only_bottom_requirements():
     catalog = gait_parameter_catalog()
     assert not RETIRED_BOTTOM_PARAMETER_NAMES.intersection(item.name for item in catalog)
     bottom = [item for item in catalog if item.views == "Bottom view"]
-    assert {item.name for item in bottom} == BOTTOM_FEATURES
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.stroke_recovery_parameter_definitions import BOTTOM_RECOVERY_NAMES
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.retired_custom_parameters import RETIRED_CUSTOM_NAMES
+    assert {item.name for item in bottom} == (BOTTOM_FEATURES - RETIRED_CUSTOM_NAMES) | set(BOTTOM_RECOVERY_NAMES)
+    assert not RETIRED_CUSTOM_NAMES.intersection(item.name for item in catalog)
     assert all("center" not in item.markers.lower() and "tail" not in item.markers.lower() for item in catalog)
     assert all("paw" in item.markers for item in bottom)

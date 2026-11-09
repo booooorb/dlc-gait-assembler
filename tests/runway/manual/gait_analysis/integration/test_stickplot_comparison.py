@@ -48,7 +48,7 @@ def paired_recording(tmp_path, alma_fixtures_dir):
         }
     )
     bottom_path = tmp_path / "bottom.csv"
-    bottom.to_csv(bottom_path, index=False)
+    bottom.to_csv(bottom_path)
     return (("Left", side), ("Right", side), ("Bottom", bottom_path))
 
 

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
+
+from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_settings import CalibrationMethod
 
 RustLab1ReferencePaw = Literal["d-back-left", "d-back-right", "d-front-left", "d-front-right"]
 RUSTLAB1_REFERENCE_PAWS: tuple[RustLab1ReferencePaw, ...] = (
@@ -21,15 +24,16 @@ class RustLab1StandaloneSettings:
     n_continuous_strides: int = 10
     frame_rate: float = 60.0
     filter_cutoff: float = 6.0
-    likelihood_threshold: float = 0.95
+    likelihood_threshold: float = 0.5
     stance_speed_threshold_px_frame: float = 7.0
     maximum_tracking_speed_px_frame: float = 100.0
     minimum_stance_frames: int = 1
     minimum_swing_frames: int = 1
     minimum_complete_strides: int = 1
     reference_paw: RustLab1ReferencePaw = "d-back-left"
-    limb_scope: str = "Hindlimb + Forelimb"
-    calibration_method: str = "manual"
+    limb_scope: str = "Hindlimb"
+    calibration_method: CalibrationMethod | None = None
+    calibration_map_path: Path | None = None
     reference_segment: str = "ankle_toe"
     reference_length_cm: float = 1.5
     pixels_per_cm: float | None = None
@@ -37,6 +41,12 @@ class RustLab1StandaloneSettings:
     view_bodypart_mapping: dict[str, object] | None = None
     enabled_parameter_names: tuple[str, ...] | None = None
     generate_figures: bool = True
+    maximum_coordinate_gap_frames: int = 11
+
+    def __post_init__(self):
+        if self.calibration_method is None:
+            method = "per_view" if self.view_calibration else "map" if self.calibration_map_path else "manual"
+            object.__setattr__(self, "calibration_method", method)
 
 
 def validate_rustlab1_settings(settings: RustLab1StandaloneSettings) -> None:

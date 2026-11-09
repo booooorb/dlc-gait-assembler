@@ -30,10 +30,20 @@ class AutomaticProfileUseCases:
             gait_analysis_enabled=source.gait_analysis_enabled,
             knee_correction_enabled=source.knee_correction_enabled,
             allow_incomplete=True,
+            workspace_state=source.workspace_state,
         )
 
     def delete(self, profile_id):
         return self.repository.delete(profile_id)
+
+    def rename(self, profile_id, name):
+        source = self.repository.load(profile_id)
+        return self.repository.save(
+            name, source.processing_manifest, source.calibration_map, source.deeplabcut_models,
+            profile_id=source.id, analysis_manifest=source.analysis_manifest, knee_manifest=source.knee_manifest,
+            gait_analysis_enabled=source.gait_analysis_enabled, knee_correction_enabled=source.knee_correction_enabled,
+            allow_incomplete=True, workspace_state=source.workspace_state,
+        )
 
     def create_from_manual(self, name, snapshot):
         with self.manual_assets.materialize(snapshot) as assets:

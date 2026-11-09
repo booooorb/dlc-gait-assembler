@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from contextlib import contextmanager
 from dataclasses import replace
@@ -27,6 +28,7 @@ from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_projec
     validate_deeplabcut_project,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
+    alma_settings_from_manifest,
     read_analysis_manifest,
     write_analysis_manifest,
 )
@@ -122,7 +124,13 @@ def copy_profile_asset(source: Path, asset_dir: Path) -> Path:
     return destination
 
 
-def copy_profile_deeplabcut_project(source: Path, destination: Path) -> Path:
+def copy_profile_analysis(source: Path, asset_dir: Path) -> Path:
+    """Freeze map-backed camera scales before their source folders can move."""
+    settings = alma_settings_from_manifest(source)
+    return write_analysis_manifest(asset_dir / source.name, settings)
+
+
+def copy_profile_deeplabcut_project(source: Path, destination: Path, *, reuse_owned_files=False) -> Path:
     config_path = validate_deeplabcut_project(source)
     project_root = config_path.parent
     destination.mkdir(parents=True)
@@ -130,7 +138,10 @@ def copy_profile_deeplabcut_project(source: Path, destination: Path) -> Path:
     for folder_name in DLC_MODEL_FOLDER_NAMES:
         model_folder = project_root / folder_name
         if model_folder.is_dir():
-            shutil.copytree(model_folder, destination / folder_name)
+            if reuse_owned_files:
+                shutil.copytree(model_folder, destination / folder_name, copy_function=link_owned_model_file)
+            else:
+                shutil.copytree(model_folder, destination / folder_name)
     source_training_folder = project_root / DLC_TRAINING_DATASET_FOLDER_NAME
     destination_training_folder = destination / DLC_TRAINING_DATASET_FOLDER_NAME
     for pattern in ("metadata.yaml", "Documentation_data-*.pickle"):
@@ -142,11 +153,20 @@ def copy_profile_deeplabcut_project(source: Path, destination: Path) -> Path:
     return destination
 
 
+def link_owned_model_file(source, destination):
+    """Reuse unchanged weights only during an atomic replacement of the same profile."""
+    try:
+        os.link(source, destination)
+        return destination
+    except OSError:
+        return shutil.copy2(source, destination)
+
+
 class AutomaticManualAssetWriter:
     """Serialize typed snapshots temporarily until the profile repository owns copies."""
 
     @contextmanager
-    def materialize(self, snapshot: ManualProfileSnapshot):
+    def materialize(self, snapshot: ManualProfileSnapshot, *, allow_incomplete=False):
         with TemporaryDirectory(prefix="dlc-gait-profile-") as temporary:
             root = Path(temporary)
             paths = {
@@ -154,20 +174,22 @@ class AutomaticManualAssetWriter:
                 for name in ("processing_manifest", "calibration_map", "analysis_manifest", "knee_manifest")
                 for path in (getattr(snapshot, name),)
             }
-            if snapshot.video is not None:
-                paths["processing_manifest"] = write_video_settings_manifest(
-                    root / "video_settings_manifest.json", snapshot.video.options, snapshot.video.trim_ranges_by_path
-                )
-            if snapshot.calibration is not None:
-                paths["calibration_map"] = write_calibration_conversion_export(
-                    root / "calibration", list(snapshot.calibration.sticks), snapshot.calibration.report
-                )["map"]
-            if snapshot.gait is not None:
-                paths["analysis_manifest"] = write_analysis_manifest(root / "analysis_manifest.json", snapshot.gait)
-            if snapshot.knee is not None:
-                paths["knee_manifest"] = write_knee_analysis_manifest(
-                    root / "knee_analysis_manifest.json", snapshot.knee
-                )
+            writers = (
+                ("processing_manifest", snapshot.video, lambda: write_video_settings_manifest(
+                    root / "video_settings_manifest.json", snapshot.video.options, snapshot.video.trim_ranges_by_path)),
+                ("calibration_map", snapshot.calibration, lambda: write_calibration_conversion_export(
+                    root / "calibration", list(snapshot.calibration.sticks), snapshot.calibration.report)["map"]),
+                ("analysis_manifest", snapshot.gait, lambda: write_analysis_manifest(root / "analysis_manifest.json", snapshot.gait)),
+                ("knee_manifest", snapshot.knee, lambda: write_knee_analysis_manifest(root / "knee_analysis_manifest.json", snapshot.knee)),
+            )
+            for name, settings, write in writers:
+                if settings is not None:
+                    try:
+                        paths[name] = write()
+                    except (ValueError, FileNotFoundError):
+                        if not allow_incomplete:
+                            raise
+                        paths[name] = None
             yield ManualProfileAssets(**paths)
 
 

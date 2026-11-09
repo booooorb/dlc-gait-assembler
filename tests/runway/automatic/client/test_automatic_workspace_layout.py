@@ -137,18 +137,24 @@ def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path
     window.close()
 
 
-def test_pipeline_geometry_stays_constant_through_stickplot_review():
+def test_pipeline_geometry_stays_constant_through_stickplot_review(tmp_path):
+    from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_repository import (
+        AutomatedProfileStore,
+    )
+
     app = QApplication.instance() or QApplication([])
-    window = create_main_window()
+    window = create_main_window(profile_store=AutomatedProfileStore(tmp_path / "profiles"))
+    assert window.workflows.new(name="Geometry test")
     window.show()
     window.resize(1180, 700)
     app.processEvents()
     widget = window._main_menu.automated_profiles
-    window.routes._show_automated_pipeline()
+    window._automation_run_button.click()
     app.processEvents()
+    assert window._main_menu.view_stack.currentWidget() is widget
     initial_geometry = {
         "window": window.geometry(),
-        "workspace": window._main_menu._content.geometry(),
+        "workspace": window._main_menu.view_stack.geometry(),
         "pipeline": widget.geometry(),
         "input": widget.automation_input_stack.geometry(),
         "console": widget.automation_console_panel.geometry(),
@@ -163,7 +169,7 @@ def test_pipeline_geometry_stays_constant_through_stickplot_review():
     assert widget.run_readiness_label.text() == "●  Review required"
     assert widget.run_readiness_label.property("readinessState") == "review"
     assert window.geometry() == initial_geometry["window"]
-    assert window._main_menu._content.geometry() == initial_geometry["workspace"]
+    assert window._main_menu.view_stack.geometry() == initial_geometry["workspace"]
     assert widget.geometry() == initial_geometry["pipeline"]
     assert widget.automation_input_stack.geometry() == initial_geometry["input"]
     assert widget.automation_console_panel.geometry() == initial_geometry["console"]
