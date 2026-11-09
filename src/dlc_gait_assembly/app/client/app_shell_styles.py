@@ -21,7 +21,6 @@ class AppShellStyle:
             """
                 QWidget#AppShell {
                     background: {theme.BACKGROUND};
-                    background-image: url({theme.BACKGROUND_TEXTURE});
                     color: {theme.TEXT};
                 }
                 QFrame#AppToolbar {
@@ -144,7 +143,7 @@ class AppShellStyle:
                     border: 0;
                     border-radius: 0;
                     color: {theme.CONNECTOR};
-                    font-size: 11px;
+                    font-size: 12px;
                     font-weight: 600;
                     min-height: 34px;
                     max-height: 34px;

@@ -36,14 +36,7 @@ from dlc_gait_assembly.shared.client.theme.theme_font_loader import (
 )
 
 
-from dlc_gait_assembly.shared.client.theme.theme_font_loader import (
-    NOTO_SANS_FONT_DIR as _dependency_theme_NOTO_SANS_FONT_DIR,
-)
-
-
-from dlc_gait_assembly.shared.client.theme.theme_font_loader import (
-    NOTO_SANS_FONT_FILES as _dependency_theme_NOTO_SANS_FONT_FILES,
-)
+from dlc_gait_assembly.shared.client.theme.theme_font_loader import GEIST_FONT_PATH
 
 
 from dlc_gait_assembly.shared.client.theme.theme_qt_palette import (
@@ -185,7 +178,7 @@ def create_main_window(**options):
 
 def test_application_stylesheet_uses_one_plain_component_system():
     stylesheet = _dependency_theme_application_stylesheet()
-    assert 'font-family: "Noto Sans"' in stylesheet
+    assert 'font-family: "Geist"' in stylesheet
     for selector in (
         "QPushButton, QToolButton",
         "QLineEdit, QTextEdit, QPlainTextEdit, QComboBox",
@@ -201,16 +194,13 @@ def test_application_stylesheet_uses_one_plain_component_system():
     assert "border-radius: 20" not in lowered
 
 
-def test_application_uses_bundled_noto_sans_universally():
+def test_application_uses_bundled_geist():
     app = QApplication.instance() or QApplication([])
     interface_font = _dependency_theme_interface_font()
     fixed_width_font = _dependency_theme_fixed_width_font()
-    assert interface_font.family() == "Noto Sans"
-    assert fixed_width_font.family() == "Noto Sans"
-    assert all(
-        (_dependency_theme_NOTO_SANS_FONT_DIR / filename).is_file()
-        for filename in _dependency_theme_NOTO_SANS_FONT_FILES
-    )
+    assert interface_font.family() == "Geist"
+    assert fixed_width_font.family() == "Geist"
+    assert GEIST_FONT_PATH.is_file()
 
 
 def test_every_tool_workspace_uses_the_shared_workspace_contract(monkeypatch):
@@ -272,7 +262,7 @@ def test_visible_settings_dropdown_emits_theme_choices_without_reemitting_update
     assert window.menuWidget() is None
     assert window._home_button.text() == ""
     assert not window._home_button.icon().isNull()
-    assert window._brand_logo_filename == "DLC-Gait-Assembler-logo-light-original-clean.png"
+    assert window._brand_logo_filename == "paw-track-light.svg"
     assert window._settings_button.isVisible()
     assert not window._settings_button.icon().isNull()
     expected_style = Qt.ToolButtonIconOnly if window.width() < 1600 else Qt.ToolButtonTextBesideIcon
@@ -386,7 +376,7 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     window.show()
     app.processEvents()
     assert [button.text() for button in window._primary_navigation_buttons] == [
-        "Manual", "Automated", "Automation settings", "Ladder",
+        "Manual", "Batch run", "Profiles", "Ladder",
     ]
     assert window._stack.currentWidget() is window._main_menu
     assert window._main_menu.view_stack.currentWidget() is window._main_menu.home_page
@@ -406,11 +396,11 @@ def test_one_bar_gives_each_primary_destination_a_visual_identity():
     assert window._manual_stage_frame.parentWidget() is window._toolbar
     assert [button.text() for button in window._manual_stage_buttons.values()] == [
         "Calibration",
-        "Video\nprocessing",
-        "DeepLabCut",
-        "Knee\ncorrection",
-        "Gait\nanalysis",
-        "PCA + random\nforest",
+        "Video prep",
+        "Pose tracking",
+        "Knee correction",
+        "Gait metrics",
+        "PCA + classification",
     ]
     assert all(button.iconSize() == QSize(20, 20) for button in window._manual_stage_buttons.values())
     assert all(not button.icon().isNull() for button in window._manual_stage_buttons.values())
@@ -608,7 +598,7 @@ def test_main_navigation_uses_one_primary_bar_instead_of_a_duplicate_tab_strip()
         assert window._home_button.size().width() == 168
         assert window._home_button.size().height() == 44
         assert not window._home_button.icon().isNull()
-        assert window._brand_logo_filename == "DLC-Gait-Assembler-logo-light-original-clean.png"
+        assert window._brand_logo_filename == "paw-track-light.svg"
         assert window.findChild(QFrame, "PrimaryNavigation") is not None
         assert "QPushButton#PrimaryNavigationButton" in window._shell.styleSheet()
         assert window.findChild(QWidget, "RunwayOptions") is None
@@ -646,7 +636,7 @@ def test_window_geometry_is_saved_and_restored(tmp_path):
 
 
 @pytest.mark.parametrize("dark", [False, True])
-def test_redesigned_menu_keeps_carbon_and_launch_controls_clear_at_minimum_size(dark):
+def test_redesigned_menu_has_flat_background_and_launch_controls_clear_at_minimum_size(dark):
     app = QApplication.instance() or QApplication([])
     previous_dark = theme.IS_DARK
     theme.set_dark_mode(dark)
@@ -657,7 +647,8 @@ def test_redesigned_menu_keeps_carbon_and_launch_controls_clear_at_minimum_size(
         app.processEvents()
         menu = window._main_menu
         assert window.size() == QSize(1100, 640)
-        assert ("carbon-dark.png" if dark else "carbon-light.png") in menu.styleSheet()
+        assert theme.BACKGROUND in menu.styleSheet()
+        assert "background-image" not in menu.styleSheet()
         assert theme.SURFACE in menu.styleSheet()
         for card in menu.home_page.findChildren(QFrame, "SetupChoiceCard"):
             assert card.isVisible()

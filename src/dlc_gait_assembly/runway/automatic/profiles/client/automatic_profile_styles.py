@@ -6,7 +6,6 @@ AUTOMATIC_PROFILE_RULES = (
         """
 QWidget#AutomatedPipelineProfilesWidget {
     background: {theme.BACKGROUND};
-    background-image: url({theme.BACKGROUND_TEXTURE});
     color: {theme.TEXT};
 }
 """,
@@ -388,7 +387,6 @@ QPushButton#ProfileUploadButton:disabled {
         """QWidget#MainAutomationPage, QWidget#ProfileConfigurationPage,
 QStackedWidget#AutomationWorkspaceStack {
     background: {theme.BACKGROUND};
-    background-image: url({theme.BACKGROUND_TEXTURE});
 }
 """,
     ),

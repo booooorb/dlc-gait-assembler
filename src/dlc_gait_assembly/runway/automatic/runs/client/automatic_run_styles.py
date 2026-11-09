@@ -93,7 +93,6 @@ QLabel#RunReadinessBadge[readinessState="review"] {
         25,
         """QStackedWidget#AutomationInputStack {
     background: {theme.BACKGROUND};
-    background-image: url({theme.BACKGROUND_TEXTURE});
     border: 0;
 }
 """,

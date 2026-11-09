@@ -82,7 +82,7 @@ class AutomaticStageProgress:
         else:
             bar.setRange(0, 100)
             bar.setValue(round(max(0.0, min(100.0, value))))
-        indicator_text = {"complete": "✓", "skipped": "–", "error": "!"}.get(indicator_state, str(stage_index + 1))
+        indicator_text = {"complete": "✓", "skipped": "–", "error": "!"}.get(indicator_state, "")
         bar.set_center_text(indicator_text)
         bar.set_active(active)
 

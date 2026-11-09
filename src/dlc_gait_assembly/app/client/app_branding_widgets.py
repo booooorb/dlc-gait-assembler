@@ -15,14 +15,13 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
 from dlc_gait_assembly.app.client.app_page_contracts import ToolSpec
 from dlc_gait_assembly.runway.manual.business.manual_stage_definitions import MANUAL_STAGE_ICONS
-from dlc_gait_assembly.shared.client.theme.theme_icon_provider import interface_icon
 from dlc_gait_assembly.shared.client.theme.theme_menu_graphics import menu_icon
 from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_exists, resource_path
 
@@ -31,30 +30,11 @@ MAIN_MENU_LOGO_MAX_WIDTH = 104
 BRAND_LOGO_HEIGHT = 34
 BRAND_LOGO_MAX_WIDTH = 160
 BRAND_LOGO_FILENAMES = {
-    "light": "DLC-Gait-Assembler-logo-light-original-clean.png",
-    "dark": "DLC-Gait-Assembler-logo-dark-original-clean.png",
+    "light": "paw-track-light.svg",
+    "dark": "paw-track-dark.svg",
 }
 PARTNER_WEBSITES = {"choforcelab.png": "https://www.choforcelab.ca", "NERVES_Logo.png": "https://nerves.bme.utah.edu"}
 MAIN_MENU_ICON_ASSET_DIR = resource_path("icons")
-
-
-def navigation_icon(icon_name: str, color: str) -> QIcon:
-    names = {
-        "automated": "player-play",
-        "runway": "route",
-        "profiles": "folders",
-        "manual": "adjustments-horizontal",
-        "ladder": "ladder",
-    }
-    return menu_icon(names[icon_name], color, 18)
-
-
-def menu_asset_pixmap(name: str, size: int) -> QPixmap:
-    """Load a reference-derived main-menu illustration at a crisp UI size."""
-    source = load_menu_asset_pixmap(name)
-    if source.isNull():
-        return source
-    return source.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
 def load_menu_asset_pixmap(name: str) -> QPixmap:
@@ -212,11 +192,6 @@ class WorkspaceChoiceCard(QFrame):
         for illustration in illustrations:
             illustration.zoom = 1.0
 
-    def make_decorations_mouse_transparent(self, action_button: QPushButton) -> None:
-        for child in self.findChildren(QWidget):
-            if child is not action_button and (not isinstance(child, QPushButton)):
-                child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
             if WorkspaceChoiceCard._active_hover_card is self:
@@ -363,7 +338,7 @@ class WorkflowStep(QFrame):
 
     def apply_theme(self) -> None:
         color = theme.TOOL_3 if self._spec.enabled else theme.BORDER
-        self.graphic.setPixmap(interface_icon(MANUAL_STAGE_ICONS[self._spec.id], color, size=26).pixmap(26, 26))
+        self.graphic.setPixmap(menu_icon(MANUAL_STAGE_ICONS[self._spec.id], color, 26).pixmap(QSize(26, 26), 2.0))
 
     def mouseReleaseEvent(self, event) -> None:
         if self._spec.enabled and event.button() == Qt.LeftButton and self.rect().contains(event.pos()):

@@ -22,7 +22,6 @@ import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
 from dlc_gait_assembly.runway.automatic.business.automatic_execution_contracts import StageReview
 from dlc_gait_assembly.runway.automatic.client.automatic_display_constants import (
     PIPELINE_REVIEW_GATES,
-    PIPELINE_STAGE_LABELS,
     PIPELINE_STAGES,
     RUN_PREVIEW_TOOLTIP,
 )
@@ -64,11 +63,22 @@ from dlc_gait_assembly.shared.business.media_access_contracts import MediaAccess
 from dlc_gait_assembly.shared.client.qt_circular_progress import CircularProgressIndicator
 from dlc_gait_assembly.shared.client.qt_linear_progress import DynamicProgressBar
 from dlc_gait_assembly.shared.client.theme.theme_icon_provider import interface_icon
+from dlc_gait_assembly.shared.client.theme.theme_menu_graphics import menu_icon
 
 try:
     import cv2
 except ImportError:
     cv2 = None
+
+
+PIPELINE_STAGE_GRAPHICS = (
+    ("Video prep", "paw-video-prep"),
+    ("Pose tracking", "paw-pose-tracking"),
+    ("Knee correction", "paw-knee"),
+    ("Labeled videos", "paw-labeled-videos"),
+    ("Stickplots", "paw-stickplot"),
+    ("Gait metrics", "paw-gait"),
+)
 
 
 class AutomatedPipelineProfilesWidget(QWidget):
@@ -265,7 +275,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.pipeline_stage_status_labels: list[QLabel] = []
         self.pipeline_stage_review_labels: list[QLabel] = []
         self.pipeline_stage_progress_bars: list[CircularProgressIndicator] = []
-        for index, stage_title in enumerate(PIPELINE_STAGE_LABELS):
+        for index, (stage_title, _) in enumerate(PIPELINE_STAGE_GRAPHICS):
             if index:
                 connector = QFrame()
                 connector.setObjectName("PipelineConnector")
@@ -285,7 +295,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             stage_progress.setRange(0, 100)
             stage_progress.setValue(0)
             stage_progress.setTextVisible(False)
-            stage_progress.set_center_text(str(index + 1))
+            stage_progress.setAccessibleName(f"Stage {index + 1}: {stage_title}")
             stage_progress.setFixedSize(44, 44)
             card_layout.addWidget(stage_progress, 0, Qt.AlignHCenter)
             name = QLabel(stage_title)
@@ -374,6 +384,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet(automated_pipeline_stylesheet())
+        for progress, (_, icon_name) in zip(self.pipeline_stage_progress_bars, PIPELINE_STAGE_GRAPHICS, strict=True):
+            progress.set_center_icon(menu_icon(icon_name, theme.TEXT, 20))
+        self.open_profile_configuration_button.setIcon(menu_icon("paw-profiles", theme.PRIMARY_TEXT, 18))
+        self.run_pipeline_button.setIcon(menu_icon("paw-batch", theme.PRIMARY_TEXT, 18))
         surface_names = {
             "ProfileHeader",
             "MainAutomationMenu",
@@ -388,7 +402,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
         icon_specs = (
             (self.remove_videos_button, "trash", theme.STATUS_ERROR),
             (self.clear_videos_button, "clear", theme.STATUS_ERROR),
-            (self.open_profile_configuration_button, "stack", theme.PRIMARY_TEXT),
             (self.back_to_automation_button, "arrow-left", theme.TEXT),
             (self.new_profile_button, "plus", theme.PRIMARY_TEXT),
             (self.duplicate_profile_button, "copy", theme.TOOL_1),
@@ -404,7 +417,6 @@ class AutomatedPipelineProfilesWidget(QWidget):
             (self.save_profile_button, "check", theme.PRIMARY_TEXT),
             (self.pipeline_change_settings_button, "sliders", theme.TEXT),
             (self.open_pipeline_output_button, "folder", theme.TEXT),
-            (self.run_pipeline_button, "play", theme.PRIMARY_TEXT),
         )
         for button, icon_name, color in icon_specs:
             button.setIcon(interface_icon(icon_name, color))

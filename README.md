@@ -2,8 +2,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="src/dlc_gait_assembly/resources/branding/DLC-Gait-Assembler-logo-dark-original-clean.png">
-    <img src="src/dlc_gait_assembly/resources/branding/DLC-Gait-Assembler-logo-light-original-clean.png" alt="DLC Gait Assembler" width="680">
+    <source media="(prefers-color-scheme: dark)" srcset="src/dlc_gait_assembly/resources/branding/paw-track-dark.svg">
+    <img src="src/dlc_gait_assembly/resources/branding/paw-track-light.svg" alt="DLC Gait Assembler" width="680">
   </picture>
 </p>
 

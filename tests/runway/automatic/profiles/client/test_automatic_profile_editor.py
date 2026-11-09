@@ -380,7 +380,8 @@ def test_pipeline_progress_replaces_video_queue_while_running(tmp_path):
     assert widget.pipeline_stage_progress_bars[0].value() == 100
     assert widget.pipeline_stage_progress_bars[1].value() == 50
     assert widget.pipeline_stage_progress_bars[0]._center_text == "✓"
-    assert widget.pipeline_stage_progress_bars[1]._center_text == "2"
+    assert widget.pipeline_stage_progress_bars[1]._center_text == ""
+    assert not widget.pipeline_stage_progress_bars[1]._center_icon.isNull()
     QTest.qWait(300)
     assert widget.pipeline_stage_cards[1].height() > widget.pipeline_stage_cards[0].height()
     assert widget.pipeline_progress_bar.value() == 25

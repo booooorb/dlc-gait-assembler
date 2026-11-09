@@ -4,21 +4,13 @@ from __future__ import annotations
 
 from dlc_gait_assembly.shared.client.theme.theme_color_tokens import BRAND_SURFACE as _dependency_theme_BRAND_SURFACE
 from dlc_gait_assembly.shared.client.theme.theme_qt_palette import mix_hex as _dependency_theme_mix_hex
-from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
-
-
-def background_texture_url() -> str:
-    import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
-
-    filename = "carbon-dark.png" if theme.IS_DARK else "carbon-light.png"
-    return (resource_path("backgrounds") / filename).as_posix()
 
 
 def application_stylesheet() -> str:
     return stylesheet(
         """
         QWidget {
-            font-family: "Noto Sans";
+            font-family: "Geist";
             font-size: 13px;
         }
         QToolTip {
@@ -49,7 +41,6 @@ def application_stylesheet() -> str:
         }
         QDialog, QMessageBox {
             background: {theme.BACKGROUND};
-            background-image: url({theme.BACKGROUND_TEXTURE});
             color: {theme.TEXT};
         }
         QPushButton, QToolButton {
@@ -249,7 +240,6 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
     base = """
         QWidget#ROOT_OBJECT {
             background: {theme.BACKGROUND};
-            background-image: url({theme.BACKGROUND_TEXTURE});
             color: {theme.TEXT};
             font-size: 13px;
         }
@@ -274,7 +264,6 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
         }
         QWidget#WorkspaceCanvas {
             background: {theme.BACKGROUND};
-            background-image: url({theme.BACKGROUND_TEXTURE});
             border: 0;
             border-radius: 7px;
         }
@@ -318,7 +307,6 @@ def stylesheet(template: str) -> str:
             "{theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)}",
             _dependency_theme_mix_hex(theme.SOFT, theme.SURFACE, 0.35),
         )
-        .replace("{theme.BACKGROUND_TEXTURE}", background_texture_url())
         .replace("{theme.BACKGROUND}", theme.BACKGROUND)
         .replace("{theme.SURFACE}", theme.SURFACE)
         .replace("{theme.PANEL}", theme.PANEL)

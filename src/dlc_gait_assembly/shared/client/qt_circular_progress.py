@@ -6,7 +6,7 @@ from math import cos, pi, sin
 from time import monotonic
 
 from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QConicalGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtGui import QBrush, QColor, QConicalGradient, QIcon, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QProgressBar
 
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
@@ -22,6 +22,7 @@ class CircularProgressIndicator(QProgressBar):
         self._accent_role = accent_role
         self._active = False
         self._center_text = ""
+        self._center_icon = QIcon()
         self._center_font_max = 11.0
         self._display_value = float(self.value())
         self._animation_start_value = self._display_value
@@ -46,6 +47,10 @@ class CircularProgressIndicator(QProgressBar):
 
     def set_center_text(self, text: str) -> None:
         self._center_text = text
+        self.update()
+
+    def set_center_icon(self, icon: QIcon) -> None:
+        self._center_icon = icon
         self.update()
 
     def set_center_font_max(self, point_size: float) -> None:
@@ -102,6 +107,8 @@ class CircularProgressIndicator(QProgressBar):
             font.setPointSizeF(max(8.0, min(self._center_font_max, side * 0.28)))
             painter.setFont(font)
             painter.drawText(QRectF(self.rect()), Qt.AlignmentFlag.AlignCenter, text)
+        elif not self._center_icon.isNull():
+            self._center_icon.paint(painter, rect.adjusted(7, 7, -7, -7).toRect())
 
     def _paint_determinate_arc(self, painter: QPainter, rect: QRectF, ring_width: float) -> None:
         minimum = self.minimum()

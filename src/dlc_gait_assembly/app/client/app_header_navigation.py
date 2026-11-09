@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QSize, Qt
-from PySide6.QtGui import QActionGroup, QGuiApplication, QIcon, QPixmap, QRegion
+from PySide6.QtGui import QActionGroup, QIcon
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,13 +23,11 @@ from dlc_gait_assembly.app.client.app_branding_widgets import (
     BRAND_LOGO_MAX_WIDTH,
     PartnerLogoLabel,
     main_menu_logo_label,
-    menu_asset_pixmap,
-    navigation_icon,
 )
 from dlc_gait_assembly.app.client.app_shell_styles import APP_TOOLBAR_HEIGHT
 from dlc_gait_assembly.runway.manual.business.manual_stage_definitions import (
     MANUAL_STAGE_DISPLAY_LABELS,
-    MANUAL_STAGE_MENU_ASSETS,
+    MANUAL_STAGE_ICONS,
 )
 from dlc_gait_assembly.shared.client.theme.theme_icon_provider import interface_icon
 from dlc_gait_assembly.shared.client.theme.theme_menu_graphics import menu_colors, menu_icon
@@ -82,13 +80,13 @@ class AppHeaderNavigation:
         navigation_layout.setContentsMargins(0, 0, 0, 0)
         navigation_layout.setSpacing(4)
         destinations = (
-            ("_manual_tools_button", "Manual", "manual", "Open the manual tools.",
+            ("_manual_tools_button", "Manual stages", "manual", "Open one tool at a time.",
              self.view.routes._open_manual_workspace),
-            ("_automation_run_button", "Automated", "automated", "Run a batch with the active profile.",
+            ("_automation_run_button", "Batch run", "automated", "Process a set of recordings with the active profile.",
              self.view.routes._show_automated_pipeline),
-            ("_automation_profiles_button", "Automation settings", "profiles", "Configure the active profile.",
+            ("_automation_profiles_button", "Saved profiles", "profiles", "Reuse or edit pipeline settings.",
              self.view.routes._show_automated_profiles),
-            ("_ladder_button", "Ladder", "ladder", "Open ladder analysis.",
+            ("_ladder_button", "Ladder analysis", "ladder", "Review paw placements and slips.",
              lambda: self.view.routes._open_tool(self.view._ladder_spec.id)),
         )
         self.view._primary_navigation_buttons = []
@@ -96,6 +94,7 @@ class AppHeaderNavigation:
             button = QPushButton(label)
             button.setObjectName("PrimaryNavigationButton")
             button.setProperty("navigationRole", role)
+            button.setAccessibleName(label)
             button.setCursor(Qt.PointingHandCursor)
             button.setToolTip(tooltip)
             button.clicked.connect(route)
@@ -131,8 +130,7 @@ class AppHeaderNavigation:
             button.setMinimumWidth(0)
             button.setEnabled(spec.enabled)
             button.setCursor(Qt.PointingHandCursor)
-            button.setToolTip(spec.label)
-            button.setIcon(QIcon(menu_asset_pixmap(MANUAL_STAGE_MENU_ASSETS[spec.id], 20)))
+            button.setToolTip(spec.description)
             button.setIconSize(QSize(20, 20))
             if spec.enabled:
                 button.clicked.connect(lambda _checked=False, tool_id=spec.id: self.view.routes._open_tool(tool_id))
@@ -217,6 +215,10 @@ class AppHeaderNavigation:
         row = self.view._primary_row
         changed = row.property("compactHeader") != compact
         row.setProperty("compactHeader", compact)
+        if changed:
+            self.view._manual_tools_button.setText("Manual" if compact else "Manual stages")
+            self.view._automation_profiles_button.setText("Profiles" if compact else "Saved profiles")
+            self.view._ladder_button.setText("Ladder" if compact else "Ladder analysis")
         layout = self.view._primary_layout
         layout.setContentsMargins(12 if compact else 20, 0, 12 if compact else 16, 0)
         layout.setSpacing(2 if compact else 10)
@@ -250,22 +252,16 @@ class AppHeaderNavigation:
         self._apply_brand_logo()
         c = menu_colors(theme.IS_DARK)
         navigation_icons = (
-            (self.view._manual_tools_button, "manual", theme.TOOL_3),
-            (self.view._automation_run_button, "automated", theme.TOOL_1),
-            (self.view._automation_profiles_button, "profiles", theme.TOOL_2),
-            (self.view._ladder_button, "ladder", theme.TOOL_2),
+            (self.view._manual_tools_button, "paw-manual"),
+            (self.view._automation_run_button, "paw-batch"),
+            (self.view._automation_profiles_button, "paw-profiles"),
+            (self.view._ladder_button, "paw-ladder"),
         )
-        for button, icon_name, color in navigation_icons:
-            compact_option = self.view.width() < 1440 and button in (
-                self.view._automation_run_button, self.view._automation_profiles_button,
-                self.view._manual_tools_button,
-            )
-            button.setIcon(QIcon() if compact_option else navigation_icon(icon_name, color))
+        for button, icon_name in navigation_icons:
+            button.setIcon(menu_icon(icon_name, c["text"], 18))
             button.setIconSize(QSize(18, 18))
-        stage_icons = ("ruler-measure", "movie", "topology-star-3", "angle", "walk", "chart-dots-3")
-        for button, name in zip(self.view._manual_stage_buttons.values(), stage_icons, strict=True):
-            button.setIcon(menu_icon(name, c["muted"], 20))
-            button.setIconSize(QSize(20, 20))
+        for stage_id, button in self.view._manual_stage_buttons.items():
+            button.setIcon(menu_icon(MANUAL_STAGE_ICONS[stage_id], c["text"], 20))
         self.view._settings_button.setIcon(interface_icon("gear", c["muted"]))
         self.view._settings_button.setIconSize(QSize(16, 16))
         self.view._credits_button.setIcon(menu_icon("arrow-up-right", c["muted"], 16))
@@ -274,25 +270,8 @@ class AppHeaderNavigation:
     def _apply_brand_logo(self) -> None:
         logo_theme = "dark" if theme.IS_DARK else "light"
         filename = BRAND_LOGO_FILENAMES[logo_theme]
-        path = resource_path("branding", filename)
-        pixmap = QPixmap(str(path))
-        if pixmap.isNull():
-            self.view._home_button.setIcon(QIcon())
-            return
-        content_bounds = QRegion(pixmap.mask()).boundingRect()
-        if content_bounds.isValid() and (not content_bounds.isEmpty()):
-            pixmap = pixmap.copy(content_bounds)
-        screen = QGuiApplication.primaryScreen()
-        scale = max(1.0, screen.devicePixelRatio() if screen is not None else 1.0)
-        scaled = pixmap.scaled(
-            round(BRAND_LOGO_MAX_WIDTH * scale),
-            round(BRAND_LOGO_HEIGHT * scale),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
-        scaled.setDevicePixelRatio(scale)
-        self.view._home_button.setIcon(QIcon(scaled))
-        self.view._home_button.setIconSize(QSize(round(scaled.width() / scale), round(scaled.height() / scale)))
+        self.view._home_button.setIcon(QIcon(str(resource_path("branding", filename))))
+        self.view._home_button.setIconSize(QSize(BRAND_LOGO_MAX_WIDTH, BRAND_LOGO_HEIGHT))
         self.view._brand_logo_filename = filename
 
     def _build_theme_actions(self, settings_menu: QMenu, initial_theme_mode: str) -> None:

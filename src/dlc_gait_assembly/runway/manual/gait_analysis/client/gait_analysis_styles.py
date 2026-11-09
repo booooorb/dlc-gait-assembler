@@ -145,7 +145,6 @@ class GaitAnalysisStyle:
             }
             QWidget#GaitParameterReference {
                 background: {theme.BACKGROUND};
-                background-image: url({theme.BACKGROUND_TEXTURE});
             }
             QLabel#ParameterReferenceTitle {
                 color: {theme.TEXT};

@@ -206,11 +206,11 @@ def test_pipeline_stickplot_preserves_aspect_ratio_and_opens_on_click():
     app.processEvents()
 
 
-def test_automatic_surface_split_preserves_original_stylesheet_cascade():
+def test_automatic_surface_split_preserves_flat_stylesheet_cascade():
     import hashlib
     from dlc_gait_assembly.runway.automatic.client.automatic_workspace_styles import AUTOMATED_PIPELINE_QSS
 
     assert (
         hashlib.sha256(AUTOMATED_PIPELINE_QSS.encode()).hexdigest()
-        == "085bba4e35864952d214ecd0ba2a6ee59b38b60e54895875b4ce87ec44a40a57"
+        == "0513943fe9d07ecfe02591715429e53990d894ebdd8862f492c2c78382bbb9bb"
     )
