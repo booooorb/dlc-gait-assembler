@@ -111,9 +111,9 @@ def test_open_file_uses_the_selected_result_and_destination_is_not_duplicated(vi
     csv.write_text('stride length (cm)\n1.2\n')
     view.controller._output_results_ready((AlmaRunResult(csv, (csv,)),))
     opened = []
-    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()) or True)
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(Path(url.toLocalFile())) or True)
     view.output_preview_view.open_file_button.click()
-    assert opened == [str(csv)]
+    assert opened == [csv]
     assert view.output_folder_edit is view.export_folder_edit
     assert view.output_folder_button is view.export_folder_button
     assert not view.inputs_page.isAncestorOf(view.output_folder_edit)

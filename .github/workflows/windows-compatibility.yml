@@ -6,7 +6,25 @@ permissions:
   contents: read
 jobs:
   windows:
+    name: Windows (${{ matrix.suite }})
     runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: application and automation
+            targets: >-
+              tests/app/client
+              tests/runway/automatic/client
+              tests/runway/automatic/profiles/client
+              tests/runway/automatic/runs/business
+          - suite: calibration, knee correction, and DLC
+            targets: >-
+              tests/runway/manual/calibration/client
+              tests/runway/manual/knee_correction/client
+              tests/runway/manual/deeplabcut/infrastructure
+          - suite: gait analysis
+            targets: tests/runway/manual/gait_analysis/client
     timeout-minutes: 18
     env:
       QT_QPA_PLATFORM: offscreen
@@ -20,6 +38,7 @@ jobs:
       - name: Install the packaged application
         run: python -m pip install ".[test]"
       - name: Check launcher, resources, and native window
+        if: matrix.suite == 'application and automation'
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = 'windows'
@@ -60,14 +79,5 @@ jobs:
           QTest.qWait(100)
           assert window.close()
           '@ | python -
-      - name: Test workflow saving, automation, and manual tools
-        run: >-
-          python -m pytest -vv -o faulthandler_timeout=90 -o pythonpath=
-          tests/app/client
-          tests/runway/automatic/client
-          tests/runway/automatic/profiles/client
-          tests/runway/automatic/runs/business
-          tests/runway/manual/calibration/client
-          tests/runway/manual/knee_correction/client
-          tests/runway/manual/deeplabcut/infrastructure
-          tests/runway/manual/gait_analysis/client
+      - name: Run regression tests
+        run: python -m pytest -vv -o faulthandler_timeout=90 -o pythonpath= ${{ matrix.targets }}
