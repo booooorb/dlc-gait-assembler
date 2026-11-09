@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton
 
 from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
@@ -163,23 +164,18 @@ class AutomaticProfileAssetsPanel:
 
 def build_automatic_stage_switches(self, calibration_content):
     calibration_content.addWidget(self._field_label("Included analysis stages"))
-    analysis_stage_row = QHBoxLayout()
     self.include_gait_analysis_button = QCheckBox("Gait analysis")
     self.include_gait_analysis_button.setObjectName("ProfileStageToggle")
     self.include_gait_analysis_button.setChecked(True)
     self.include_gait_analysis_button.setToolTip(
         "Include stickplot generation and final gait parameter extraction in this profile."
     )
-    analysis_stage_row.addWidget(self.include_gait_analysis_button)
     self.include_knee_correction_button = QCheckBox("Knee correction")
     self.include_knee_correction_button.setObjectName("ProfileStageToggle")
     self.include_knee_correction_button.setChecked(False)
     self.include_knee_correction_button.setToolTip(
         "Include knee-coordinate correction before stickplot or gait analysis."
     )
-    analysis_stage_row.addWidget(self.include_knee_correction_button)
-    analysis_stage_row.addStretch(1)
-    calibration_content.addLayout(analysis_stage_row)
     off_icon = resource_path("icons", "stage-switch-off.svg").as_posix()
     on_icon = resource_path("icons", "stage-switch-on.svg").as_posix()
     for switch in (self.include_gait_analysis_button, self.include_knee_correction_button):
@@ -188,6 +184,7 @@ def build_automatic_stage_switches(self, calibration_content):
             QCheckBox::indicator {{ width: 34px; height: 18px; image: url("{off_icon}"); }}
             QCheckBox::indicator:checked {{ image: url("{on_icon}"); }}
         """)
+        calibration_content.addWidget(switch, alignment=Qt.AlignLeft)
 
 
 def build_automatic_analysis_assets(self, calibration_content):

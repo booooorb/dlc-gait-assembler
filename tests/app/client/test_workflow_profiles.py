@@ -465,11 +465,19 @@ def test_automation_runs_saved_settings_and_only_prompts_for_edits(window, tmp_p
 def test_automation_stage_switches_save_without_a_separate_button(window):
     assert window.workflows.new(name="Automatic settings")
     profile_id = window.workflows.active.id
+    window.resize(1100, 640)
+    window.show()
     window.routes._show_automated_profiles()
+    QApplication.processEvents()
     widget = window.workflows.automatic
     assert widget.save_profile_button.isHidden()
-    widget.include_gait_analysis_button.click()
-    widget.include_knee_correction_button.click()
+    gait = widget.include_gait_analysis_button
+    knee = widget.include_knee_correction_button
+    assert gait.isVisible() and knee.isVisible()
+    assert gait.geometry().bottom() < knee.geometry().top()
+    for switch in (gait, knee):
+        assert switch.width() >= switch.sizeHint().width()
+        switch.click()
     profile = window.workflows.use_cases.load(profile_id)
     assert not profile.gait_analysis_enabled
     assert profile.knee_correction_enabled
