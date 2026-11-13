@@ -64,5 +64,4 @@ jobs:
           fi
           gh release create "$tag" dist/*.whl dist/*.tar.gz \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "DLC Gait Assembler $version" --latest \
-            --notes "Complete current Paw Track interface, workflow profiles, scientific analysis modules, bundled assets, and automatic/manual updates. Built and opened on Windows before publication. Activate your gait-assembler environment and install the wheel with python -m pip install --upgrade followed by its downloaded filename. Settings displays the installed version."
+            --title "$tag" --latest --generate-notes

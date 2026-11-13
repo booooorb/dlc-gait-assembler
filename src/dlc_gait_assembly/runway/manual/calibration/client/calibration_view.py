@@ -96,7 +96,7 @@ class ManualCalibrationWidget(QWidget):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(16, 16, 16, 16)
         right_layout.setSpacing(12)
-        self.preview_title = QLabel("Open a calibration image or video.")
+        self.preview_title = QLabel()
         self.preview_title.setObjectName("PreviewTitle")
         right_layout.addWidget(self.preview_title)
         tools_bar = QFrame()

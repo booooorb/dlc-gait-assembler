@@ -112,7 +112,7 @@ class VideoSourceList:
         if self.view.video_list.count() == 0:
             self.view.playback._release_capture()
             self.view.preview.set_frame(None)
-            self.view.preview_title.setText("Select a video from the uploaded list.")
+            self.view.preview_title.clear()
             self.view.timeline.setRange(0, 0)
             self.view.trims._refresh_trim_context()
             self.view.time_label.setText("00:00.000 / 00:00.000")
@@ -133,7 +133,7 @@ class VideoSourceList:
         self.view.state.active_trim_range_by_video.clear()
         self.view.playback._release_capture()
         self.view.preview.set_frame(None)
-        self.view.preview_title.setText("Select a video from the uploaded list.")
+        self.view.preview_title.clear()
         self.view.timeline.setRange(0, 0)
         self.view.trims._refresh_trim_context()
         self.view.time_label.setText("00:00.000 / 00:00.000")

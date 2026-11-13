@@ -73,7 +73,7 @@ class CalibrationMediaPanel:
             self.view.timeline.setRange(0, 0)
             self.view.timeline.setEnabled(False)
             self.view.time_label.setText("00:00.000 / 00:00.000")
-            self.view.preview_title.setText("Open a calibration image or video.")
+            self.view.preview_title.clear()
             self.view.preview.set_frame(None)
             self._update_media_summary()
             return
@@ -111,7 +111,7 @@ class CalibrationMediaPanel:
             self.view.timeline.setRange(0, 0)
             self.view.timeline.setEnabled(False)
             self.view.time_label.setText("00:00.000 / 00:00.000")
-            self.view.preview_title.setText("Open a calibration image or video.")
+            self.view.preview_title.clear()
             self.view.preview.set_frame(None)
         else:
             target_item = None
