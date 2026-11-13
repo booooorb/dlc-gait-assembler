@@ -17,7 +17,7 @@ def sources():
 
 def imports(path):
     owner = ".".join(path.relative_to(ROOT / "src").with_suffix("").parts)
-    tree = ast.parse(path.read_text(), filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -36,7 +36,7 @@ def test_modules_have_unique_names_and_ownership_docstrings():
         if path.name in {"__init__.py", "__main__.py"}:
             continue
         owners[path.name].append(path.relative_to(SOURCE_ROOT).as_posix())
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         assert ast.get_docstring(tree), path
         assert any(not isinstance(node, (ast.Import, ast.ImportFrom, ast.Expr)) for node in tree.body), path
     assert {name: paths for name, paths in owners.items() if len(paths) > 1} == {}
@@ -70,7 +70,7 @@ def test_business_has_no_qt_io_or_concrete_adapters():
         for line, module, _ in imports(path):
             if module.split(".")[0] in forbidden or ".client" in module or ".infrastructure" in module:
                 violations.append(f"{path.relative_to(SOURCE_ROOT)}:{line} imports {module}")
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         # Filesystem methods are forbidden on paths; business calls to injected
         # repositories (such as outputs.is_file) are explicitly permitted.
         path_names = {
@@ -148,7 +148,7 @@ def test_no_obsolete_packages_or_reference_loaders():
     assert not (SOURCE_ROOT / "gui").exists()
     assert not (SOURCE_ROOT / "services").exists()
     for path in sources():
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "alma_root" not in text, path
         assert "spec_from_file_location" not in text, path
         for _, module, _ in imports(path):
