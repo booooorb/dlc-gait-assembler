@@ -1,9 +1,10 @@
-"""Persist theme and serialized window geometry in the existing QSettings namespace."""
+"""Persist appearance, geometry, and automatic update preferences in QSettings."""
 
 from PySide6.QtCore import QSettings
 
 THEME_SETTING_KEY = "appearance/theme"
 WINDOW_GEOMETRY_SETTING_KEY = "window/geometry"
+AUTOMATIC_UPDATES_SETTING_KEY = "updates/automatic"
 
 
 class AppPreferencesStore:
@@ -22,4 +23,11 @@ class AppPreferencesStore:
 
     def save_geometry(self, geometry):
         self.settings.setValue(WINDOW_GEOMETRY_SETTING_KEY, geometry)
+        self.settings.sync()
+
+    def automatic_updates(self):
+        return self.settings.value(AUTOMATIC_UPDATES_SETTING_KEY, True, type=bool)
+
+    def save_automatic_updates(self, enabled):
+        self.settings.setValue(AUTOMATIC_UPDATES_SETTING_KEY, bool(enabled))
         self.settings.sync()

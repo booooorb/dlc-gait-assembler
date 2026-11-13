@@ -5,6 +5,7 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMainWindow
 
+import dlc_gait_assembly
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
 from dlc_gait_assembly.app.infrastructure.app_preferences_store import AppPreferencesStore
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
@@ -45,13 +46,14 @@ def apply_theme_mode(app: QApplication, window: QMainWindow | None, mode: str) -
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setApplicationVersion(dlc_gait_assembly.__version__)
     fast_tooltip_style = FastToolTipStyle(app.style())
     app.setStyle(fast_tooltip_style)
     app._fast_tooltip_style = fast_tooltip_style
     preferences = AppPreferencesStore()
     initial_theme_mode = resolved_theme_mode(preferences, app.styleHints().colorScheme())
     apply_theme_mode(app, None, initial_theme_mode)
-    window = create_main_window(initial_theme_mode=initial_theme_mode)
+    window = create_main_window(initial_theme_mode=initial_theme_mode, preferences=preferences)
     geometry = preferences.geometry()
     if geometry is not None:
         window.restoreGeometry(geometry)
@@ -63,7 +65,12 @@ def main() -> int:
     window.theme_mode_requested.connect(select_theme_mode)
     app.aboutToQuit.connect(lambda: preferences.save_geometry(window.saveGeometry()))
     window.show()
-    return app.exec()
+    window.updates.start()
+    result = app.exec()
+    window.updates.shutdown()
+    if window.updates.pending_update is not None:
+        return 0 if window.updates.install_pending() else 1
+    return result
 
 
 def create_video_processing_use_cases():
@@ -180,11 +187,19 @@ def build_tool_specs():
     return (TOOL_SPECS, LADDER_TOOL_SPEC)
 
 
-def create_main_window(**options):
+def create_main_window(*, update_service=None, preferences=None, **options):
     from dlc_gait_assembly.app.client.app_shell_window import MainWindow
+    from dlc_gait_assembly.app.client.app_update_controller import AppUpdateController
+    from dlc_gait_assembly.app.infrastructure.github_app_updater import GitHubAppUpdater
 
     (tools, ladder) = build_tool_specs()
-    return MainWindow(tool_specs=tools, ladder_spec=ladder, menu_factory=create_main_menu, **options)
+    window = MainWindow(tool_specs=tools, ladder_spec=ladder, menu_factory=create_main_menu, **options)
+    window.updates = AppUpdateController(
+        window,
+        update_service if update_service is not None else GitHubAppUpdater(),
+        preferences if preferences is not None else AppPreferencesStore(),
+    )
+    return window
 
 
 def create_gait_preview():

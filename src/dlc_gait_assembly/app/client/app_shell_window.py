@@ -74,6 +74,8 @@ class MainWindow(QMainWindow):
             if not tool.can_close(self):
                 event.ignore()
                 return
+        if hasattr(self, "updates"):
+            self.updates.shutdown()
         self._main_menu.automated_profiles.close()
         self.routes._release_all_tools()
         super().closeEvent(event)

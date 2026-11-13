@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "pandas",
+    "packaging>=23",
     "PyYAML",
     "PySide6",
     "opencv-python",

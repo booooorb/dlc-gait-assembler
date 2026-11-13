@@ -269,7 +269,10 @@ def test_visible_settings_dropdown_emits_theme_choices_without_reemitting_update
     assert not window._settings_button.icon().isNull()
     expected_style = Qt.ToolButtonIconOnly if window.width() < 1240 else Qt.ToolButtonTextBesideIcon
     assert window._settings_button.toolButtonStyle() == expected_style
-    assert [action.text() for action in window._settings_menu.actions()] == ["Light mode", "Dark mode"]
+    actions = window._settings_menu.actions()
+    assert [action.text() for action in actions[:2]] == ["Light mode", "Dark mode"]
+    assert window.updates.check_action in actions
+    assert window.updates.auto_action in actions
     window._theme_actions["dark"].trigger()
     assert requested_modes == ["dark"]
     window.set_theme_mode("light")
