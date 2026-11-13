@@ -32,6 +32,9 @@ def build_gait_stride_detection(self, setup_tab_layout):
         STRIDE_METHOD_DESCRIPTIONS,
         STRIDE_METHODS,
     )
+    from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_runway_settings_panel import (
+        build_gait_runway_settings,
+    )
 
     self.stride_detection_box = QGroupBox("Stride detection method")
     layout = QVBoxLayout(self.stride_detection_box)
@@ -39,29 +42,34 @@ def build_gait_stride_detection(self, setup_tab_layout):
     self.stride_method_combo.setAccessibleName("Stride detection method")
     self.stride_method_combo.addItems(STRIDE_METHODS)
     self.stride_method_combo.setCurrentText(self._defaults.stride_detection_method)
-    self.stride_method_description = QLabel()
-    self.stride_method_description.setWordWrap(True)
-    self.stride_method_description.setObjectName("MutedLabel")
 
     def describe_method(*_):
         text = (
             "Treadmill uses the ALMA treadmill detector. Choose Spontaneous walking in Setup "
-            f"to select and compare the {len(STRIDE_METHODS)} methods."
+            "to select a stride detection method."
             if self.analysis_type_combo.currentText() == "Treadmill"
             else STRIDE_METHOD_DESCRIPTIONS.get(self.stride_method_combo.currentText(), "")
         )
-        self.stride_method_description.setText(text)
-        self.comparison_rustlab_box.setVisible(self.stride_method_combo.currentText() == RUSTLAB1_METHOD)
+        set_tooltip(self.stride_method_combo, text)
+        self.comparison_rustlab_box.setVisible(
+            self.setup._is_combined_workflow() or self.stride_method_combo.currentText() == RUSTLAB1_METHOD
+        )
         self.mixture_context_box.setVisible(self.stride_method_combo.currentText() == CONTEXT_MIXTURE_METHOD)
+        runway = self.analysis_type_combo.currentText() != "Treadmill" and self.stride_method_combo.currentText() == "ALMA (confidence-aware runway)"
+        if hasattr(self, "runway_settings_box"):
+            self.runway_settings_box.setVisible(runway)
+        if hasattr(self, "legacy_gap_widget"):
+            self.legacy_gap_widget.setVisible(not runway)
+        if hasattr(self, "runway_confidence_link"):
+            self.filters._update_confidence_scope()
 
     self.refresh_stride_method_description = describe_method
     self.compare_strides_button = QPushButton(f"Compare all {len(STRIDE_METHODS)} stick plots…")
     set_tooltip(
         self.compare_strides_button,
-        "Compare the full recording with identical skeleton geometry for every method. Only phase colours and stride boundaries change.",
+        "Compare native ALMA plots of consecutive retained cycles with full-recording plots from alternative detectors.",
     )
     layout.addWidget(self.stride_method_combo)
-    layout.addWidget(self.stride_method_description)
     self.comparison_rustlab_box = QGroupBox("RustLab1 speed rule")
     rustlab_layout = QGridLayout(self.comparison_rustlab_box)
     self.comparison_rustlab_spins = {}
@@ -74,6 +82,12 @@ def build_gait_stride_detection(self, setup_tab_layout):
         )
     ):
         spin = double_spin(minimum, maximum, getattr(self._defaults, name), decimals)
+        set_tooltip(spin, {
+            "stance_speed_threshold_px_frame": "Maximum paw speed in pixels per frame treated as stance by the RustLab1 speed rule.",
+            "maximum_tracking_speed_px_frame": "Paw speeds above this limit, in pixels per frame, are treated as tracking errors.",
+            "minimum_stance_frames": "Minimum consecutive frames required to retain a stance phase.",
+            "minimum_swing_frames": "Minimum consecutive frames required to retain a swing phase.",
+        }[name])
         self.comparison_rustlab_spins[name] = spin
         rustlab_layout.addWidget(QLabel(title), row, 0)
         rustlab_layout.addWidget(spin, row, 1)
@@ -92,53 +106,37 @@ def build_gait_stride_detection(self, setup_tab_layout):
     context_row.addWidget(QLabel("Neighbour context"), 0, 0)
     context_row.addWidget(self.mixture_context_spin, 0, 1)
     context_layout.addLayout(context_row)
-    context_help = QLabel(
-        "Starts from Speed mixture. Agreement before and after a frame strengthens its phase estimate. Pale frames have less than 70% phase support. This does not increase the marker’s tracking confidence."
-    )
-    context_help.setWordWrap(True)
-    context_layout.addWidget(context_help)
     layout.addWidget(self.mixture_context_box)
-    gap_row = QGridLayout()
+    self.legacy_gap_widget = QGroupBox("Legacy / alternative detector gaps")
+    gap_row = QGridLayout(self.legacy_gap_widget)
     self.detection_gap_spin = QSpinBox()
     self.detection_gap_spin.setRange(-1, 30)
     self.detection_gap_spin.setSpecialValueText("Auto (up to 50 ms)")
     self.detection_gap_spin.setValue(self._defaults.max_interpolation_gap_frames)
     self.detection_gap_spin.setAccessibleName("Bridge tracking gaps")
-    set_tooltip(
-        self.detection_gap_spin,
-        "Auto bridges internal timing-marker gaps lasting at most 50 ms, adjusted to the frame rate. Set 0 for strict detection: any missing timing frame excludes the cycle. Positive values specify frames. Longer gaps and recording edges remain excluded; low-confidence marker positions stay hidden in stick plots.",
+    gap_help = (
+        "Auto bridges internal timing-marker gaps lasting at most 50 ms, adjusted to the frame rate. "
+        "Set 0 for strict detection: any missing timing frame excludes the cycle. Positive values specify frames. "
+        "Longer gaps and recording edges remain excluded; low-confidence marker positions stay hidden in stick plots."
     )
     gap_row.addWidget(QLabel("Bridge tracking gaps (frames)"), 0, 0)
     gap_row.addWidget(self.detection_gap_spin, 0, 1)
-    layout.addLayout(gap_row)
-    self.detection_gap_note = QLabel()
-    self.detection_gap_note.setWordWrap(True)
-    self.detection_gap_note.setObjectName("MutedLabel")
+    layout.addWidget(self.legacy_gap_widget)
 
     def describe_gap(value):
-        self.detection_gap_note.setText(
+        note = (
             "Strict: one missing timing frame excludes the entire stride."
             if value == 0
             else "Short gaps can be bridged for stride timing. Longer gaps remain excluded; missing joints stay hidden."
         )
+        set_tooltip(self.detection_gap_spin, f"{gap_help}\n\n{note}")
 
     self.detection_gap_spin.valueChanged.connect(describe_gap)
     describe_gap(self.detection_gap_spin.value())
-    layout.addWidget(self.detection_gap_note)
-    full_recording_note = QLabel(
-        "Every stick plot shows the entire recording. Changing the detector changes stance/swing colours and stride boundaries only. No stride-count limit is applied."
-    )
-    full_recording_note.setWordWrap(True)
-    layout.addWidget(full_recording_note)
-    experimental_note = QLabel(
-        "Compare against the video before choosing a method. The added experimental methods estimate contact from motion; detection counts can differ."
-    )
-    experimental_note.setWordWrap(True)
-    experimental_note.setObjectName("MutedLabel")
-    layout.addWidget(experimental_note)
     layout.addWidget(self.compare_strides_button)
     self.stride_method_combo.currentTextChanged.connect(describe_method)
     self.analysis_type_combo.currentTextChanged.connect(describe_method)
+    build_gait_runway_settings(self, layout)
     describe_method()
     setup_tab_layout.addWidget(self.stride_detection_box)
 
@@ -181,8 +179,8 @@ def build_gait_movement_settings(self, analysis_tab_layout):
     self.no_outlier_checkbox.setChecked(self._defaults.no_outlier_filter)
     self.dragging_filter_checkbox = QCheckBox("Dragging filter")
     self.dragging_filter_checkbox.setChecked(self._defaults.dragging_filter)
-    set_tooltip(self.no_outlier_checkbox, "Disable the spontaneous-walking outlier filter.")
-    set_tooltip(self.dragging_filter_checkbox, "Enable dragging detection/filtering for spontaneous walking.")
+    set_tooltip(self.no_outlier_checkbox, "Bypass height and stride-length ranges only. Runway tracking and moving-bout checks still apply.")
+    set_tooltip(self.dragging_filter_checkbox, "Exclude runway cycles with at least 95% near-ground movement. Leave off to retain dragging cycles; drag is still measured.")
     spontaneous_layout.addWidget(self.no_outlier_checkbox)
     spontaneous_layout.addWidget(self.dragging_filter_checkbox)
     self.spontaneous_box = spontaneous_box

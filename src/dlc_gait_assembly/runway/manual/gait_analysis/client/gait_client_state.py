@@ -15,6 +15,7 @@ class GaitClientState:
     selected_files: list[Path] = field(default_factory=lambda: [])
     view_sets: list[AlmaViewCsvSet] = field(default_factory=lambda: [])
     view_set_errors: list[str] = field(default_factory=lambda: [])
+    csv_bodyparts: dict[Path, tuple[str, ...]] = field(default_factory=dict)
     manual_view_sets: list[AlmaViewCsvSet] | None = None
     output_preview_paths: tuple[Path, ...] = ()
     preview_validity: GaitPreviewValidity = field(default_factory=GaitPreviewValidity)
@@ -22,5 +23,6 @@ class GaitClientState:
     preview_source_name: str = ""
     calibration_map_path: Path | None = None
     calibration_map_source: str = ""
+    calibration_map_pixels_per_cm: float | None = None
     raw_bodyparts: list[str] = field(default_factory=lambda: [])
     view_label_mappings: dict[str, dict[str, dict[str, str]]] = field(default_factory=lambda: {})

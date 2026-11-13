@@ -1,4 +1,4 @@
-"""Prepare full-recording scientific previews and detector comparisons without running the export pipeline."""
+"""Prepare native ALMA stick plots and alternative-detector comparisons without running exports."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -6,16 +6,10 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 
-from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_engine import calculate_alma_recording
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_continuous_sequences import (
     prepare_full_recording_stickplot,
     preview_cycle_rows,
     stickplot_axis_limits,
-)
-from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import (
-    BOTTOM_METHODS,
-    STRIDE_METHODS,
-    bottom_detection,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_calibration import settings_for_view
 from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_timing import (
@@ -36,11 +30,20 @@ class StrideComparisonResults(Sequence):
 
 
 class GaitPreviewUseCases:
-    def __init__(self, coordinates, renderer):
+    def __init__(self, coordinates, renderer, *, standalone=None):
         self.coordinates = coordinates
         self.renderer = renderer
+        self.standalone = standalone
 
     def _recordings(self, inputs, settings, progress_callback=None):
+        from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_engine import (
+            calculate_alma_recording,
+        )
+        from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import (
+            BOTTOM_METHODS,
+            bottom_detection,
+        )
+
         settings = self.coordinates.resolve_calibration(settings)
         tracks = {
             label.lower(): read_view_track(
@@ -119,8 +122,13 @@ class GaitPreviewUseCases:
                     )
             accepted = int(pd.to_numeric(parameters["cycle duration (s)"], errors="coerce").notna().sum())
             messages.extend(detail)
+            display = (
+                f"ALMA native plot of up to {plot.continuous_cycles} consecutive retained cycles"
+                if plot is not None and plot.native_alma and not plot.tracking_only
+                else f"showing all {len(coords)} frames"
+            )
             messages.append(
-                f"{label}: {self._count(recording)} detected, {accepted} passed filters; showing all {len(coords)} frames. Calibration: {coords.attrs.get('pixels_per_cm')} px/cm."
+                f"{label}: {self._count(recording)} detected, {accepted} passed filters; {display}. Calibration: {coords.attrs.get('pixels_per_cm')} px/cm."
             )
         return prepared, messages
 
@@ -149,6 +157,8 @@ class GaitPreviewUseCases:
         return plots, source, tuple(messages)
 
     def compare(self, inputs, settings, progress_callback=None):
+        from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.gait_stride_detection import STRIDE_METHODS
+
         calculations = []
         for index, method in enumerate(STRIDE_METHODS, start=1):
             if progress_callback:
@@ -163,6 +173,8 @@ class GaitPreviewUseCases:
             prepared, messages = self._prepare_plots(recordings, settings)
             prepared_methods.append((method, prepared, [error] if error else messages))
             for label, data in prepared:
+                if data.native_alma:
+                    continue
                 geometry_limits = self._limits(data)
                 if label in limits and limits[label] != geometry_limits:
                     raise RuntimeError(f"{label}: detector changed the recording geometry; comparison stopped.")
@@ -171,13 +183,20 @@ class GaitPreviewUseCases:
         for index, (method, prepared, messages) in enumerate(prepared_methods, start=1):
             if progress_callback:
                 progress_callback(len(STRIDE_METHODS) + index, len(STRIDE_METHODS) * 2, f"Drawing {method} stick plots")
-            note = "Full recording: identical skeleton frames and axes for every method in each view. Only phase colours and stride boundaries change; detected counts may differ."
+            note = (
+                "Native ALMA stick plot: consecutive retained cycles, using ALMA's own coordinate and phase rendering."
+                if any(data.native_alma for _, data in prepared)
+                else "Full recording: identical skeleton frames and axes for alternative methods in each view. Only phase colours and stride boundaries change; detected counts may differ."
+            )
             plots = self._render(prepared, limits)
             results.append((method, plots, "\n".join([note, *messages])))
         return StrideComparisonResults(tuple(results))
 
     def prepare_rustlab1(self, view_set, settings, *, calculation=None):
         """Draw side skeletons on the standalone reference paw's actual stride frames."""
+        if self.standalone is not None:
+            return self.standalone.preview(view_set, settings)
+
         from dlc_gait_assembly.runway.manual.gait_analysis.business.alma import alma_signal_filter
         from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_settings import ALMA_BODYPARTS
         from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_coordinate_normalization import (
@@ -192,6 +211,7 @@ class GaitPreviewUseCases:
         )
 
         if calculation is None:
+            settings = self.coordinates.resolve_calibration(settings)
             raw = self.coordinates.read_views(view_set, view_mappings_for_set(settings, view_set.name))
             prepared = prepare_alma_coordinates(raw, settings, alma_signal_filter)
             strides = detect_rustlab1_strides(prepared, settings, pd, np, allow_empty=True)

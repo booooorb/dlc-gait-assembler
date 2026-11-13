@@ -29,6 +29,10 @@ class AlmaAnalysisThread(QThread):
 
     def run(self) -> None:
         try:
+            workflow = (
+                "ALMA side + rust bottom" if self._settings.output_format == "alma_side_rust_bottom" else "ALMA"
+            )
+            self.log_message.emit(f"Workflow: {workflow}")
             self.log_message.emit(f"Output folder: {self._output_folder}")
             self.log_message.emit(f"Setup: {self._settings.analysis_type}")
             self.log_message.emit(f"Frame rate: {self._settings.frame_rate:g} fps")
@@ -55,7 +59,7 @@ class AlmaAnalysisThread(QThread):
                 for message in result.messages:
                     self.log_message.emit(f"  {message}")
             self.results_ready.emit(tuple(results))
-            self.progress_updated.emit(100, "ALMA gait analysis complete.")
+            self.progress_updated.emit(100, f"{workflow} analysis complete.")
             self.analysis_completed.emit(True, f"Analysis complete. Results saved to:\n{self._output_folder}")
         except Exception as exc:
             self.analysis_completed.emit(False, str(exc))

@@ -53,10 +53,10 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
     assert not widget.findChildren(QLabel, "AutomatedProfileDescription")
     assert not widget.findChildren(QLabel, "ProfileStageDescription")
     assert not widget.findChildren(QLabel, "ProfileStageTitle")
-    assert widget.automation_console.toPlainText() == "[Ready]"
-    assert widget.pipeline_log_state.text() == "●  Ready"
+    assert widget.automation_console.toPlainText() == ""
+    assert widget.run_readiness_label.isHidden()
+    assert widget.pipeline_log_state.isHidden()
     assert widget.pipeline_log_state.property("logState") == "ready"
-    assert widget.run_readiness_label.text() == "●  Ready"
     assert widget.run_readiness_label.property("readinessState") == "ready"
     interactive_controls = [
         window._automation_run_button,
@@ -87,9 +87,7 @@ def test_automation_menus_keep_guidance_in_control_tooltips():
         widget.pipeline_approve_button,
     ]
     assert all(control.toolTip().strip() for control in interactive_controls)
-    assert all(
-        widget.configuration_tabs.tabToolTip(index).strip() for index in range(widget.configuration_tabs.count())
-    )
+    assert all(button.toolTip().strip() for button in widget.view_model_buttons.values())
     window.close()
     app.processEvents()
 
@@ -112,9 +110,8 @@ def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path
     assert not widget.open_profile_configuration_button.icon().isNull()
     assert not widget.pipeline_change_settings_button.icon().isNull()
     assert widget.run_readiness_label.objectName() == "RunReadinessBadge"
-    assert widget.run_readiness_label.text() == "●  Ready"
     assert widget.run_readiness_label.property("readinessState") == "ready"
-    assert "QPushButton#RemoveButton, QPushButton#ClearButton" in widget.styleSheet()
+    assert "QPushButton#RemoveButton {" in widget.styleSheet()
     assert "QLabel#PipelineLogState {\n    background: transparent;\n    border: 0;" in widget.styleSheet()
     assert (
         "QLabel#ProfileStatusLabel, QLabel#RunReadinessBadge {\n    background: transparent;\n    border: 0;"
@@ -137,18 +134,24 @@ def test_automated_workspace_has_clear_input_activity_and_run_hierarchy(tmp_path
     window.close()
 
 
-def test_pipeline_geometry_stays_constant_through_stickplot_review():
+def test_pipeline_geometry_stays_constant_through_stickplot_review(tmp_path):
+    from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_repository import (
+        AutomatedProfileStore,
+    )
+
     app = QApplication.instance() or QApplication([])
-    window = create_main_window()
+    window = create_main_window(profile_store=AutomatedProfileStore(tmp_path / "profiles"))
+    assert window.workflows.new(name="Geometry test")
     window.show()
     window.resize(1180, 700)
     app.processEvents()
     widget = window._main_menu.automated_profiles
-    window.routes._show_automated_pipeline()
+    window._automation_run_button.click()
     app.processEvents()
+    assert window._main_menu.view_stack.currentWidget() is widget
     initial_geometry = {
         "window": window.geometry(),
-        "workspace": window._main_menu._content.geometry(),
+        "workspace": window._main_menu.view_stack.geometry(),
         "pipeline": widget.geometry(),
         "input": widget.automation_input_stack.geometry(),
         "console": widget.automation_console_panel.geometry(),
@@ -163,7 +166,7 @@ def test_pipeline_geometry_stays_constant_through_stickplot_review():
     assert widget.run_readiness_label.text() == "●  Review required"
     assert widget.run_readiness_label.property("readinessState") == "review"
     assert window.geometry() == initial_geometry["window"]
-    assert window._main_menu._content.geometry() == initial_geometry["workspace"]
+    assert window._main_menu.view_stack.geometry() == initial_geometry["workspace"]
     assert widget.geometry() == initial_geometry["pipeline"]
     assert widget.automation_input_stack.geometry() == initial_geometry["input"]
     assert widget.automation_console_panel.geometry() == initial_geometry["console"]
@@ -200,11 +203,11 @@ def test_pipeline_stickplot_preserves_aspect_ratio_and_opens_on_click():
     app.processEvents()
 
 
-def test_automatic_surface_split_preserves_original_stylesheet_cascade():
+def test_automatic_surface_split_preserves_flat_stylesheet_cascade():
     import hashlib
     from dlc_gait_assembly.runway.automatic.client.automatic_workspace_styles import AUTOMATED_PIPELINE_QSS
 
     assert (
         hashlib.sha256(AUTOMATED_PIPELINE_QSS.encode()).hexdigest()
-        == "085bba4e35864952d214ecd0ba2a6ee59b38b60e54895875b4ce87ec44a40a57"
+        == "b4a8b244e16ce8ff8867b9284024ea72df6dfe841145a3ebd60b336748982ddb"
     )

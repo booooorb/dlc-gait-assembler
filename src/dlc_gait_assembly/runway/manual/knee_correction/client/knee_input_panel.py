@@ -7,6 +7,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
 
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
 from dlc_gait_assembly.runway.manual.knee_correction.business.knee_dataset_pairing import pair_coordinate_files
+from dlc_gait_assembly.runway.manual.knee_correction.client.knee_pairing_dialog import KneePairingDialog
 
 
 class KneeInputPanel:
@@ -55,7 +58,20 @@ class KneeInputPanel:
         self._refresh_pairs()
 
     def _refresh_pairs(self) -> None:
-        self.view.state.pairs = pair_coordinate_files(self.view.state.selected_paths)
+        selected = set(self.view.state.selected_paths)
+        self.view.state.custom_pairs = [
+            pair for pair in self.view.state.custom_pairs
+            if set((*pair.csv_paths, *pair.h5_paths, *pair.video_paths)) <= selected
+        ]
+        assigned = {
+            path for pair in self.view.state.custom_pairs
+            for path in (*pair.csv_paths, *pair.h5_paths, *pair.video_paths)
+        }
+        self.view.state.pairs = self.view.state.custom_pairs + pair_coordinate_files(
+            [path for path in self.view.state.selected_paths if path not in assigned]
+        )
+        self.view.customize_pairings_button.setEnabled(any(path.suffix.lower() == ".csv" for path in selected))
+        self.view.reset_pairings_button.setEnabled(bool(self.view.state.custom_pairs))
         self.view.pair_table.clear()
         error_brush = QBrush(QColor(theme.STATUS_ERROR))
         for pair in self.view.state.pairs:
@@ -63,15 +79,32 @@ class KneeInputPanel:
             h5_text = pair.h5_path.name if pair.h5_path is not None else "Missing"
             video_text = pair.video_path.name if pair.video_path is not None else "Missing"
             item = QTreeWidgetItem([pair.stem, csv_text, h5_text, video_text, pair.status])
+            item.setToolTip(0, pair.stem)
+            for column, paths in enumerate((pair.csv_paths, pair.h5_paths, pair.video_paths), start=1):
+                item.setToolTip(column, "\n".join(str(path) for path in paths) or "Missing")
             item.setData(0, Qt.UserRole, [str(path) for path in (*pair.csv_paths, *pair.h5_paths, *pair.video_paths)])
             if not pair.is_paired:
                 for column in range(5):
                     item.setForeground(column, error_brush)
             self.view.pair_table.addTopLevelItem(item)
+        for column in range(5):
+            self.view.pair_table.resizeColumnToContents(column)
         self._refresh_label_choices()
         self.view.preview_controller._invalidate_preview()
         self.view.controller._update_run_state()
         self.view.preview_controller._maybe_generate_previews()
+
+    def _customize_pairings(self) -> None:
+        dialog = KneePairingDialog(self.view.state.selected_paths, self.view.state.pairs, self.view)
+        if dialog.exec() == QDialog.Accepted:
+            self.view.state.custom_pairs = dialog.pairings()
+            excluded = set(dialog.excluded_paths())
+            self.view.state.selected_paths = [path for path in self.view.state.selected_paths if path not in excluded]
+            self._refresh_pairs()
+
+    def _reset_pairings(self) -> None:
+        self.view.state.custom_pairs.clear()
+        self._refresh_pairs()
 
     def _refresh_label_choices(self) -> None:
         previous_knee = self.view.knee_label_combo.currentData()
@@ -124,6 +157,10 @@ def build_knee_inputs(self):
     toolbar = QHBoxLayout()
     self.add_files_button = QPushButton("Add CSV + H5 + video")
     self.add_folder_button = QPushButton("Add folder")
+    self.customize_pairings_button = QPushButton("Customize pairings…")
+    self.customize_pairings_button.setToolTip("Choose the H5 and video paired with each CSV, including files with different names.")
+    self.reset_pairings_button = QPushButton("Auto-pair")
+    self.reset_pairings_button.setToolTip("Replace custom pairings with automatic filename matching.")
     self.remove_button = QPushButton("Remove")
     self.remove_button.setObjectName("RemoveButton")
     self.clear_button = QPushButton("Clear")
@@ -141,10 +178,8 @@ def build_knee_inputs(self):
     self.pair_table.setAlternatingRowColors(False)
     self.pair_table.setSelectionMode(QTreeWidget.ExtendedSelection)
     self.pair_table.header().setStretchLastSection(False)
-    self.pair_table.header().setSectionResizeMode(0, QHeaderView.Stretch)
-    self.pair_table.header().setSectionResizeMode(1, QHeaderView.Stretch)
-    self.pair_table.header().setSectionResizeMode(2, QHeaderView.Stretch)
-    self.pair_table.header().setSectionResizeMode(3, QHeaderView.Stretch)
-    self.pair_table.header().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+    self.pair_table.header().setSectionResizeMode(QHeaderView.Interactive)
+    self.pair_table.setTextElideMode(Qt.ElideNone)
+    self.pair_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
     files_layout.addWidget(self.pair_table, 1)
     return files_box

@@ -58,7 +58,8 @@ class VideoEnhancementControls:
         spin.setKeyboardTracking(False)
         spin.setValue(current_value)
         spin.setMaximumWidth(62)
-        set_tooltip(spin, f"Set {title.lower()} numerically.")
+        set_tooltip(spin, ENHANCEMENT_HELP[field])
+        set_tooltip(label, ENHANCEMENT_HELP[field])
         spin.valueChanged.connect(lambda _value: self._apply_enhancement_settings(source="spin"))
         label_row.addWidget(spin)
         reset_button = QPushButton("R")
@@ -71,7 +72,7 @@ class VideoEnhancementControls:
         slider.setObjectName("EnhancementSlider")
         slider.setRange(minimum, maximum)
         slider.setValue(round(current_value * scale))
-        set_tooltip(slider, f"Adjust {title.lower()}.")
+        set_tooltip(slider, ENHANCEMENT_HELP[field])
         slider.valueChanged.connect(lambda _value: self._apply_enhancement_settings(source="slider"))
         layout.addWidget(slider)
         self.view._enhancement_controls[field] = {"slider": slider, "spin": spin, "scale": scale}
@@ -126,3 +127,18 @@ ENHANCEMENT_SLIDERS = [
     ("output_black", "Levels Output Black", 0, 100, 100.0),
     ("output_white", "Levels Output White", 0, 100, 100.0),
 ]
+
+
+ENHANCEMENT_HELP = {
+    "sharpening": "Strengthen image edges to make details more distinct. Zero disables sharpening; high values may amplify noise and halos.",
+    "cas": "Contrast-adaptive sharpening strengthens local detail. Zero disables it; higher values increase the effect.",
+    "brightness": "Add or subtract brightness across the image. Zero preserves the original brightness.",
+    "contrast": "Change the separation between dark and light values. One preserves contrast; higher values increase it.",
+    "exposure": "Adjust exposure in stops. Zero preserves exposure; positive values brighten and negative values darken the image.",
+    "black_level": "Shift the dark end of the image. Zero preserves the black level; adjust to reveal or deepen shadow detail.",
+    "tone_scale": "Adjust the image tone curve. One preserves the original curve; changing it alters midtone brightness.",
+    "input_black": "Input intensity mapped to black, from 0 to 1. Raising it makes more shadow pixels black.",
+    "input_white": "Input intensity mapped to white, from 0 to 1. Lowering it makes more highlight pixels white.",
+    "output_black": "Darkest output intensity, from 0 to 1. Raising it lifts the darkest pixels toward gray.",
+    "output_white": "Brightest output intensity, from 0 to 1. Lowering it dims the brightest pixels.",
+}

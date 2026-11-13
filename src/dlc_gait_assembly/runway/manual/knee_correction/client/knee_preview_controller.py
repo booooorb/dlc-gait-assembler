@@ -4,23 +4,31 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QObject, Qt, QTimer, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QMessageBox
 
 from dlc_gait_assembly.runway.manual.knee_correction.business.knee_correction_contracts import CoordinateFilePair
 from dlc_gait_assembly.runway.manual.knee_correction.business.knee_preview_sampling import (
     bodypart_point,
-    previewable_frame_positions,
 )
+from dlc_gait_assembly.runway.manual.knee_correction.client.knee_correction_worker import KneePreviewThread
 from dlc_gait_assembly.shared.business.media_access_contracts import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from dlc_gait_assembly.shared.client.qt_frame_conversion import rgb_array_to_qimage
 
 
-class KneePreviewController:
+class KneePreviewController(QObject):
     """KneePreviewController operates on its explicitly supplied KneeCorrectionWidget view."""
 
     def __init__(self, view):
+        super().__init__(view)
         self.view = view
+        self._worker: KneePreviewThread | None = None
+        self._discard_result = False
+        self._pending = False
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._start_previews)
 
     def _set_preview_media(self, path: Path, notify: bool = True) -> bool:
         resolved = path.expanduser().absolute()
@@ -56,6 +64,7 @@ class KneePreviewController:
         self._maybe_generate_previews()
 
     def _invalidate_preview(self, *_args) -> None:
+        self._cancel_previews()
         self.view.state.preview_original = None
         self.view.state.preview_corrected = None
         self.view.state.preview_report = None
@@ -97,53 +106,54 @@ class KneePreviewController:
                 return self.view.state.pairs[index]
         return next((pair for pair in self.view.state.pairs if pair.is_paired), None)
 
-    def _generate_preview(self) -> None:
-        self._generate_all_previews(show_errors=True)
-
     def _maybe_generate_previews(self) -> None:
-        if self.view.state.pixels_per_cm is None:
+        if self.view.state.pixels_per_cm is None or not any(pair.is_paired for pair in self.view.state.pairs):
             return
-        if not any(pair.is_paired for pair in self.view.state.pairs):
-            return
-        self._generate_all_previews(show_errors=False)
+        self._pending = True
+        self._timer.start(0)
 
-    def _generate_all_previews(self, show_errors: bool) -> None:
-        if self.view.state.pixels_per_cm is None:
-            self._invalidate_preview()
-            if show_errors:
-                QMessageBox.information(self.view, "Calibration required", "Import a calibration map first.")
+    def _cancel_previews(self) -> None:
+        self._timer.stop()
+        self._pending = False
+        if self._worker is not None:
+            self._discard_result = True
+            self._worker.requestInterruption()
+
+    def release(self) -> None:
+        self._cancel_previews()
+        if self._worker is not None:
+            worker, self._worker = self._worker, None
+            worker.wait()
+            worker.deleteLater()
+        self._release_preview_capture()
+
+    def _start_previews(self) -> None:
+        if not self._pending or self._worker is not None:
             return
-        paired = [pair for pair in self.view.state.pairs if pair.is_paired]
-        if not paired:
-            self._invalidate_preview()
-            if show_errors:
-                QMessageBox.information(
-                    self.view, "No paired dataset", "Add or select a paired CSV, H5, and video dataset."
-                )
+        self._pending = False
+        self._discard_result = False
+        pairs = tuple(pair for pair in self.view.state.pairs if pair.is_paired)
+        self._worker = KneePreviewThread(
+            pairs, self.view.controller._settings(), use_cases=self.view.use_cases, parent=self
+        )
+        self._worker.finished.connect(self._previews_finished, Qt.ConnectionType.QueuedConnection)
+        self._worker.start()
+
+    @Slot()
+    def _previews_finished(self) -> None:
+        worker = self.sender()
+        if worker is not self._worker:
             return
-        self.view.state.preview_cache.clear()
-        errors: list[str] = []
-        for pair in paired:
-            key = self._pair_key(pair)
-            if key is None or pair.csv_path is None:
-                continue
-            try:
-                (original, corrected, reports) = self.view.use_cases.preview(pair, self.view.controller._settings())
-            except Exception as exc:
-                errors.append(f"{pair.stem}: {exc}")
-                continue
-            report = reports[0]
-            self.view.state.preview_cache[key] = (
-                original,
-                corrected,
-                report,
-                previewable_frame_positions(report.frame_statuses),
-            )
-        if errors:
-            for message in errors:
-                self.view.log.appendPlainText(f"[Preview] {message}")
-            if show_errors:
-                QMessageBox.warning(self.view, "Some previews could not be generated", "\n".join(errors[:5]))
+        self._worker = None
+        worker.deleteLater()
+        if self._discard_result:
+            self._start_previews()
+            return
+        self.view.state.preview_cache.update(
+            (self._pair_key(pair), preview) for pair, preview in worker.previews.items()
+        )
+        for message in worker.errors:
+            self.view.log.appendPlainText(f"[Preview] {message}")
         if not self.view.state.preview_cache:
             self.view.state.active_preview_pair_key = None
             self.view.knee_preview.set_empty_message("Could not generate a preview")
@@ -166,15 +176,11 @@ class KneePreviewController:
         if key is None:
             return
         if key not in self.view.state.preview_cache:
-            if self.view.state.pixels_per_cm is None:
-                self._invalidate_preview()
-            else:
-                self._maybe_generate_previews()
-            if key not in self.view.state.preview_cache:
+            if not self._pending and self._worker is None and self.view.state.pixels_per_cm is not None:
                 self.view.knee_preview.set_empty_message("Preview could not be generated")
                 self.view.knee_preview.clear_points()
                 self.view.preview_status_label.setText(f"{pair.stem} • preview unavailable")
-                return
+            return
         if self.view._preview_static_image is None and self.view.state.preview_media_path != pair.video_path:
             self._set_preview_media(pair.video_path, notify=False)
         (original, corrected, report, frame_positions) = self.view.state.preview_cache[key]
@@ -207,7 +213,8 @@ class KneePreviewController:
         media_suffix = f" • frame: {media_name}" if media_name else ""
         self.view.preview_status_label.setText(f"{pair.stem} • {report.knee}{media_suffix}")
         self._show_preview_frame(self.view.preview_slider.value())
-        self.view.knee_preview.setFocus()
+        if self.view.isVisible():
+            self.view.knee_preview.setFocus()
 
     def _show_preview_frame(self, frame_position: int) -> None:
         if (
@@ -227,7 +234,7 @@ class KneePreviewController:
         correction_status = report.frame_statuses[position]
         new_knee = (
             bodypart_point(self.view.state.preview_corrected, report.knee, position)
-            if correction_status == "Corrected"
+            if correction_status == "Corrected" or correction_status.startswith("Estimated:")
             else None
         )
         (background_frame, media_status) = self._preview_frame_image(position)
@@ -242,7 +249,14 @@ class KneePreviewController:
             unavailable.append("ankle")
         if old_knee is None:
             unavailable.append("old knee")
-        frame_status = "corrected" if correction_status == "Corrected" else f"retained: {correction_status}"
+        if correction_status == "Corrected":
+            frame_status = "corrected"
+        elif correction_status.startswith("Estimated:"):
+            frame_status = correction_status
+        else:
+            frame_status = f"retained: {correction_status}"
+        if report.frame_confidences:
+            frame_status += f" • knee confidence {report.frame_confidences[position]:.2f}"
         if unavailable:
             frame_status += " • unavailable: " + ", ".join(unavailable)
         if media_status:

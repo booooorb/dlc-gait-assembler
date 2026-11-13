@@ -107,7 +107,12 @@ def test_selected_detector_exports_all_stride_ids_and_matching_stickplot_boundar
         assert table["stride_number"].tolist() == [1, 2, 3, 4]
         svg = next(folder.rglob(f"{side}_stickplot.svg")).read_text()
         starts = [int(float(x)) for x in table["stride_start (frame)"]]
-        assert [int(x) for x in re.findall(r'id="stride-start-(\d+)"', svg)] == starts
+        import json
+        import xml.etree.ElementTree as ET
+        description = ET.fromstring(svg).find(".//{http://purl.org/dc/elements/1.1/}description")
+        shown = json.loads(description.text)["retained_intervals"]
+        assert shown and {r["start_frame"] for r in shown} <= set(starts)
+        assert all(r["start_frame"] < r["end_frame"] for r in shown)
     # Strict, fully rejected ALMA filters retain every stride and clearly label it.
     strict = replace(settings, stride_length_min_cm=1000.0)
     GaitAnalysisUseCases(GaitResultWriter()).run([item], tmp_path / "filtered", strict)

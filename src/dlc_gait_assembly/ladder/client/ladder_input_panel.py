@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.ladder.business.ladder_marker_selection import suggested_ladder_bodyparts
 from dlc_gait_assembly.shared.business.media_access_contracts import VIDEO_EXTENSIONS
+from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 
 
 class LadderInputPanel:
@@ -56,8 +57,9 @@ class LadderInputPanel:
             self.view.state.csv_path = path
             self.view.csv_edit.setText(str(path))
             bodyparts_list = self.view.bodyparts_list
+        previous = set(self.view.controller._selected_bodyparts(view))
         bodyparts_list.clear()
-        suggested = set(suggested_ladder_bodyparts(bodyparts))
+        suggested = (previous & set(bodyparts)) or set(suggested_ladder_bodyparts(bodyparts))
         for bodypart in bodyparts:
             item = QListWidgetItem(bodypart)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -121,22 +123,28 @@ def build_ladder_inputs(self, controls_layout):
     input_box = QGroupBox("Input")
     input_layout = QGridLayout(input_box)
     self.mode_combo = QComboBox()
+    set_tooltip(self.mode_combo, 'Select single-camera analysis or paired left/right-camera ladder analysis.')
     self.mode_combo.addItems(["Single camera", "Paired left + right cameras"])
     self.csv_edit = QLineEdit()
+    set_tooltip(self.csv_edit, 'DeepLabCut coordinate CSV for the main or left camera.')
     self.csv_edit.setReadOnly(True)
     self.csv_button = QPushButton("Choose DLC CSV…")
     self.video_edit = QLineEdit()
+    set_tooltip(self.video_edit, 'Video corresponding to the main or left-camera coordinates, used for event review.')
     self.video_edit.setReadOnly(True)
     self.video_button = QPushButton("Choose video…")
     self.right_csv_label = QLabel("Right coordinates")
     self.right_csv_edit = QLineEdit()
+    set_tooltip(self.right_csv_edit, 'DeepLabCut coordinate CSV for the right camera in paired-camera analysis.')
     self.right_csv_edit.setReadOnly(True)
     self.right_csv_button = QPushButton("Choose right CSV…")
     self.right_video_label = QLabel("Right review video")
     self.right_video_edit = QLineEdit()
+    set_tooltip(self.right_video_edit, 'Video corresponding to the right-camera coordinates, used for event review.')
     self.right_video_edit.setReadOnly(True)
     self.right_video_button = QPushButton("Choose right video…")
     self.output_edit = QLineEdit(str(self._default_output_folder()))
+    set_tooltip(self.output_edit, 'Folder in which this analysis saves its results and reports.')
     self.output_button = QPushButton("Output…")
     self.left_csv_label = QLabel("Coordinates")
     self.left_video_label = QLabel("Review video")

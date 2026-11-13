@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QSizePolicy,
     QStackedWidget,
     QTableWidget,
@@ -20,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.runway.manual.gait_analysis.client.previews.gait_figure_viewer import GaitFigureViewer
+from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 from dlc_gait_assembly.shared.client.qt_svg_preview import ClickableSvgWidget
 
 
@@ -38,11 +42,16 @@ class OutputPreviewWidget(QWidget):
         layout.setSpacing(5)
         header = QHBoxLayout()
         header.setSpacing(6)
-        header.addWidget(QLabel("Generated output"))
+        header.addWidget(QLabel("File"))
         self.file_combo = QComboBox()
+        set_tooltip(self.file_combo, "Choose the exported table or figure to display in the result preview.")
         self.file_combo.setObjectName("OutputPreviewFile")
         self.file_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         header.addWidget(self.file_combo, 1)
+        self.open_file_button = QPushButton("Open file")
+        self.open_file_button.setEnabled(False)
+        self.open_file_button.clicked.connect(self._open_file)
+        header.addWidget(self.open_file_button)
         layout.addLayout(header)
         self.preview_stack = QStackedWidget()
         self.empty_label = QLabel("Generated SVG figures and CSV tables will appear here.")
@@ -86,9 +95,12 @@ class OutputPreviewWidget(QWidget):
         self.file_combo.blockSignals(True)
         self.file_combo.clear()
         for path in self._paths:
-            self.file_combo.addItem(f"{path.parent.name} / {path.name}")
+            duplicate = sum(other.name == path.name for other in self._paths) > 1
+            self.file_combo.addItem(f"{path.parent.name} / {path.name}" if duplicate else path.name)
+            self.file_combo.setItemData(self.file_combo.count() - 1, str(path), Qt.ItemDataRole.ToolTipRole)
         self.file_combo.blockSignals(False)
         if not self._paths:
+            self.open_file_button.setEnabled(False)
             self.preview_stack.setCurrentWidget(self.empty_label)
             self.preview_note.setText("No previewable SVG or CSV outputs were generated.")
             return
@@ -97,6 +109,7 @@ class OutputPreviewWidget(QWidget):
         self._show_current(first_figure)
 
     def _show_current(self, index: int) -> None:
+        self.open_file_button.setEnabled(0 <= index < len(self._paths))
         if not 0 <= index < len(self._paths):
             self.preview_stack.setCurrentWidget(self.empty_label)
             return
@@ -117,6 +130,11 @@ class OutputPreviewWidget(QWidget):
             self.preview_stack.setCurrentWidget(self.empty_label)
             self.preview_note.clear()
 
+    def _open_file(self):
+        path = self.selected_path
+        if path is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
     def _load_csv(self, path: Path) -> tuple[int, int]:
         (header, rows) = self.reader.table_preview(path, self._max_csv_rows)
         widest_row = max((len(row) for row in rows), default=0)
@@ -126,11 +144,20 @@ class OutputPreviewWidget(QWidget):
         self.csv_preview.setColumnCount(column_count)
         if column_count:
             labels = [
-                header[column] if column < len(header) and header[column] else f"Column {column + 1}"
+                header[column] if column < len(header) and header[column] else "Row" if column == 0 else f"Column {column + 1}"
                 for column in range(column_count)
             ]
             self.csv_preview.setHorizontalHeaderLabels(labels)
         for row_index, row in enumerate(rows):
             for column_index, value in enumerate(row[:column_count]):
-                self.csv_preview.setItem(row_index, column_index, QTableWidgetItem(value))
+                displayed = value
+                try:
+                    number = float(value)
+                    if math.isfinite(number) and len(value) > 12 and ("." in value or "e" in value.lower()):
+                        displayed = format(number, ".8g")
+                except ValueError:
+                    pass
+                item = QTableWidgetItem(displayed)
+                item.setToolTip(value)
+                self.csv_preview.setItem(row_index, column_index, item)
         return (len(rows), column_count)

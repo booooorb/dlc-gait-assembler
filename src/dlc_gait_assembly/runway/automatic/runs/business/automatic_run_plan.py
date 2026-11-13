@@ -30,7 +30,6 @@ class AutomaticRunPlan:
                 self.enable_gait_analysis
                 and self.profile.gait_analysis_enabled
                 and (self.profile.analysis_manifest is not None)
-                and (self.profile.calibration_map is not None)
             )
         return True
 

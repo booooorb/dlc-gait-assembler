@@ -47,12 +47,18 @@ def correct_knee_dataframe(
             'No knee label could be corrected. Select hip and ankle labels, or add labels containing "hip" and "ankle".'
         )
     direction = _normalised_knee_direction(settings.knee_direction)
-    if settings.pixels_per_cm <= 0:
+    if not np.isfinite(settings.pixels_per_cm) or settings.pixels_per_cm <= 0:
         raise ValueError("Calibration pixels per centimeter must be greater than zero.")
     hip_knee_length = float(settings.hip_knee_length_cm * settings.pixels_per_cm)
     knee_ankle_length = float(settings.knee_ankle_length_cm * settings.pixels_per_cm)
-    if settings.hip_knee_length_cm <= 0 or settings.knee_ankle_length_cm <= 0:
+    if not np.isfinite([hip_knee_length, knee_ankle_length]).all() or min(hip_knee_length, knee_ankle_length) <= 0:
         raise ValueError("Femur and tibia/fibula lengths must be greater than zero.")
+    if not np.isfinite(settings.fallback_femur_tibia_ratio) or settings.fallback_femur_tibia_ratio <= 0:
+        raise ValueError("Fallback femur/tibia ratio must be finite and greater than zero.")
+    if not np.isfinite(settings.adjusted_confidence_cap) or not 0 <= settings.adjusted_confidence_cap <= 1:
+        raise ValueError("Adjusted-frame confidence cap must be between zero and one.")
+    if not np.isfinite(settings.likelihood_threshold) or not 0 <= settings.likelihood_threshold <= 1:
+        raise ValueError("Hip/ankle likelihood threshold must be between zero and one.")
     for prefix, bodypart in knee_targets:
         knee_columns = columns.get((prefix, bodypart))
         if knee_columns is None or not {"x", "y"}.issubset(knee_columns):
@@ -71,6 +77,7 @@ def correct_knee_dataframe(
         ankle_coordinates_valid = np.isfinite(ankle_values).all(axis=1)
         hip_likelihood_valid = likelihood_mask(dataframe, hip_columns, settings.likelihood_threshold)
         ankle_likelihood_valid = likelihood_mask(dataframe, ankle_columns, settings.likelihood_threshold)
+        diagnostics = {}
         (new_knee, corrected_mask, frame_statuses) = _triangulated_knees(
             hip_values,
             ankle_values,
@@ -82,6 +89,10 @@ def correct_knee_dataframe(
             hip_knee_length,
             knee_ankle_length,
             direction,
+            adapt_infeasible_lengths=settings.adapt_infeasible_lengths,
+            fallback_femur_tibia_ratio=settings.fallback_femur_tibia_ratio,
+            fill_missing_coordinates=settings.fill_missing_coordinates,
+            diagnostics=diagnostics,
         )
         corrected.loc[:, knee_columns["x"]] = new_knee[:, 0]
         corrected.loc[:, knee_columns["y"]] = new_knee[:, 1]
@@ -90,7 +101,25 @@ def correct_knee_dataframe(
         else:
             knee_columns["likelihood"] = (*prefix, bodypart, "likelihood")
             output_likelihood = np.full(len(dataframe), np.nan, dtype=float)
-        output_likelihood[corrected_mask] = 1.0
+        # Reconstructed points inherit the weaker endpoint; reconstruction is
+        # never evidence for replacing a low source likelihood with 1.0.
+        source_confidence = np.minimum(
+            confidence_values(dataframe, hip_columns), confidence_values(dataframe, ankle_columns)
+        )
+        source_confidence[~hip_coordinates_valid | ~ankle_coordinates_valid] = 0.0
+        output_likelihood = np.minimum(
+            np.nan_to_num(output_likelihood, nan=0.0, posinf=0.0, neginf=0.0).clip(0.0, 1.0),
+            source_confidence,
+        )
+        methods = diagnostics["methods"]
+        configured = methods == "configured_geometry"
+        adjusted = methods == "adjusted_geometry"
+        output_likelihood[configured] = source_confidence[configured]
+        output_likelihood[adjusted] = np.minimum(
+            source_confidence[adjusted] * diagnostics["length_penalties"][adjusted],
+            settings.adjusted_confidence_cap,
+        )
+        output_likelihood[np.isin(methods, ("temporal_display", "unavailable"))] = 0.0
         corrected.loc[:, knee_columns["likelihood"]] = output_likelihood
         reports.append(
             KneeMarkerReport(
@@ -102,6 +131,15 @@ def correct_knee_dataframe(
                 corrected_frames=int(corrected_mask.sum()),
                 retained_frames=int((~corrected_mask).sum()),
                 frame_statuses=frame_statuses,
+                frame_methods=tuple(str(method) for method in methods),
+                frame_confidences=tuple(float(value) for value in output_likelihood),
+                frame_lengths=tuple(
+                    tuple(float(value) if np.isfinite(value) else None for value in lengths)
+                    for lengths in diagnostics["frame_lengths"]
+                ),
+                fallback_femur_tibia_ratio=settings.fallback_femur_tibia_ratio,
+                source_likelihood_threshold=settings.likelihood_threshold,
+                adjusted_confidence_cap=settings.adjusted_confidence_cap,
             )
         )
     corrected.columns = pd.MultiIndex.from_tuples(
@@ -130,3 +168,9 @@ def likelihood_values(dataframe: pd.DataFrame, columns: dict[str, tuple]) -> np.
 def likelihood_mask(dataframe: pd.DataFrame, columns: dict[str, tuple], threshold: float) -> np.ndarray:
     values = likelihood_values(dataframe, columns)
     return np.isfinite(values) & (values >= threshold)
+
+
+def confidence_values(dataframe: pd.DataFrame, columns: dict[str, tuple]) -> np.ndarray:
+    if "likelihood" not in columns:
+        return np.zeros(len(dataframe), dtype=float)
+    return np.nan_to_num(likelihood_values(dataframe, columns), nan=0.0, posinf=0.0, neginf=0.0).clip(0.0, 1.0)

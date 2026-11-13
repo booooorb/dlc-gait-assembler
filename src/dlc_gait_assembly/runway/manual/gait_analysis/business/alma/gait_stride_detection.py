@@ -4,8 +4,6 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
-from scipy.ndimage import median_filter
-from scipy.signal import find_peaks
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_spontaneous_cycles import (
     clean_short_boolean_runs,
@@ -23,8 +21,10 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.tracking_gap_po
 
 RUSTLAB1_METHOD = "RustLab1 (bottom paw)"
 BOTTOM_METHODS = ("Bottom paw speed", RUSTLAB1_METHOD)
-STRIDE_METHODS = ("ALMA (legacy)", "Adaptive paw speed", "Paw excursion peaks", *BOTTOM_METHODS, *EXPERIMENTAL_METHODS)
+RUNWAY_METHOD = "ALMA (confidence-aware runway)"
+STRIDE_METHODS = (RUNWAY_METHOD, "ALMA (legacy)", "Adaptive paw speed", "Paw excursion peaks", *BOTTOM_METHODS, *EXPERIMENTAL_METHODS)
 STRIDE_METHOD_DESCRIPTIONS = {
+    RUNWAY_METHOD: "Updated ALMA runway analysis: confidence-masked foot velocity, local floor height and body motion identify complete contact-to-contact cycles inside moving bouts. Pauses, long gaps and partial edge cycles remain unscored. Requires toe and hip or iliac crest tracking plus measured calibration; other joints are optional.",
     "ALMA (legacy)": "The app’s modified ALMA detector (separate from original 2021). Uses side-view toe speed and height with recording-wide thresholds. Only complete stance-to-stance cycles are retained; cycles crossing long tracking gaps are excluded.",
     "Adaptive paw speed": "Uses side-view toe speed with thresholds that adapt over a moving half-second window. Slow movement enters stance; faster movement enters swing. Complete stance-to-stance cycles are retained when tracking is usable.",
     "Paw excursion peaks": "Uses the toe’s forward/backward position relative to the hip. Each forward-position peak begins a stride; maximum retraction ends inferred stance. This estimates contact from motion and needs both toe and hip tracking.",
@@ -140,6 +140,8 @@ def detect_strides(
         if diagnostics is not None:
             diagnostics["stance"] = stance
         return stance.tolist(), starts, ends, ground
+    from scipy.ndimage import median_filter
+
     speed = median_filter(np.hypot(np.gradient(x), np.gradient(y)), size=3, mode="nearest")
     motion_reference = x - relative_x if relative_x is not None else x
     travel = (
@@ -202,6 +204,8 @@ def detect_strides(
         if diagnostics is not None:
             diagnostics.update(relative_x=filled, trusted=finite)
         spread = np.nanpercentile(filled[finite], 90) - np.nanpercentile(filled[finite], 10) if finite.any() else 0
+        from scipy.signal import find_peaks
+
         peaks, _properties = find_peaks(filled, distance=minimum_frames, prominence=max(0.5, spread * 0.15))
         starts, ends = [], []
         # Partial edge cycles still have inferred phase; only complete peak pairs

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QSplitter, QVBoxLayout, QWidget
 
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
@@ -21,7 +19,11 @@ from dlc_gait_assembly.runway.manual.calibration.client.calibration_media_panel 
 )
 from dlc_gait_assembly.runway.manual.calibration.client.calibration_results_panel import build_calibration_results
 from dlc_gait_assembly.runway.manual.calibration.client.calibration_settings_panel import build_calibration_settings
-from dlc_gait_assembly.runway.manual.calibration.client.calibration_styles import CalibrationStyle, make_tool_button
+from dlc_gait_assembly.runway.manual.calibration.client.calibration_styles import (
+    CalibrationStyle,
+    make_tool_button,
+    stick_color,
+)
 from dlc_gait_assembly.shared.business.media_access_contracts import MediaAccessPort
 from dlc_gait_assembly.shared.client.media_seek_slider import MediaSeekSlider
 from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
@@ -33,6 +35,8 @@ except ImportError:
 
 
 class ManualCalibrationWidget(QWidget):
+    save_to_gait_requested = Signal()
+
     def __init__(self, *, use_cases, media_access: MediaAccessPort, workspace):
         super().__init__()
         self.workspace = workspace
@@ -103,9 +107,9 @@ class ManualCalibrationWidget(QWidget):
         tool_buttons_row = QHBoxLayout()
         tool_buttons_row.setContentsMargins(0, 0, 0, 0)
         tool_buttons_row.setSpacing(8)
-        self.x_tool_button = make_tool_button("X-calibration stick", theme.TOOL_3)
+        self.x_tool_button = make_tool_button("X-calibration stick", stick_color("x"))
         set_tooltip(self.x_tool_button, "Draw an x-axis calibration stick.", "Ctrl+1")
-        self.y_tool_button = make_tool_button("Y-calibration stick", theme.TOOL_2)
+        self.y_tool_button = make_tool_button("Y-calibration stick", stick_color("y"))
         set_tooltip(self.y_tool_button, "Draw a y-axis calibration stick.", "Ctrl+2")
         self.cm_tool_button = make_tool_button("Marker", theme.TOOL_1)
         set_tooltip(self.cm_tool_button, "Add calibration markers to a stick.", "Ctrl+3")
@@ -148,10 +152,6 @@ class ManualCalibrationWidget(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([390, 890])
 
-    def profile_calibration_map_path(self) -> Path | None:
-        """Return the conversion map most recently exported in this workspace."""
-        return self.state.profile_calibration_map_path
-
     def settings_snapshot(self) -> CalibrationSettingsSnapshot | None:
         sticks = self.controller._all_calibration_sticks()
         report = calculate_calibration_report(
@@ -162,10 +162,6 @@ class ManualCalibrationWidget(QWidget):
             self.marker_unit_combo.currentText(),
         )
         return CalibrationSettingsSnapshot(tuple(sticks), report) if report.view_axis else None
-
-    def _default_output_root(self) -> Path:
-        output_root = self.workspace.manual / "calibration"
-        return output_root
 
     def apply_theme(self) -> None:
         """Refresh this page's feature styling after the application theme changes."""

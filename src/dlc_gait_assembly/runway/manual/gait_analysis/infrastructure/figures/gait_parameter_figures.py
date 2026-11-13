@@ -6,6 +6,10 @@ from io import BytesIO
 import numpy as np
 import pandas as pd
 
+from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.gait_export_dictionary import summary_definition
+from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.gait_parameter_contracts import (
+    ParameterExtractionType,
+)
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.gait_parameter_registry import (
     gait_parameter_catalog,
 )
@@ -21,7 +25,11 @@ def parameter_figure_pages(table, page_size=12, progress_callback=None):
     )
 
     names.update((*BOTTOM_STRIDE_NAMES, *GENERAL_PHASE_NAMES))
-    columns = [name for name in table if name in names]
+    columns = []
+    for name in table:
+        summary = summary_definition(name)
+        if name in names or summary is not None and summary.extraction_type != ParameterExtractionType.QUALITY_CONTROL:
+            columns.append(name)
     general = "synchronization_start (s)" in table and "stride_start (frame)" not in table
     if not 1 <= page_size <= 12:
         raise ValueError("Figure pages support between 1 and 12 parameters.")

@@ -16,6 +16,7 @@ class SlidingTabBar(QTabBar):
         super().__init__(parent)
         self._accent = accent
         self._active_row = True
+        self.setProperty("activeRow", True)
         self._indicator = QRect()
         self._indicator_animation = QPropertyAnimation(self, b"indicatorGeometry", self)
         self._indicator_animation.setDuration(220)
@@ -32,10 +33,16 @@ class SlidingTabBar(QTabBar):
     indicatorGeometry = Property(QRect, get_indicator_geometry, set_indicator_geometry)
 
     def set_active_row(self, active: bool) -> None:
+        if self._active_row == bool(active):
+            return
         self._active_row = bool(active)
         self.setProperty("activeRow", self._active_row)
         self.style().unpolish(self)
         self.style().polish(self)
+        if self._active_row:
+            self._animate_indicator(self.currentIndex())
+        else:
+            self._indicator_animation.stop()
         self.update()
 
     def _target_geometry(self, index: int) -> QRect:
@@ -61,7 +68,13 @@ class SlidingTabBar(QTabBar):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if self._indicator_animation.state() != QPropertyAnimation.State.Running:
+        self._indicator_animation.stop()
+        self._indicator = self._target_geometry(self.currentIndex())
+
+    def tabLayoutChange(self) -> None:
+        super().tabLayoutChange()
+        if hasattr(self, "_indicator_animation"):
+            self._indicator_animation.stop()
             self._indicator = self._target_geometry(self.currentIndex())
 
     def paintEvent(self, event) -> None:

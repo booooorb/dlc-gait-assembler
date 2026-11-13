@@ -18,6 +18,9 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_s
 from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_spatial_scaling import (
     resolve_pixels_per_cm as _resolve_pixels_per_cm,
 )
+from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_spatial_scaling import (
+    resolve_reference_scales,
+)
 from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_cycle_statistics import (
     cycle_bounds as _cycle_bounds,
 )
@@ -73,6 +76,7 @@ def extract_rustlab1_parameters(
     )
     _validate_preprocessed_coordinates(preprocessed, raw_dataframe, settings)
     columns = preprocessed.columns
+    settings = resolve_reference_scales(raw_dataframe, columns, settings)
     present_markers = {marker for (marker, _coord) in columns}
     limb_scope = getattr(settings, "limb_scope", "Hindlimb")
     parameter_names = rustlab1_parameter_names_for_scope(limb_scope)
@@ -130,8 +134,8 @@ def extract_rustlab1_parameters(
                 )
             hip = _slice(required_series, f"{prefix}-hip", "x", cycle_slice)
             hip_cycle_means[side].append(_safe_stat(np.nanmean, hip, np))
-    if pixels_per_cm and pixels_per_cm > 0:
-        for side in ("left", "right"):
+    for side in ("left", "right"):
+        if x_scales[side]:
             previous_by_group: dict[str, float] = {}
             differences: list[float] = []
             for group, mean in zip(cycle_groups, hip_cycle_means[side], strict=True):

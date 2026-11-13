@@ -42,5 +42,5 @@ def recommendation(location_passed: bool | None, axis_passed: bool | None, view_
     if view_passed is False:
         return "View-specific scaling detected. Use one conversion factor per view."
     if axis_passed is None or view_passed is None:
-        return "More paired x/y view measurements are needed for all SOP checks."
+        return "More paired x/y measurements are needed to complete the calibration checks."
     return "All checks pass. A shared pixel-to-centimeter factor is acceptable."

@@ -11,66 +11,58 @@ class ManualStageDefinition:
     display_label: str
     header_label: str
     icon: str
-    menu_asset: str
 
 
 MANUAL_STAGE_DEFINITIONS = (
     ManualStageDefinition(
         "manual_calibration",
         "Calibration",
-        "Set measurement references and check spatial scale.",
+        "Set the camera scale",
         "Calibration",
         "Calibration",
-        "calibration-grid",
-        "stage-calibration",
+        "paw-calibration",
     ),
     ManualStageDefinition(
         "video_processing",
         "Video Processing",
-        "Prepare videos, regions, trims, enhancements, and H.264 export.",
-        "Video\nprocessing",
-        "Video processing",
-        "film",
-        "stage-video",
+        "Crop and trim recordings",
+        "Video prep",
+        "Video prep",
+        "paw-video-prep",
     ),
     ManualStageDefinition(
         "deeplabcut",
         "DeepLabCut",
-        "Train, evaluate, and analyze pose estimation projects.",
-        "DeepLabCut",
-        "DeepLabCut",
-        "joints",
-        "stage-deeplabcut",
+        "Track keypoints with DeepLabCut",
+        "Pose tracking",
+        "Pose tracking",
+        "paw-pose-tracking",
     ),
     ManualStageDefinition(
         "knee_correction",
         "Knee Correction",
-        "Correct knee coordinates in paired DeepLabCut CSV and H5 labels.",
-        "Knee\ncorrection",
+        "Refine tracked knee positions",
         "Knee correction",
-        "knee",
-        "stage-knee",
+        "Knee correction",
+        "paw-knee",
     ),
     ManualStageDefinition(
         "gait_parameter_analysis",
-        "Gait Parameter Analysis",
-        "Assemble stride, stance, swing, and gait outputs.",
-        "Gait\nanalysis",
+        "Gait Analysis",
+        "Measure stride, stance, and swing",
         "Gait analysis",
-        "gait",
-        "stage-gait",
+        "Gait analysis",
+        "paw-gait",
     ),
     ManualStageDefinition(
         "pca_random_forest",
         "PCA and Random Forest Analysis",
-        "Reduce gait features and build classification models.",
-        "PCA + random\nforest",
-        "PCA + random forest",
-        "chart",
-        "stage-analysis",
+        "Explore gait features and classify movement",
+        "PCA + classification",
+        "PCA + classification",
+        "paw-classification",
     ),
 )
 MANUAL_STAGE_DISPLAY_LABELS = {stage.id: stage.display_label for stage in MANUAL_STAGE_DEFINITIONS}
 HEADER_STAGE_LABELS = {stage.id: stage.header_label for stage in MANUAL_STAGE_DEFINITIONS}
 MANUAL_STAGE_ICONS = {stage.id: stage.icon for stage in MANUAL_STAGE_DEFINITIONS}
-MANUAL_STAGE_MENU_ASSETS = {stage.id: stage.menu_asset for stage in MANUAL_STAGE_DEFINITIONS}

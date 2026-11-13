@@ -13,6 +13,7 @@ from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_cont
     ProfileDraft,
 )
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
+    copy_profile_analysis,
     copy_profile_asset,
     copy_profile_deeplabcut_project,
     inspect_profile_draft,
@@ -20,9 +21,10 @@ from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profil
 )
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_format_reader import (
     read_profile_metadata,
+    validate_workspace_state,
 )
 
-PROFILE_FORMAT_VERSION = 5
+PROFILE_FORMAT_VERSION = 6
 
 
 class AutomatedProfileStore:
@@ -58,7 +60,13 @@ class AutomatedProfileStore:
         knee_correction_enabled: bool | None = None,
         *,
         allow_incomplete: bool = False,
+        workspace_state: dict | None = None,
     ) -> AutomatedPipelineProfile:
+        if workspace_state is None and profile_id is not None and (self._profile_dir(profile_id) / "profile.json").is_file():
+            workspace_state = self.load(profile_id).workspace_state
+        workspace_state = validate_workspace_state({} if workspace_state is None else workspace_state)
+        # Validate before staging any assets. Profiles contain JSON, never executable objects.
+        json.dumps(workspace_state, allow_nan=False)
         draft = ProfileDraft(
             name=name,
             processing_manifest=Path(processing_manifest) if processing_manifest is not None else None,
@@ -101,7 +109,7 @@ class AutomatedProfileStore:
                 else None
             )
             stored_analysis = (
-                copy_profile_asset(analysis_source, staging_dir / "analysis_manifest")
+                copy_profile_analysis(analysis_source, staging_dir / "analysis_manifest")
                 if analysis_source is not None
                 else None
             )
@@ -111,7 +119,8 @@ class AutomatedProfileStore:
             stored_models: dict[str, Path] = {}
             for index, (region, source) in enumerate(model_sources.items(), start=1):
                 stored_models[region] = copy_profile_deeplabcut_project(
-                    source, staging_dir / "deeplabcut_models" / f"{index:02d}"
+                    source, staging_dir / "deeplabcut_models" / f"{index:02d}",
+                    reuse_owned_files=target_dir in source.parents,
                 )
             assets = {}
             if stored_manifest is not None:
@@ -128,6 +137,7 @@ class AutomatedProfileStore:
                 "name": clean_name,
                 "updated_at": datetime.now().astimezone().isoformat(),
                 "assets": assets,
+                "workspace_state": workspace_state,
                 "pipeline_options": {
                     "gait_analysis_enabled": bool(gait_analysis_enabled),
                     "knee_correction_enabled": bool(knee_correction_enabled),

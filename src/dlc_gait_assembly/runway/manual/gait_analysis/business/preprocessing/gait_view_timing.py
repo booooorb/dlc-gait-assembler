@@ -199,7 +199,8 @@ def stride_time_bounds(parameters, track):
             start, end = (int(float(row[name])) for name in ("stride_start (frame)", "stride_end (frame)"))
             if not 0 <= start <= end < len(track.times):
                 raise ValueError
-            bounds.append((track.times[start], track.times[end] + 1 / track.frame_rate))
+            offset = 0 if parameters.attrs.get("analysis_report", {}).get("analysis_type") == "spontaneous" else 1
+            bounds.append((track.times[start], track.times[end] + offset / track.frame_rate))
         except (ValueError, TypeError, OverflowError):
             bounds.append((np.nan, np.nan))
     return bounds

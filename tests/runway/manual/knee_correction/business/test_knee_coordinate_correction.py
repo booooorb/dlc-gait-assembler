@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from dlc_gait_assembly.app.app_bootstrap import create_knee_correction_use_cases
 
 correct_knee_pair = create_knee_correction_use_cases().correct_pair
@@ -48,14 +49,14 @@ def test_pair_coordinate_files_matches_common_deeplabcut_label_stems(tmp_path):
     assert pairs[0].video_path == video_path.resolve()
 
 
-def test_triangulation_sets_knee_likelihood_to_full_confidence():
+def test_triangulation_inherits_weaker_endpoint_confidence():
     (corrected, reports) = correct_knee_dataframe(
         _coordinates(), KneeCorrectionSettings(hip_knee_length_cm=1.5, knee_ankle_length_cm=1.5, pixels_per_cm=2.0)
     )
     knee_y = corrected.loc[:, ("DLC_test", "knee", "y")].to_numpy()
     knee_likelihood = corrected.loc[:, ("DLC_test", "knee", "likelihood")].to_numpy()
     assert np.allclose(knee_y, np.sqrt(5.0))
-    assert np.all(knee_likelihood == 1.0)
+    assert np.all(knee_likelihood == 0.95)
     assert reports[0].corrected_frames == 3
     assert reports[0].retained_frames == 0
 
@@ -126,7 +127,7 @@ def test_missing_knee_label_is_generated_with_manual_direction():
     assert positive_reports[0].knee == "generated_knee"
     assert np.allclose(positive.loc[:, ("DLC_test", "generated_knee", "y")], np.sqrt(5.0))
     assert np.allclose(negative.loc[:, ("DLC_test", "generated_knee", "y")], -np.sqrt(5.0))
-    assert (positive.loc[:, ("DLC_test", "generated_knee", "likelihood")] == 1.0).all()
+    assert (positive.loc[:, ("DLC_test", "generated_knee", "likelihood")] == 0.95).all()
 
 
 def test_manual_direction_overrides_existing_old_knee_side():
@@ -141,7 +142,7 @@ def test_manual_direction_overrides_existing_old_knee_side():
     assert np.allclose(corrected.loc[:, ("DLC_test", "knee", "y")], np.sqrt(5.0))
 
 
-def test_retained_frames_report_specific_correction_failure():
+def test_retained_and_estimated_frames_report_their_reason_and_confidence():
     dataframe = pd.concat([_coordinates(), _coordinates().iloc[[0]]], ignore_index=True)
     dataframe.loc[0, ("DLC_test", "hip", "x")] = float("nan")
     dataframe.loc[1, ("DLC_test", "ankle", "likelihood")] = 0.1
@@ -156,14 +157,13 @@ def test_retained_frames_report_specific_correction_failure():
     )
     assert reports[0].frame_statuses == (
         "Missing hip coordinates",
-        "Low-confidence ankle",
+        "Estimated: low-confidence ankle",
         "Zero hip–ankle distance",
-        "Segment lengths cannot form a triangle",
+        "Estimated: frame-local segment lengths adjusted",
     )
-    assert reports[0].corrected_frames == 0
-    pd.testing.assert_series_equal(
-        corrected[("DLC_test", "knee", "likelihood")], dataframe[("DLC_test", "knee", "likelihood")]
-    )
+    assert reports[0].corrected_frames == 2
+    assert reports[0].retained_frames == 2
+    assert np.allclose(corrected[("DLC_test", "knee", "likelihood")], [0.0, 0.1, 0.4, 0.25])
 
 
 def test_paired_csv_and_h5_exports_have_identical_corrected_labels(tmp_path):
@@ -186,6 +186,10 @@ def test_paired_csv_and_h5_exports_have_identical_corrected_labels(tmp_path):
     assert key == "/df_with_missing"
     assert result.source_video == video_path.resolve()
     pd.testing.assert_frame_equal(output_csv, output_h5)
-    assert (output_csv[("DLC_test", "knee", "likelihood")] == 1.0).all()
+    assert (output_csv[("DLC_test", "knee", "likelihood")] == 0.95).all()
     assert result.output_csv.name == "mouse_knee_corrected.csv"
     assert result.output_h5.name == "mouse_knee_corrected.h5"
+    report = json.loads(result.report_path.read_text())
+    assert report["fallback_ratio_source"] == "https://www.jci.org/articles/view/6730"
+    assert report["markers"][0]["frame_confidences"] == [0.95] * 3
+    assert report["markers"][0]["frame_lengths"] == [[3.0, 3.0]] * 3

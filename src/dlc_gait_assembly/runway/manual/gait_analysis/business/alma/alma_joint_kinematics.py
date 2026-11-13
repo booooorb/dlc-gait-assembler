@@ -10,7 +10,14 @@ import numpy as np
 def angle(vector1, vector2):
     length1 = math.sqrt(vector1[0] * vector1[0] + vector1[1] * vector1[1])
     length2 = math.sqrt(vector2[0] * vector2[0] + vector2[1] * vector2[1])
-    return math.acos((vector1[0] * vector2[0] + vector1[1] * vector2[1]) / (length1 * length2))
+    if length1 == 0 or length2 == 0:
+        return np.nan  # Coincident landmarks do not define a joint angle.
+    cosine = (vector1[0] * vector2[0] + vector1[1] * vector2[1]) / (length1 * length2)
+    if not math.isfinite(cosine):
+        return np.nan
+    # Roundoff for nearly collinear vectors can put the cosine just outside
+    # acos's domain. Preserve the existing calculation inside that domain.
+    return math.acos(max(-1.0, min(1.0, cosine)))
 
 
 def find_angles(x1, y1, x_center, y_center, x2, y2):

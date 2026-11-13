@@ -18,3 +18,10 @@ The historical spontaneous-contact comparator explicitly identifies upstream
 commit 89f7be705a730fc0c0acf90817357b6449535df0 in stride_candidates.py.
 Complete local source context remains under ignored references and is not a
 runtime dependency or a distributed package component.
+
+The confidence-aware runway detector, bounded joint reconstruction, native
+stick-plot rendering, and treadmill input/quality checks are adapted from the
+user-supplied updated ALMA source (alma-master-3, supplied November 2026).
+These implementations remain GPL-3.0 ALMA derivatives. The updated runway
+detector is selectable separately from the retained legacy and experimental
+methods. The supplied source tree is not a runtime dependency.

@@ -1,25 +1,32 @@
-"""Display and edit the body-part mapping for each selected camera view."""
+"""Display all camera marker assignments inline in the gait Labels settings section."""
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
 )
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_marker_requirements import (
+    BOTTOM_CENTER_LABELS,
+    BOTTOM_VIEW_LABELS,
+    FORELIMB_SIDE_VIEW_LABELS,
+    SIDE_VIEW_LABELS,
     STANDARD_BODYPARTS,
     auto_bodypart_label,
+    raw_label_for_standard,
 )
-from dlc_gait_assembly.runway.manual.gait_analysis.client.dialogs.gait_marker_mapping_dialog import LabelMappingDialog
+from dlc_gait_assembly.runway.manual.gait_analysis.business.preprocessing.gait_view_alignment import (
+    resolve_view_mappings,
+)
 from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 
 
@@ -28,12 +35,15 @@ class GaitMappingPanel:
 
     def __init__(self, view):
         self.view = view
+        self._mapping_context = "__default__"
+        self._refreshing = False
 
     def _load_bodypart_mapping_from_first_file(self) -> None:
+        if self.view.inputs._is_three_view_mode():
+            self._refresh_view_mapping_choices()
+            return
         if not self.view.state.selected_files:
-            QMessageBox.information(
-                self.view, "No input files", "Add left/right/bottom CSV files before loading body part labels."
-            )
+            self.view.mapping_status_label.setText("Add a CSV to load bodypart labels, or type labels below.")
             return
         csv_path = self.view.inputs._selected_preview_file()
         try:
@@ -41,53 +51,17 @@ class GaitMappingPanel:
         except Exception as exc:
             self.view.state.raw_bodyparts = []
             self._refresh_bodypart_mapping_choices()
-            self.view.mapping_status_label.setText("Could not read body part labels.")
-            QMessageBox.critical(self.view, "Could not read body part labels", str(exc))
+            self.view.mapping_status_label.setText("Could not read bodypart labels.")
+            QMessageBox.critical(self.view, "Could not read bodypart labels", str(exc))
             return
         self._refresh_bodypart_mapping_choices()
         self._apply_auto_bodypart_mapping()
-        self.view.mapping_status_label.setText(
-            f"{len(self.view.state.raw_bodyparts)} labels loaded from {csv_path.name}."
-        )
+        self.view.mapping_status_label.setText(f"{len(self.view.state.raw_bodyparts)} labels loaded from {csv_path.name}.")
 
-    def _open_label_matching_dialog(self) -> None:
-        if not self.view.inputs._is_three_view_mode():
-            self.view.settings_tabs.setCurrentWidget(self.view.mapping_tab)
-            return
-        view_set = self.view.inputs._selected_view_set()
-        if view_set is None:
-            QMessageBox.information(self.view, "CSV set required", self.view.inputs._input_requirement_message())
-            return
-        try:
-            labels_by_view = {
-                "left": self.view.analysis.inputs.bodyparts(view_set.left_csv),
-                "right": self.view.analysis.inputs.bodyparts(view_set.right_csv),
-                "bottom": self.view.analysis.inputs.bodyparts(view_set.bottom_csv),
-            }
-        except Exception as exc:
-            QMessageBox.critical(self.view, "Could not read labels", str(exc))
-            return
-        dialog = LabelMappingDialog(
-            view_set,
-            labels_by_view,
-            self.view.state.view_label_mappings.get(view_set.name, {}),
-            self.view,
-            include_forelimb=self.view.limb_scope_combo.currentText() == "Hindlimb + Forelimb",
-        )
-        if dialog.exec() != QDialog.Accepted:
-            return
-        mapping = dialog.mapping()
-        if mapping:
-            self.view.state.view_label_mappings[view_set.name] = mapping
-        else:
-            self.view.state.view_label_mappings.pop(view_set.name, None)
-        selected_count = sum(len(view_mapping) for view_mapping in mapping.values())
-        available_count = 27 if self.view.limb_scope_combo.currentText() == "Hindlimb + Forelimb" else 16
-        self.view.mapping_status_label.setText(
-            f"{selected_count}/{available_count} labels assigned for {view_set.name}."
-        )
-        self.view.rustlab_status_label.setText(f"RustLab1 label mapping updated for {view_set.name}.")
-        self.view.controller._invalidate_stickplot_preview(f"Generate a stick-plot preview for {view_set.name}.")
+    def _show_label_assignments(self) -> None:
+        """Keep existing action callers on the inline Labels section."""
+        self._refresh_view_mapping_choices()
+        self.view.settings_tabs.setCurrentWidget(self.view.mapping_tab)
 
     def _refresh_bodypart_mapping_choices(self) -> None:
         choices = ["(none)", *self.view.state.raw_bodyparts]
@@ -101,69 +75,178 @@ class GaitMappingPanel:
             combo.blockSignals(False)
         self._update_mapping_enabled()
 
-    def _apply_auto_bodypart_mapping(self) -> None:
-        if not self.view.state.raw_bodyparts:
+    def _refresh_view_mapping_choices(self) -> None:
+        if not hasattr(self.view, "_view_bodypart_combos"):
             return
-        for standard_bodypart, combo in self.view._bodypart_combos.items():
-            auto_label = auto_bodypart_label(self.view.state.raw_bodyparts, standard_bodypart)
-            combo.setCurrentText(auto_label or "(none)")
+        three_view = self.view.inputs._is_three_view_mode()
+        self.view.single_mapping_box.setVisible(not three_view)
+        for box in self.view.view_mapping_boxes.values():
+            box.setVisible(three_view)
+        self.view.use_custom_mapping_checkbox.setVisible(not three_view)
+        if not three_view:
+            return
+        view_set = self.view.inputs._selected_view_set()
+        self._mapping_context = view_set.name if view_set else "__default__"
+        mapping = resolve_view_mappings(self.view.state.view_label_mappings, self._mapping_context) or {}
+        self._refreshing = True
+        try:
+            for camera, combos in self.view._view_bodypart_combos.items():
+                path = getattr(view_set, f"{camera}_csv") if view_set else None
+                labels = list(self.view.state.csv_bodyparts.get(path, ())) if path else []
+                self.view.view_mapping_file_labels[camera].setText(
+                    path.name if path else "Type DLC labels now, or add matched CSVs to load choices."
+                )
+                self.view.view_mapping_file_labels[camera].setToolTip(str(path) if path else "")
+                for standard, combo in combos.items():
+                    selected = raw_label_for_standard(mapping.get(camera, {}), standard)
+                    if selected is None and self._mapping_context not in self.view.state.view_label_mappings:
+                        selected = auto_bodypart_label(labels, standard, view=camera)
+                    combo.blockSignals(True)
+                    combo.clear()
+                    combo.addItems(["(none)", *(labels or list(combos))])
+                    combo.setCurrentText(selected or "(none)")
+                    combo.blockSignals(False)
+        finally:
+            self._refreshing = False
+        self._save_view_mapping()
+
+    def _view_mapping(self):
+        result = {}
+        for camera, combos in self.view._view_bodypart_combos.items():
+            mapping = {}
+            for standard, combo in combos.items():
+                raw = combo.currentText().strip()
+                if not raw or raw == "(none)":
+                    continue
+                if raw in mapping:
+                    raise ValueError(f"{camera.upper()}: {raw!r} is assigned to more than one bodypart.")
+                mapping[raw] = standard
+            result[camera] = mapping
+        return result
+
+    def _save_view_mapping(self) -> None:
+        if self._refreshing or not self.view.inputs._is_three_view_mode():
+            return
+        try:
+            mapping = self._view_mapping()
+        except ValueError as exc:
+            self.view.mapping_status_label.setText(str(exc))
+            return
+        if any(mapping.values()) or self._mapping_context in self.view.state.view_label_mappings:
+            self.view.state.view_label_mappings[self._mapping_context] = mapping
+        count = sum(len(labels) for labels in mapping.values())
+        context = self._mapping_context if self._mapping_context != "__default__" else "workflow defaults"
+        self.view.mapping_status_label.setText(f"{count}/26 labels assigned for {context}.")
+
+    def _view_assignment_changed(self) -> None:
+        self._save_view_mapping()
+        if not self._refreshing:
+            self.view.controller._invalidate_stickplot_preview("Bodypart label assignments changed.")
+
+    def _apply_auto_bodypart_mapping(self) -> None:
+        if self.view.inputs._is_three_view_mode():
+            view_set = self.view.inputs._selected_view_set()
+            if view_set is None:
+                self.view.mapping_status_label.setText("Add matched CSVs to auto-detect labels, or assign labels below.")
+                return
+            for camera, combos in self.view._view_bodypart_combos.items():
+                labels = list(self.view.state.csv_bodyparts.get(getattr(view_set, f"{camera}_csv"), ()))
+                for standard, combo in combos.items():
+                    combo.setCurrentText(auto_bodypart_label(labels, standard, view=camera) or "(none)")
+            self._save_view_mapping()
+            return
+        for standard, combo in self.view._bodypart_combos.items():
+            combo.setCurrentText(auto_bodypart_label(self.view.state.raw_bodyparts, standard) or "(none)")
 
     def _update_mapping_enabled(self) -> None:
-        enabled = self.view.use_custom_mapping_checkbox.isChecked() and bool(self.view.state.raw_bodyparts)
+        enabled = self.view.use_custom_mapping_checkbox.isChecked()
         for combo in self.view._bodypart_combos.values():
             combo.setEnabled(enabled)
+        self._refresh_view_mapping_choices()
 
     def _collect_bodypart_mapping(self) -> dict[str, str] | None:
         if not self.view.use_custom_mapping_checkbox.isChecked():
             return None
-        mapping: dict[str, str] = {}
-        for standard_bodypart, combo in self.view._bodypart_combos.items():
-            raw_bodypart = combo.currentText()
-            if raw_bodypart and raw_bodypart != "(none)":
-                mapping[raw_bodypart] = standard_bodypart
-        return mapping or None
+        return {
+            combo.currentText().strip(): standard for standard, combo in self.view._bodypart_combos.items()
+            if combo.currentText().strip() not in ("", "(none)")
+        } or None
 
     def _collect_view_bodypart_mapping(self) -> dict[str, object] | None:
         if not self.view.inputs._is_three_view_mode():
             return None
+        self._view_mapping()  # Reject conflicting assignments before collecting a run configuration.
         return self.view.state.view_label_mappings or None
 
 
+def _marker_grid(combos, labels, on_change):
+    grid = QGridLayout()
+    grid.setHorizontalSpacing(12)
+    grid.setVerticalSpacing(8)
+    for row, standard in enumerate(labels):
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.addItem("(none)")
+        combo.setMinimumWidth(140)
+        combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        set_tooltip(combo, f"DLC label assigned to {standard}. Choose a label or type its exact name.")
+        combos[standard] = combo
+        if on_change is not None:
+            combo.currentTextChanged.connect(on_change)
+        grid.addWidget(QLabel(standard), row, 0)
+        grid.addWidget(combo, row, 1)
+    grid.setColumnStretch(1, 1)
+    return grid
+
+
 def build_gait_marker_mapping(self, mapping_tab_layout):
-    mapping_box = QGroupBox("Body part mapping")
-    mapping_box.setMinimumHeight(220)
-    mapping_layout = QVBoxLayout(mapping_box)
-    mapping_layout.setSpacing(10)
-    mapping_header = QHBoxLayout()
+    title = QLabel("DeepLabCut bodypart markers")
+    title.setObjectName("TitleLabel")
+    mapping_tab_layout.addWidget(title)
+    note = QLabel("Assign the DLC label for each marker below. Leave markers you do not track set to (none).")
+    note.setWordWrap(True)
+    mapping_tab_layout.addWidget(note)
     self.use_custom_mapping_checkbox = QCheckBox("Use custom mapping")
+    set_tooltip(self.use_custom_mapping_checkbox, 'Use your chosen DeepLabCut marker names instead of automatically matching markers to standard body parts.')
+    mapping_tab_layout.addWidget(self.use_custom_mapping_checkbox)
+    header = QHBoxLayout()
     self.reload_mapping_button = QPushButton("Load from CSV")
     self.auto_mapping_button = QPushButton("Auto detect")
-    set_tooltip(self.use_custom_mapping_checkbox, "Manually map raw DLC labels to the expected ALMA body parts.")
-    set_tooltip(self.reload_mapping_button, "Load body-part labels from the first selected CSV.")
-    set_tooltip(self.auto_mapping_button, "Automatically match common DLC body-part labels.")
-    mapping_header.addWidget(self.use_custom_mapping_checkbox)
-    mapping_header.addStretch(1)
-    mapping_header.addWidget(self.reload_mapping_button)
-    mapping_header.addWidget(self.auto_mapping_button)
-    mapping_layout.addLayout(mapping_header)
-    self.mapping_status_label = QLabel("Add a CSV to detect labels.")
+    header.addWidget(self.reload_mapping_button)
+    header.addWidget(self.auto_mapping_button)
+    mapping_tab_layout.addLayout(header)
+    self.mapping_status_label = QLabel("Add matched CSVs to detect labels, or type labels below.")
     self.mapping_status_label.setObjectName("MutedLabel")
     self.mapping_status_label.setWordWrap(True)
-    mapping_layout.addWidget(self.mapping_status_label)
-    mapping_grid = QGridLayout()
-    mapping_grid.setHorizontalSpacing(12)
-    mapping_grid.setVerticalSpacing(8)
-    for index, standard_bodypart in enumerate(STANDARD_BODYPARTS):
-        row = index // 2
-        column = index % 2 * 2
-        label = QLabel(standard_bodypart)
-        combo = QComboBox()
-        combo.setMinimumWidth(150)
-        combo.setEnabled(False)
-        set_tooltip(combo, f"Raw DLC label to use as {standard_bodypart}.")
-        self._bodypart_combos[standard_bodypart] = combo
-        mapping_grid.addWidget(label, row, column)
-        mapping_grid.addWidget(combo, row, column + 1)
-    mapping_layout.addLayout(mapping_grid)
-    mapping_tab_layout.addWidget(mapping_box)
+    status_policy = self.mapping_status_label.sizePolicy()
+    status_policy.setHorizontalPolicy(QSizePolicy.Ignored)
+    self.mapping_status_label.setSizePolicy(status_policy)
+    mapping_tab_layout.addWidget(self.mapping_status_label)
+    self.single_mapping_box = QGroupBox("Side view")
+    single_layout = QVBoxLayout(self.single_mapping_box)
+    single_layout.addLayout(_marker_grid(self._bodypart_combos, STANDARD_BODYPARTS, None))
+    mapping_tab_layout.addWidget(self.single_mapping_box)
+    self._view_bodypart_combos = {}
+    self.view_mapping_boxes = {}
+    self.view_mapping_file_labels = {}
+    for camera in ("left", "right", "bottom"):
+        box = QGroupBox(camera.upper())
+        box_layout = QVBoxLayout(box)
+        source = QLabel()
+        source.setObjectName("MutedLabel")
+        source.setWordWrap(True)
+        # DLC filenames are often long, unbroken strings. Their size hint must not
+        # widen the scroll content and push the assignment dropdowns offscreen.
+        source_policy = source.sizePolicy()
+        source_policy.setHorizontalPolicy(QSizePolicy.Ignored)
+        source.setSizePolicy(source_policy)
+        box_layout.addWidget(source)
+        combos = {}
+        labels = BOTTOM_VIEW_LABELS + BOTTOM_CENTER_LABELS if camera == "bottom" else SIDE_VIEW_LABELS + FORELIMB_SIDE_VIEW_LABELS
+        box_layout.addLayout(_marker_grid(combos, labels, self.mapping._view_assignment_changed))
+        self._view_bodypart_combos[camera] = combos
+        self.view_mapping_boxes[camera] = box
+        self.view_mapping_file_labels[camera] = source
+        mapping_tab_layout.addWidget(box)
     mapping_tab_layout.addStretch(1)

@@ -4,21 +4,13 @@ from __future__ import annotations
 
 from dlc_gait_assembly.shared.client.theme.theme_color_tokens import BRAND_SURFACE as _dependency_theme_BRAND_SURFACE
 from dlc_gait_assembly.shared.client.theme.theme_qt_palette import mix_hex as _dependency_theme_mix_hex
-from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
-
-
-def background_texture_url() -> str:
-    import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
-
-    filename = "carbon-dark.png" if theme.IS_DARK else "carbon-light.png"
-    return (resource_path("backgrounds") / filename).as_posix()
 
 
 def application_stylesheet() -> str:
     return stylesheet(
         """
         QWidget {
-            font-family: "Noto Sans";
+            font-family: "Geist";
             font-size: 13px;
         }
         QToolTip {
@@ -49,14 +41,13 @@ def application_stylesheet() -> str:
         }
         QDialog, QMessageBox {
             background: {theme.BACKGROUND};
-            background-image: url({theme.BACKGROUND_TEXTURE});
             color: {theme.TEXT};
         }
         QPushButton, QToolButton {
             background: {theme.SURFACE};
             color: {theme.TEXT};
             border: 1px solid {theme.BORDER};
-            border-radius: 4px;
+            border-radius: 0;
             padding: 7px 10px;
             min-height: 20px;
         }
@@ -71,6 +62,19 @@ def application_stylesheet() -> str:
             background: {theme.PANEL};
             color: {theme.CONNECTOR};
             border-color: {theme.BORDER};
+        }
+        QPushButton#ClearButton:enabled, QPushButton#DeleteButton:enabled,
+        QPushButton#DeleteProfileButton:enabled {
+            background: #B3261E; border-color: #B3261E; color: white;
+            font-weight: 600;
+        }
+        QPushButton#ClearButton:enabled:hover, QPushButton#DeleteButton:enabled:hover,
+        QPushButton#DeleteProfileButton:enabled:hover {
+            background: #9B2019; border-color: #9B2019;
+        }
+        QPushButton#ClearButton:enabled:pressed, QPushButton#DeleteButton:enabled:pressed,
+        QPushButton#DeleteProfileButton:enabled:pressed {
+            background: #801A15; border-color: #801A15;
         }
         QPushButton#PrimaryButton, QPushButton#ExportButton {
             background: {theme.PRIMARY};
@@ -249,7 +253,6 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
     base = """
         QWidget#ROOT_OBJECT {
             background: {theme.BACKGROUND};
-            background-image: url({theme.BACKGROUND_TEXTURE});
             color: {theme.TEXT};
             font-size: 13px;
         }
@@ -274,7 +277,6 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
         }
         QWidget#WorkspaceCanvas {
             background: {theme.BACKGROUND};
-            background-image: url({theme.BACKGROUND_TEXTURE});
             border: 0;
             border-radius: 7px;
         }
@@ -292,16 +294,14 @@ def workspace_stylesheet(root_object_name: str, extra: str = "") -> str:
             background: transparent;
             border: 0;
         }
-        QPushButton#RemoveButton, QPushButton#ClearButton,
-        QPushButton#DeleteButton {
+        QPushButton#RemoveButton {
             background: {theme.SURFACE};
             border-color: {theme.STATUS_ERROR};
-            border-radius: 2px;
+            border-radius: 0;
             color: {theme.STATUS_ERROR};
             font-weight: 600;
         }
-        QPushButton#RemoveButton:hover, QPushButton#ClearButton:hover,
-        QPushButton#DeleteButton:hover {
+        QPushButton#RemoveButton:hover {
             background: {theme.PANEL};
             border-color: {theme.STATUS_ERROR};
             color: {theme.STATUS_ERROR};
@@ -318,7 +318,6 @@ def stylesheet(template: str) -> str:
             "{theme.mix_hex(theme.SOFT, theme.SURFACE, 0.35)}",
             _dependency_theme_mix_hex(theme.SOFT, theme.SURFACE, 0.35),
         )
-        .replace("{theme.BACKGROUND_TEXTURE}", background_texture_url())
         .replace("{theme.BACKGROUND}", theme.BACKGROUND)
         .replace("{theme.SURFACE}", theme.SURFACE)
         .replace("{theme.PANEL}", theme.PANEL)

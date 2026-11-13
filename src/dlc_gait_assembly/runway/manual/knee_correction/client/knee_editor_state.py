@@ -13,6 +13,7 @@ class KneeEditorState:
     profile_knee_manifest_path: Path | None = None
     selected_paths: list[Path] = field(default_factory=lambda: [])
     pairs: list[CoordinateFilePair] = field(default_factory=lambda: [])
+    custom_pairs: list[CoordinateFilePair] = field(default_factory=list)
     calibration_map_path: Path | None = None
     pixels_per_cm: float | None = None
     preview_original: object | None = None

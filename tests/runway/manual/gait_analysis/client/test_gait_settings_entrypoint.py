@@ -41,7 +41,7 @@ def test_main_app_exposes_dedicated_detection_and_calibration_tabs(launched_gait
     assert view.calibration_tab.isAncestorOf(view.view_calibration_box)
     assert view.stride_method_combo.isVisible()
     assert not hasattr(view, "continuous_strides_spin")
-    assert view.settings_section_rows[0].tabText(2) == "Stride detection"
+    assert view.settings_section_rows[0].tabText(2) == "Strides"
     assert tuple(view.stride_method_combo.itemText(i) for i in range(len(STRIDE_METHODS))) == tuple(STRIDE_METHODS)
     view.analysis_type_combo.setCurrentText("Spontaneous walking")
     assert view.stride_method_combo.isEnabled()
@@ -55,10 +55,49 @@ def test_main_app_exposes_dedicated_detection_and_calibration_tabs(launched_gait
     assert view.settings_tabs.currentWidget() is view.calibration_tab
     view.analysis_type_combo.setCurrentText("Treadmill")
     assert not view.stride_method_combo.isEnabled()
-    assert "Choose Spontaneous walking" in view.stride_method_description.text()
+    assert "Choose Spontaneous walking" in view.stride_method_combo.toolTip()
     view.workflow_combo.setCurrentText("RustLab1 standalone (three-view)")
     assert not view.stride_method_combo.isVisible()
     assert not view.settings_tabs.isTabVisible(view.settings_tabs.indexOf(view.stride_detection_tab))
+
+
+def test_plain_alma_only_exports_alma_while_references_remain_browsable(launched_gait_page):
+    view = launched_gait_page
+    selection = view.parameter_selection
+    enabled = selection.enabled_parameter_names()
+    selection.extraction_type_filter.setCurrentText("Bilateral asymmetry")
+    visible = [definition for definition, item in selection._items if not item.isHidden()]
+    assert not visible
+    assert selection.enabled_parameter_names() == enabled
+    assert view.setup._collect_settings().enabled_parameter_names == enabled
+    view.limb_scope_combo.setCurrentText("Hindlimb + Forelimb")
+    visible = [definition for definition, item in selection._items if not item.isHidden()]
+    assert not visible
+    assert all(name.startswith(("left__", "right__")) for name in enabled)
+    assert view.setup._collect_settings().output_format == "alma"
+    view.parameter_reference_action.trigger()
+    reference = view.parameter_reference
+    reference.source_filter.setCurrentText("Stroke recovery")
+    reference.extraction_type_filter.setCurrentText("Bilateral asymmetry")
+    assert reference.parameter_tree.topLevelItemCount() == 22
+    assert "recording" in reference.type_label.text()
+    assert "doi.org" in reference.reference_label.text()
+    assert "independent side medians" in reference.method_note_label.text()
+
+
+def test_weber_threshold_preset_preserves_recording_frame_rate_and_calibration(launched_gait_page):
+    view = launched_gait_page
+    view.frame_rate_spin.setValue(150)
+    view.calibration_method_combo.setCurrentIndex(view.calibration_method_combo.findData("manual"))
+    view.pixels_per_cm_spin.setValue(63)
+    view.likelihood_threshold_spin.setValue(0.5)
+    view.stroke_swing_speed_spin.setValue(25)
+    view.stroke_paper_settings_button.click()
+    settings = view.setup._collect_settings()
+    assert settings.likelihood_threshold == 0.95
+    assert settings.swing_speed_threshold_cm_s == 10
+    assert settings.frame_rate == 150
+    assert settings.calibration_method == "manual" and settings.pixels_per_cm == 63
 
 
 def test_short_gap_default_is_visible_and_strict_setting_is_explicit(launched_gait_page):
@@ -72,7 +111,7 @@ def test_short_gap_default_is_visible_and_strict_setting_is_explicit(launched_ga
     view.state.preview_validity.complete()
     view.detection_gap_spin.setValue(0)
     assert not view.state.preview_validity.ready
-    assert "entire stride" in view.detection_gap_note.text()
+    assert "entire stride" in view.detection_gap_spin.toolTip()
     assert view.setup._collect_settings().max_interpolation_gap_frames == 0
 
 
@@ -93,6 +132,69 @@ def test_each_visible_map_button_imports_only_its_camera(launched_gait_page, tmp
     assert settings.view_calibration["bottom"]["y_pixels_per_cm"] == 90.0
     for camera in ("left", "right", "bottom"):
         assert settings.view_calibration[camera]["map_path"] == str(tmp_path / f"{camera}.json")
+
+
+def test_calibration_modes_keep_separate_values_and_export_only_the_active_source(launched_gait_page, tmp_path, monkeypatch):
+    view = launched_gait_page
+    view.settings_tabs.setCurrentWidget(view.calibration_tab)
+    view.pixels_per_cm_spin.setValue(55.0)
+    path = tmp_path / "shared.json"
+    path.write_text(json.dumps({"overall": {"pixels_per_centimeter": 25.0}}))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_: (str(path), ""))
+    view.calibration._import_calibration_map()
+    settings = view.setup._collect_settings()
+    assert settings.calibration_method == "map"
+    assert settings.pixels_per_cm == 25.0
+    assert settings.view_calibration is None
+    assert view.pixels_per_cm_spin.value() == 55.0
+    assert view.map_settings_widget.isVisible()
+    assert not view.manual_settings_widget.isVisible()
+    assert not view.view_calibration_box.isVisible()
+    view.calibration_method_combo.setCurrentText("Calibration by view")
+    view.view_scale_spins["left"].setValue(30.0)
+    view.view_scale_spins["right"].setValue(60.0)
+    settings = view.setup._collect_settings()
+    assert settings.calibration_method == "per_view"
+    assert settings.pixels_per_cm is settings.calibration_map_path is None
+    assert settings.view_calibration == {"left": {"pixels_per_cm": 30}, "right": {"pixels_per_cm": 60}}
+    assert view.view_calibration_box.isVisible()
+    assert not view.reference_settings_widget.isVisible()
+    assert not view.map_settings_widget.isVisible()
+    for label, method, scale in (("Manual pixel-to-cm ratio", "manual", 55), ("Reference body segment", "reference", None)):
+        view.state.preview_validity.complete()
+        view.calibration_method_combo.setCurrentText(label)
+        settings = view.setup._collect_settings()
+        assert not view.state.preview_validity.ready
+        assert settings.calibration_method == method
+        assert settings.pixels_per_cm == scale
+        assert settings.calibration_map_path is settings.view_calibration is None
+    view.calibration_method_combo.setCurrentText("Calibration by view")
+    assert view.setup._collect_settings().view_calibration["left"]["pixels_per_cm"] == 30
+    view.input_mode_combo.setCurrentText("Single side view")
+    assert view.calibration_method_combo.currentData() == "reference"
+
+
+def test_multicamera_map_import_saves_the_selected_camera_instead_of_overall(launched_gait_page, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    view = launched_gait_page
+    path = tmp_path / "cameras.json"
+    path.write_text(json.dumps({"overall": {"pixels_per_centimeter": 999}, "views": {
+        "1": {"pixels_per_centimeter": 25}, "2": {"pixels_per_centimeter": 100},
+        "3": {"recommended_x_centimeters_per_pixel": 1 / 80, "recommended_y_centimeters_per_pixel": 1 / 40},
+    }}))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_: (str(path), ""))
+    for camera, index in (("left", "1"), ("right", "2"), ("bottom", "3")):
+        monkeypatch.setattr(QInputDialog, "getItem", lambda *_, selected=index: (selected, True))
+        view.calibration._import_view_calibration(camera)
+    settings = view.setup._collect_settings()
+    assert settings.calibration_method == "per_view"
+    assert settings.pixels_per_cm is None
+    assert settings.view_calibration["left"]["pixels_per_cm"] == 25
+    assert settings.view_calibration["right"]["pixels_per_cm"] == 100
+    assert settings.view_calibration["bottom"]["x_pixels_per_cm"] == 80
+    assert settings.view_calibration["bottom"]["y_pixels_per_cm"] == 40
+    assert settings.view_calibration["right"]["view_index"] == 2
 
 
 def test_comparison_choice_keeps_rustlab_settings_without_a_display_limit(launched_gait_page, monkeypatch):
@@ -189,8 +291,9 @@ def test_output_destination_picker_and_bundle_defaults(launched_gait_page, tmp_p
     assert view.export_folder_edit.isVisible()
     assert all(
         control.isChecked() and control.isVisible()
-        for control in (view.stickplot_checkbox, view.alma_representations_checkbox, view.rustlab1_checkbox)
+        for control in (view.stickplot_checkbox, view.alma_representations_checkbox)
     )
+    assert not view.rustlab1_checkbox.isVisible()
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(tmp_path))
     view.export_folder_button.click()
     assert view.output_folder_edit.text() == view.export_folder_edit.text() == str(tmp_path)
@@ -202,6 +305,28 @@ def test_output_destination_picker_and_bundle_defaults(launched_gait_page, tmp_p
     assert "Saved 1 files" in view.export_summary_label.text()
 
 
+def test_combined_workflow_uses_native_exports_and_round_trips_manifest(launched_gait_page, tmp_path):
+    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
+        alma_settings_from_manifest, write_analysis_manifest,
+    )
+    from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_manifest_import import apply_manifest_settings
+
+    view = launched_gait_page
+    view.input_mode_combo.setCurrentText("Single side view")
+    view.workflow_combo.setCurrentText("ALMA side + rust bottom")
+    assert view.input_mode_combo.currentText() == "Multi side view"
+    assert not view.input_mode_combo.isEnabled()
+    assert not view.compare_strides_button.isVisible()
+    settings = view.setup._collect_settings()
+    assert settings.output_format == "alma_side_rust_bottom"
+    assert not settings.generate_rustlab1_parameters and not settings.stroke_analysis_enabled
+    path = write_analysis_manifest(tmp_path / "combined.json", settings)
+    view.workflow_combo.setCurrentText("ALMA")
+    apply_manifest_settings(view, alma_settings_from_manifest(path))
+    assert view.workflow_combo.currentText() == "ALMA side + rust bottom"
+    assert view.setup._collect_settings().output_format == settings.output_format
+
+
 def test_camera_timing_is_visible_invalidates_preview_and_round_trips(launched_gait_page, tmp_path):
     from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
         alma_settings_from_manifest,
@@ -211,6 +336,8 @@ def test_camera_timing_is_visible_invalidates_preview_and_round_trips(launched_g
     view = launched_gait_page
     view.settings_tabs.setCurrentIndex(0)
     QApplication.processEvents()
+    assert not view.view_timing_box.isVisible()
+    view.view_timing_disclosure.button.click()
     assert view.view_timing_box.isVisible()
     for side, fps, offset in (("left", 120.0, 0.0), ("right", 240.0, 0.25), ("bottom", 100.0, -0.1)):
         view.state.preview_validity.complete()

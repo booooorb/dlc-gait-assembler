@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from dlc_gait_assembly.shared.business.media_access_contracts import MediaAccessPort
+from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 from dlc_gait_assembly.shared.client.theme.theme_application_styles import stylesheet as _dependency_theme_stylesheet
 
 
@@ -94,7 +95,7 @@ class MediaPreviewDialog(QDialog):
         source_row.addWidget(self.previous_video_button)
         self.source_selector = QComboBox()
         self.source_selector.setObjectName("VideoPreviewSourceSelector")
-        self.source_selector.setToolTip("Switch the video shown in this preview window.")
+        set_tooltip(self.source_selector, 'Switch the video shown in this preview window.')
         for source in self._review_sources:
             self.source_selector.addItem(source.title)
         source_row.addWidget(self.source_selector, 1)

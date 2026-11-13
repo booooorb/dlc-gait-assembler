@@ -48,6 +48,8 @@ class ContinuousStickplotData:
     axis_limits: object = None
     tracking_only: bool = False
     phase_confidence: object = None
+    native_alma: bool = False
+    continuous_cycles: int = 10
 
 
 def preview_cycle_rows(parameters, frame_count, include_rejected=False):
@@ -90,7 +92,8 @@ def prepare_continuous_stickplot(
     # omit cycles across long confidence gaps. Never present that gap as a stride.
     groups = []
     for row in np.flatnonzero(valid):
-        if groups and row == groups[-1][-1] + 1 and frame_starts[row] == frame_ends[groups[-1][-1]] + 1:
+        offset = 0 if parameters.attrs.get("analysis_report", {}).get("analysis_type") == "spontaneous" else 1
+        if groups and row == groups[-1][-1] + 1 and frame_starts[row] == frame_ends[groups[-1][-1]] + offset:
             groups[-1].append(row)
         else:
             groups.append([row])
@@ -216,12 +219,36 @@ def reconstruct_continuous_drag_mask(stance, drag_masks, starts, minimum_frames)
 
 
 def prepare_full_recording_stickplot(parameters, coordinates, bodyparts, stance):
-    """Geometry is the full source recording, independent of detected/accepted cycles."""
+    """Prepare native ALMA cycles or a full recording for alternative detectors."""
     if coordinates is None or len(coordinates) < 2:
         return None
     rows = preview_cycle_rows(parameters, len(coordinates), include_rejected=True)
     prepared = _prepare_selected(rows, coordinates, bodyparts, stance, tracking_only=rows.empty)
-    # Do not apply detector-dependent drag masks or crop to a cycle boundary.
+    native = coordinates.attrs.get("native_alma_stickplot", False)
+    if native:
+        report = coordinates.attrs.get("analysis_report", {})
+        if report.get("analysis_type") == "spontaneous":
+            # The native renderer selects consecutive retained cycles from the report.
+            prepared = replace(prepared, parameters=parameters, tracking_only=report["retained_intervals"] == 0)
+        else:
+            selected = prepare_continuous_stickplot(
+                parameters,
+                coordinates,
+                bodyparts,
+                stance,
+                n_continuous=coordinates.attrs.get("n_continuous_strides", 10),
+            )
+            if selected is not None:
+                prepared = selected
+            else:
+                prepared = replace(prepared, tracking_only=True)
+        return replace(
+            prepared,
+            native_alma=True,
+            dragging=coordinates.attrs.get("alma_drag_mask"),
+            continuous_cycles=coordinates.attrs.get("n_continuous_strides", 10),
+        )
+    # Alternative-detector comparisons retain full-recording geometry.
     return replace(
         prepared,
         start_frame=0,

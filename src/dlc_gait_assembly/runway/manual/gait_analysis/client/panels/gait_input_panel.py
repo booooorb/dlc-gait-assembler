@@ -6,17 +6,15 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QFileDialog,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
-    QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
 )
@@ -40,6 +38,10 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_an
     RustLab1StandaloneSettings,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.client.dialogs.gait_view_pairing_dialog import CsvPairingDialog
+from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_csv_drop_area import (
+    CsvDropArea,
+    RecordingFilesTree,
+)
 from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 
 
@@ -74,6 +76,10 @@ class GaitInputPanel:
             if resolved.suffix.lower() != ".csv" or str(resolved) in existing:
                 continue
             self.view.state.selected_files.append(resolved)
+            try:
+                self.view.state.csv_bodyparts[resolved] = tuple(self.view.analysis.inputs.bodyparts(resolved))
+            except (OSError, ValueError, KeyError):
+                self.view.state.csv_bodyparts[resolved] = ()
             self.view.file_list.addItem(str(resolved))
             existing.add(str(resolved))
         if self.view.state.selected_files and self.view.file_list.currentRow() < 0:
@@ -87,6 +93,7 @@ class GaitInputPanel:
 
     def _clear_files(self) -> None:
         self.view.state.selected_files.clear()
+        self.view.state.csv_bodyparts.clear()
         self.view.file_list.clear()
         self.view.state.view_sets = []
         self.view.state.view_set_errors = []
@@ -102,6 +109,27 @@ class GaitInputPanel:
             if self.view.setup._is_rustlab1_workflow()
             else "Select left/right/bottom CSVs, then generate a stick-plot preview."
         )
+        self.view.controller._update_run_state()
+
+    def _remove_selected_files(self) -> None:
+        if self._is_three_view_mode():
+            removed = {Path(path) for item in self.view.view_set_table.selectedItems()
+                       for path in (item.data(0, Qt.UserRole + 1) or ())}
+        else:
+            removed = {Path(item.text()) for item in self.view.file_list.selectedItems()}
+        self._remove_paths(removed)
+
+    def _remove_paths(self, removed) -> None:
+        self.view.state.selected_files = [path for path in self.view.state.selected_files if path not in removed]
+        for path in removed:
+            self.view.state.csv_bodyparts.pop(path, None)
+        self.view.file_list.clear()
+        self.view.file_list.addItems([str(path) for path in self.view.state.selected_files])
+        if not self.view.state.selected_files:
+            self._clear_files()
+            return
+        self._refresh_view_sets()
+        self.view.controller._invalidate_stickplot_preview()
         self.view.controller._update_run_state()
 
     def _refresh_view_sets(self) -> None:
@@ -120,13 +148,23 @@ class GaitInputPanel:
                 for group in self.view.state.view_sets
                 for path in (group.left_csv, group.right_csv, group.bottom_csv)
             }
-            _, errors = build_view_csv_sets([path for path in self.view.state.selected_files if path not in used])
+            remaining = [path for path in self.view.state.selected_files if path not in used]
+            inferred, errors = build_view_csv_sets(remaining, self.view.state.csv_bodyparts)
+            names = {group.name for group in self.view.state.view_sets}
+            collisions = [group for group in inferred if group.name in names]
+            for group in collisions:
+                errors.append(f"{group.name}: duplicate recording name; rename it in Match views.")
+            inferred = [group for group in inferred if group not in collisions]
+            self.view.state.view_sets.extend(inferred)
+            self.view.state.manual_view_sets = list(self.view.state.view_sets)
+            used.update(path for group in inferred for path in (group.left_csv, group.right_csv, group.bottom_csv))
             self.view.state.view_set_errors = errors
         else:
             (self.view.state.view_sets, self.view.state.view_set_errors) = build_view_csv_sets(
-                self.view.state.selected_files
+                self.view.state.selected_files, self.view.state.csv_bodyparts
             )
         self._refresh_view_set_table()
+        self.view.mapping._refresh_view_mapping_choices()
         if self.view.state.manual_view_sets is not None and self.view.state.view_sets:
             suffix = "" if len(self.view.state.view_sets) == 1 else "s"
             self.view.view_set_status_label.setText(
@@ -157,7 +195,7 @@ class GaitInputPanel:
                 f"{len(self.view.state.view_sets)} complete set(s); " + " ".join(self.view.state.view_set_errors)
             )
             self.view.rustlab_status_label.setText(
-                "RustLab1 ready for complete paired sets; unresolved rows will be ignored."
+                "Resolve or remove unmatched CSVs before preview and analysis."
             )
         elif self.view.state.selected_files:
             self.view.view_set_status_label.setText(self._multiview_requirement_message())
@@ -185,10 +223,10 @@ class GaitInputPanel:
                 for group in self.view.state.view_sets
                 for path in (group.left_csv, group.right_csv, group.bottom_csv)
             }
-            for row in build_view_pair_rows([path for path in self.view.state.selected_files if path not in used]):
+            for row in build_view_pair_rows([path for path in self.view.state.selected_files if path not in used], self.view.state.csv_bodyparts):
                 rows.append({**row, "status": "Unassigned · " + row["status"]})
         else:
-            rows = build_view_pair_rows(self.view.state.selected_files)
+            rows = build_view_pair_rows(self.view.state.selected_files, self.view.state.csv_bodyparts)
         self.view.view_set_table.blockSignals(True)
         self.view.view_set_table.clear()
         complete_index = 0
@@ -204,6 +242,9 @@ class GaitInputPanel:
                     row["status"],
                 ]
             )
+            item.setData(0, Qt.UserRole + 1, [str(path) for path in (
+                *(row.get(view) for view in ("left", "right", "bottom")), *row.get("unassigned", ())
+            ) if path is not None])
             for column, view in enumerate(("left", "right", "bottom"), start=1):
                 item.setToolTip(column, str(row.get(view) or row["status"]))
             if row["status"] in {"Ready", "Manual"}:
@@ -237,6 +278,7 @@ class GaitInputPanel:
             if self.view.state.manual_view_sets is not None
             else self.view.state.view_sets,
             self.view,
+            bodyparts_by_path=self.view.state.csv_bodyparts,
         )
         selected = self.view.view_set_table.currentItem()
         if selected is not None:
@@ -247,6 +289,8 @@ class GaitInputPanel:
         if dialog.exec() != QDialog.Accepted:
             return
         self.view.state.manual_view_sets = dialog.pairings()
+        if dialog.excluded_paths():
+            self._remove_paths(set(dialog.excluded_paths()))
         self._refresh_view_sets()
         if self.view.state.view_sets:
             self.view.controller._select_view_set_row(0)
@@ -276,11 +320,11 @@ class GaitInputPanel:
 
     def _has_valid_inputs(self) -> bool:
         if self._is_three_view_mode():
-            return self._selected_view_set() is not None
+            return self._selected_view_set() is not None and not self.view.state.view_set_errors
         return bool(self.view.state.selected_files)
 
     def _has_valid_view_sets(self) -> bool:
-        return bool(self.view.state.view_sets)
+        return bool(self.view.state.view_sets) and not self.view.state.view_set_errors
 
     def _is_three_view_mode(self) -> bool:
         return self.view.input_mode_combo.currentText() == MULTI_SIDE_VIEW_MODE_LABEL
@@ -306,15 +350,7 @@ class GaitInputPanel:
         side_labels = ("ankle", "toe", "hip", "iliac crest")
         if include_forelimb:
             side_labels += FORELIMB_SIDE_VIEW_LABELS
-        bottom_labels = list(BOTTOM_VIEW_LABELS)
-        reference_label = {
-            "d-back-left": "back left",
-            "d-back-right": "back right",
-            "d-front-left": "front left",
-            "d-front-right": "front right",
-        }[settings.reference_paw]
-        if reference_label not in bottom_labels:
-            bottom_labels.append(reference_label)
+        bottom_labels = ("back left", "back right")
         missing = []
         view_mapping = settings.view_bodypart_mapping or {}
         for view, csv_path, required_labels in (
@@ -353,6 +389,17 @@ class GaitInputPanel:
         return missing
 
     def _missing_required_bodyparts(self, settings: AlmaSettings) -> list[str]:
+        runway = settings.analysis_type == "Spontaneous walking" and settings.stride_detection_method == "ALMA (confidence-aware runway)"
+
+        def missing_labels(raw, mapping, required, side_view=False):
+            mapped = set(mapping.values())
+            def available(label):
+                return label in mapped or auto_bodypart_label(raw, label) is not None
+            result = [label for label in required if not available(label)]
+            if runway and side_view and not any(available(label) for label in ("hip", "iliac crest")):
+                result.append("hip or iliac crest")
+            return result
+
         if self._is_three_view_mode():
             view_set = self._selected_view_set()
             if view_set is None:
@@ -360,8 +407,8 @@ class GaitInputPanel:
             missing: list[str] = []
             view_mapping = settings.view_bodypart_mapping or {}
             include_forelimb = settings.limb_scope == "Hindlimb + Forelimb"
-            side_labels = SIDE_VIEW_LABELS + (FORELIMB_SIDE_VIEW_LABELS if include_forelimb else ())
-            bottom_labels = BOTTOM_VIEW_LABELS
+            side_labels = ("toe",) if runway else SIDE_VIEW_LABELS + (FORELIMB_SIDE_VIEW_LABELS if include_forelimb else ())
+            bottom_labels = () if runway and settings.output_format == "alma" else BOTTOM_VIEW_LABELS
             for view, csv_path, required_labels in (
                 ("left", view_set.left_csv, side_labels),
                 ("right", view_set.right_csv, side_labels),
@@ -372,15 +419,16 @@ class GaitInputPanel:
                 except Exception:
                     missing.extend(f"{view} {label}" for label in required_labels)
                     continue
-                mapped_bodyparts = set((view_mapping.get(view) or {}).values())
-                for standard_bodypart in required_labels:
-                    if standard_bodypart in mapped_bodyparts:
-                        continue
-                    if auto_bodypart_label(raw_bodyparts, standard_bodypart) is None:
-                        missing.append(f"{view} {standard_bodypart}")
+                missing.extend(
+                    f"{view} {label}" for label in missing_labels(
+                        raw_bodyparts, view_mapping.get(view) or {}, required_labels, view != "bottom"
+                    )
+                )
             return missing
         if not self.view.state.raw_bodyparts:
             return []
+        if runway:
+            return missing_labels(self.view.state.raw_bodyparts, settings.custom_bodypart_mapping or {}, ("toe",), True)
         mapped_bodyparts = set(settings.custom_bodypart_mapping.values()) if settings.custom_bodypart_mapping else set()
         missing: list[str] = []
         for standard_bodypart in STANDARD_BODYPARTS:
@@ -392,31 +440,39 @@ class GaitInputPanel:
 
 
 def build_gait_inputs(self):
-    file_box = QGroupBox("Multi-view ALMA input and output")
+    file_box = CsvDropArea("Recording files")
+    file_box.paths_dropped.connect(self.inputs._add_csv_paths)
     self.file_box = file_box
     file_layout = QVBoxLayout(file_box)
     button_row = QHBoxLayout()
-    self.add_file_button = QPushButton("Add CSVs")
+    self.add_file_button = QPushButton("Add CSVs…")
     set_tooltip(self.add_file_button, "Add left, right, and bottom DeepLabCut coordinate CSVs.", "Ctrl+O")
-    self.add_folder_button = QPushButton("Add folder")
+    self.add_folder_button = QPushButton("Add folder…")
     set_tooltip(self.add_folder_button, "Add every CSV in a folder and group left/right/bottom views.", "Ctrl+Shift+O")
     self.clear_files_button = QPushButton("Clear")
+    self.clear_files_button.setObjectName("ClearButton")
+    self.remove_files_button = QPushButton("Remove selected")
+    self.remove_files_button.setToolTip("Remove selected recordings or CSVs from this workflow.")
+    self.remove_files_button.clicked.connect(self.inputs._remove_selected_files)
     set_tooltip(self.clear_files_button, "Clear the selected input CSV files.", "Ctrl+L")
     button_row.addWidget(self.add_file_button)
     button_row.addWidget(self.add_folder_button)
+    button_row.addStretch(1)
+    button_row.addWidget(self.remove_files_button)
     button_row.addWidget(self.clear_files_button)
     file_layout.addLayout(button_row)
     self.file_list = QListWidget()
-    self.file_list.setMaximumHeight(96)
+    self.file_list.setMinimumHeight(120)
+    self.file_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
     self.file_list.setVisible(False)
-    file_layout.addWidget(self.file_list)
-    self.view_set_table = QTreeWidget()
+    file_layout.addWidget(self.file_list, 1)
+    self.view_set_table = RecordingFilesTree()
     self.view_set_table.setObjectName("RunwayViewSetTable")
     self.view_set_table.setHeaderLabels(["Recording", "Left side", "Right side", "Bottom", "Pairing"])
     self.view_set_table.setRootIsDecorated(False)
     self.view_set_table.setAlternatingRowColors(False)
-    self.view_set_table.setMinimumHeight(128)
-    self.view_set_table.setMaximumHeight(240)
+    self.view_set_table.setMinimumHeight(120)
+    self.view_set_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
     self.view_set_table.itemDoubleClicked.connect(lambda *_args: self.inputs._open_csv_pairing_dialog())
     self.view_set_table.header().setStretchLastSection(False)
     self.view_set_table.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -424,25 +480,17 @@ def build_gait_inputs(self):
     self.view_set_table.header().setSectionResizeMode(2, QHeaderView.Stretch)
     self.view_set_table.header().setSectionResizeMode(3, QHeaderView.Stretch)
     self.view_set_table.header().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-    file_layout.addWidget(self.view_set_table)
+    file_layout.addWidget(self.view_set_table, 1)
     self.view_set_status_label = QLabel("Add matched left, right, and bottom CSVs.")
     self.view_set_status_label.setObjectName("MutedLabel")
     self.view_set_status_label.setWordWrap(True)
     file_layout.addWidget(self.view_set_status_label)
     pairing_row = QHBoxLayout()
-    self.edit_pairing_button = QPushButton("Review pairings…")
-    self.label_matching_button = QPushButton("Label body parts...")
+    self.edit_pairing_button = QPushButton("Match views…")
+    self.label_matching_button = QPushButton("Assign bodypart labels")
     set_tooltip(self.edit_pairing_button, "Assign selected CSV files to left side, right side, and bottom views.")
-    set_tooltip(self.label_matching_button, "Map body-part labels for the selected left/right/bottom CSV set.")
+    set_tooltip(self.label_matching_button, "Open the Labels section in the left settings panel.")
     pairing_row.addWidget(self.edit_pairing_button)
     pairing_row.addWidget(self.label_matching_button)
     file_layout.addLayout(pairing_row)
-    output_row = QHBoxLayout()
-    self.output_folder_edit = QLineEdit(str(self._default_output_root()))
-    self.output_folder_button = QPushButton("Save to…")
-    set_tooltip(self.output_folder_edit, "Folder where ALMA gait-analysis outputs will be saved.")
-    set_tooltip(self.output_folder_button, "Choose the output folder.", "Ctrl+Shift+S")
-    output_row.addWidget(self.output_folder_edit, 1)
-    output_row.addWidget(self.output_folder_button)
-    file_layout.addLayout(output_row)
     return file_box

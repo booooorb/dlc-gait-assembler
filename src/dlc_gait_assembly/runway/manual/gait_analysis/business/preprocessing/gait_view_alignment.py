@@ -23,15 +23,34 @@ def align_multiview_coordinates(view_frames, pd, view_mappings: dict[str, dict[s
 
 
 def view_mappings_for_set(settings: AlmaSettings, set_name: str) -> dict[str, dict[str, str]] | None:
-    mappings = settings.view_bodypart_mapping
+    return resolve_view_mappings(settings.view_bodypart_mapping, set_name)
+
+
+def resolve_view_mappings(mappings, set_name: str) -> dict[str, dict[str, str]] | None:
+    """Resolve workflow defaults and recording overrides without collecting other settings."""
     if not mappings:
         return None
     if looks_like_view_mapping(mappings):
-        return mappings
+        return merge_view_bodypart_mappings(mappings.get("__default__", {}), mappings)
     candidate = mappings.get(set_name) if isinstance(mappings, dict) else None
-    if isinstance(candidate, dict) and looks_like_view_mapping(candidate):
+    defaults = mappings.get("__default__", {})
+    # The inline editor saves all three views, including deliberate unassignments.
+    if isinstance(candidate, dict) and all(view in candidate for view in ("left", "right", "bottom")):
         return candidate
-    return None
+    return merge_view_bodypart_mappings(defaults, candidate or {}) or None
+
+
+def merge_view_bodypart_mappings(defaults, overrides):
+    """Recording-specific assignments replace defaults for the same anatomical marker."""
+    result = {}
+    for view in ("left", "right", "bottom"):
+        assigned = overrides.get(view, {})
+        replaced = set(assigned.values())
+        mapping = {raw: standard for raw, standard in defaults.get(view, {}).items() if standard not in replaced}
+        mapping.update(assigned)
+        if mapping:
+            result[view] = mapping
+    return result
 
 
 def view_mapping_for(view_mappings: dict[str, dict[str, str]] | None, view: str) -> dict[str, str] | None:

@@ -15,14 +15,13 @@ from PySide6.QtCore import (
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
 from dlc_gait_assembly.app.client.app_page_contracts import ToolSpec
 from dlc_gait_assembly.runway.manual.business.manual_stage_definitions import MANUAL_STAGE_ICONS
-from dlc_gait_assembly.shared.client.theme.theme_icon_provider import interface_icon
 from dlc_gait_assembly.shared.client.theme.theme_menu_graphics import menu_icon
 from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_exists, resource_path
 
@@ -31,30 +30,11 @@ MAIN_MENU_LOGO_MAX_WIDTH = 104
 BRAND_LOGO_HEIGHT = 34
 BRAND_LOGO_MAX_WIDTH = 160
 BRAND_LOGO_FILENAMES = {
-    "light": "DLC-Gait-Assembler-logo-light-original-clean.png",
-    "dark": "DLC-Gait-Assembler-logo-dark-original-clean.png",
+    "light": "paw-track-light.svg",
+    "dark": "paw-track-dark.svg",
 }
 PARTNER_WEBSITES = {"choforcelab.png": "https://www.choforcelab.ca", "NERVES_Logo.png": "https://nerves.bme.utah.edu"}
 MAIN_MENU_ICON_ASSET_DIR = resource_path("icons")
-
-
-def navigation_icon(icon_name: str, color: str) -> QIcon:
-    names = {
-        "automated": "player-play",
-        "runway": "route",
-        "profiles": "folders",
-        "manual": "adjustments-horizontal",
-        "ladder": "ladder",
-    }
-    return menu_icon(names[icon_name], color, 18)
-
-
-def menu_asset_pixmap(name: str, size: int) -> QPixmap:
-    """Load a reference-derived main-menu illustration at a crisp UI size."""
-    source = load_menu_asset_pixmap(name)
-    if source.isNull():
-        return source
-    return source.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
 def load_menu_asset_pixmap(name: str) -> QPixmap:
@@ -161,65 +141,6 @@ class MenuIllustrationLabel(QLabel):
     zoom = Property(float, _get_zoom, _set_zoom)
 
 
-class HoverPixmapLabel(QLabel):
-    """A compact pixmap label that shares the menu-card hover zoom."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._source_pixmap = QPixmap()
-        self._zoom = 1.0
-
-    def setPixmap(self, pixmap: QPixmap) -> None:
-        self._source_pixmap = pixmap
-        super().setPixmap(pixmap)
-
-    def paintEvent(self, event) -> None:
-        if self._source_pixmap.isNull():
-            super().paintEvent(event)
-            return
-        viewport = self.contentsRect()
-        fitted = self._source_pixmap.size().scaled(viewport.size(), Qt.KeepAspectRatio)
-        draw_size = QSize(round(fitted.width() * self._zoom), round(fitted.height() * self._zoom))
-        target = QRect(QPoint(), draw_size)
-        target.moveCenter(viewport.center())
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.setClipRect(viewport)
-        painter.drawPixmap(target, self._source_pixmap)
-
-    def _get_zoom(self) -> float:
-        return self._zoom
-
-    def _set_zoom(self, zoom: float) -> None:
-        self._zoom = max(1.0, min(float(zoom), 1.05))
-        self.update()
-
-    zoom = Property(float, _get_zoom, _set_zoom)
-
-
-class ManualMiniStage(QFrame):
-    """Keyboard-accessible stage tile for the expanded manual menu."""
-
-    clicked = Signal(str)
-
-    def __init__(self, tool_id: str, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._tool_id = tool_id
-        self.setFocusPolicy(Qt.StrongFocus)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
-            self.clicked.emit(self._tool_id)
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
-            self.clicked.emit(self._tool_id)
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-
 class WorkspaceChoiceCard(QFrame):
     """A setup card whose full visible surface acts as one accessible control."""
 
@@ -234,7 +155,7 @@ class WorkspaceChoiceCard(QFrame):
         self._hover_animation: QParallelAnimationGroup | None = None
 
     def _animate_illustration(self, zoom: float, duration: int) -> None:
-        illustrations = self.findChildren(MenuIllustrationLabel) + self.findChildren(HoverPixmapLabel)
+        illustrations = self.findChildren(MenuIllustrationLabel)
         if not illustrations:
             return
         if self._hover_animation is not None:
@@ -251,6 +172,9 @@ class WorkspaceChoiceCard(QFrame):
         group.start()
 
     def enterEvent(self, event) -> None:
+        if not self.isEnabled():
+            super().enterEvent(event)
+            return
         previous = WorkspaceChoiceCard._active_hover_card
         if previous is not None and previous is not self:
             previous._reset_hover_immediately()
@@ -267,14 +191,9 @@ class WorkspaceChoiceCard(QFrame):
     def _reset_hover_immediately(self) -> None:
         if self._hover_animation is not None:
             self._hover_animation.stop()
-        illustrations = self.findChildren(MenuIllustrationLabel) + self.findChildren(HoverPixmapLabel)
+        illustrations = self.findChildren(MenuIllustrationLabel)
         for illustration in illustrations:
             illustration.zoom = 1.0
-
-    def make_decorations_mouse_transparent(self, action_button: QPushButton) -> None:
-        for child in self.findChildren(QWidget):
-            if child is not action_button and (not isinstance(child, QPushButton)):
-                child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
@@ -422,7 +341,7 @@ class WorkflowStep(QFrame):
 
     def apply_theme(self) -> None:
         color = theme.TOOL_3 if self._spec.enabled else theme.BORDER
-        self.graphic.setPixmap(interface_icon(MANUAL_STAGE_ICONS[self._spec.id], color, size=26).pixmap(26, 26))
+        self.graphic.setPixmap(menu_icon(MANUAL_STAGE_ICONS[self._spec.id], color, 26).pixmap(QSize(26, 26), 2.0))
 
     def mouseReleaseEvent(self, event) -> None:
         if self._spec.enabled and event.button() == Qt.LeftButton and self.rect().contains(event.pos()):

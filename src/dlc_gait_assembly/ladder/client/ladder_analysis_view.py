@@ -61,7 +61,7 @@ class LadderAnalysisWidget(QWidget):
         for attribute in ("_video_capture", "_right_video_capture"):
             capture = getattr(self, attribute)
             if capture is not None:
-                capture.release()
+                capture.close()
                 setattr(self, attribute, None)
 
     def _build_ui(self) -> None:

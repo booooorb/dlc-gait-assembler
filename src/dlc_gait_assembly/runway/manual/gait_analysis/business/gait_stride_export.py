@@ -28,7 +28,8 @@ def with_stride_details(result):
             coverage.append(np.nan)
             gaps.append(pd.NA)
             continue
-        samples = np.asarray(observed[int(start) : int(end) + 1], dtype=bool)
+        offset = 0 if parameters.attrs.get("analysis_report", {}).get("analysis_type") == "spontaneous" else 1
+        samples = np.asarray(observed[int(start) : int(end) + offset], dtype=bool)
         coverage.append(100.0 * samples.mean())
         gaps.append(int((~samples).sum()))
     parameters["timing_observed (%)"] = coverage

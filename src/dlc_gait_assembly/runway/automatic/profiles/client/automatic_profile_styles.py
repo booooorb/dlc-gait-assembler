@@ -6,7 +6,6 @@ AUTOMATIC_PROFILE_RULES = (
         """
 QWidget#AutomatedPipelineProfilesWidget {
     background: {theme.BACKGROUND};
-    background-image: url({theme.BACKGROUND_TEXTURE});
     color: {theme.TEXT};
 }
 """,
@@ -126,39 +125,6 @@ QLabel#DetectedRegionsLabel, QLabel#ModelsPlaceholder, QLabel#ProfileStatusLabel
 """,
     ),
     (
-        70,
-        """QTabWidget#ProfileConfigurationTabs::pane {
-    background: {theme.SURFACE};
-    border: 1px solid {theme.BORDER};
-}
-""",
-    ),
-    (
-        71,
-        """QTabWidget#ProfileConfigurationTabs QTabBar::tab {
-    background: {theme.PANEL};
-}
-""",
-    ),
-    (
-        72,
-        """QTabWidget#ProfileConfigurationTabs QTabBar::tab:selected {
-    background: {theme.SURFACE};
-    color: {theme.TEXT};
-    border-bottom-color: transparent;
-    font-weight: 650;
-}
-""",
-    ),
-    (
-        73,
-        """QScrollArea#ProfileModelsScroll {
-    background: transparent;
-    border: 0;
-}
-""",
-    ),
-    (
         74,
         """QWidget#ProfileStagePage {
     background: {theme.SURFACE};
@@ -248,20 +214,9 @@ QLabel#DetectedRegionsLabel, QLabel#ModelsPlaceholder, QLabel#ProfileStatusLabel
     (
         83,
         """QPushButton#DeleteProfileButton {
-    background: {theme.SURFACE};
-    border: 1px solid {theme.BORDER};
-    color: {theme.STATUS_ERROR};
     font-weight: 650;
     min-height: 22px;
     padding: 6px 9px;
-}
-""",
-    ),
-    (
-        84,
-        """QPushButton#DeleteProfileButton:hover {
-    border-color: {theme.STATUS_ERROR};
-    color: {theme.STATUS_ERROR};
 }
 """,
     ),
@@ -344,27 +299,6 @@ QPushButton#ProfileUploadButton:disabled {
 """,
     ),
     (
-        93,
-        """QPushButton#ProfileStageToggle {
-    background: {theme.SURFACE};
-    border: 1px solid {theme.BORDER};
-    color: {theme.CONNECTOR};
-    font-size: 12px;
-    padding: 7px 12px;
-}
-""",
-    ),
-    (
-        94,
-        """QPushButton#ProfileStageToggle:checked {
-    background: {theme.SOFT};
-    border-color: {theme.PRIMARY};
-    color: {theme.PRIMARY};
-    font-weight: 650;
-}
-""",
-    ),
-    (
         95,
         """QPushButton#BackToAutomationButton {
     background: {theme.BACKGROUND};
@@ -388,7 +322,6 @@ QPushButton#ProfileUploadButton:disabled {
         """QWidget#MainAutomationPage, QWidget#ProfileConfigurationPage,
 QStackedWidget#AutomationWorkspaceStack {
     background: {theme.BACKGROUND};
-    background-image: url({theme.BACKGROUND_TEXTURE});
 }
 """,
     ),

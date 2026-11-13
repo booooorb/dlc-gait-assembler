@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.ladder.business.ladder_analysis_contracts import LadderEvent
 from dlc_gait_assembly.ladder.business.ladder_event_review_rules import review_ladder_event
+from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 
 
 class LadderEventReviewTable:
@@ -38,7 +39,7 @@ class LadderEventReviewTable:
         for row, event in enumerate(self.view.state.events):
             include = QCheckBox()
             include.setChecked(event.included)
-            include.setToolTip("Include this event in the reviewed export.")
+            set_tooltip(include, 'Include this event in the reviewed export.')
             include_cell = QWidget()
             include_layout = QHBoxLayout(include_cell)
             include_layout.setContentsMargins(0, 0, 0, 0)
@@ -58,6 +59,7 @@ class LadderEventReviewTable:
             ):
                 self.view.events_table.setItem(row, column, QTableWidgetItem(str(value)))
             classification = QComboBox()
+            set_tooltip(classification, "Your reviewed event category: unreviewed, footfall, slip, or fall. Saved with the reviewed event export.")
             classification.addItems(["unreviewed", "footfall", "slip", "fall"])
             classification.setCurrentText(event.classification)
             self.view.events_table.setCellWidget(row, 8, classification)

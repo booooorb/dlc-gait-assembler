@@ -2,11 +2,13 @@
 
 import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 import dlc_gait_assembly
 import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
+from dlc_gait_assembly.app.business.app_navigation_routes import LADDER_UI_ENABLED
 from dlc_gait_assembly.app.infrastructure.app_preferences_store import AppPreferencesStore
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
     AutomaticProfileAssetReader,
@@ -20,6 +22,7 @@ from dlc_gait_assembly.shared.client.theme.theme_font_loader import interface_fo
 from dlc_gait_assembly.shared.client.theme.theme_qt_palette import (
     application_palette as _dependency_theme_application_palette,
 )
+from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
 from dlc_gait_assembly.shared.infrastructure.workspace_path_resolver import resolve_workspace
 
 THEME_MODES = {"light", "dark"}
@@ -155,7 +158,7 @@ def build_tool_specs():
         lambda: LadderAnalysisWidget(
             use_cases=create_ladder_use_cases(), media_access=create_media_access(), workspace=resolve_workspace()
         ),
-        True,
+        LADDER_UI_ENABLED,
         description="Detect, review, and export ladder-rung footfall events.",
     )
     from dataclasses import replace
@@ -164,7 +167,7 @@ def build_tool_specs():
 
     snapshot_providers = {
         "manual_calibration": lambda page: ManualProfileSnapshot(
-            calibration=page.settings_snapshot(), calibration_map=page.profile_calibration_map_path()
+            calibration=page.settings_snapshot()
         ),
         "video_processing": lambda page: ManualProfileSnapshot(
             video=page.settings_snapshot(), processing_manifest=page.profile_manifest_path()
@@ -187,13 +190,27 @@ def build_tool_specs():
     return (TOOL_SPECS, LADDER_TOOL_SPEC)
 
 
-def create_main_window(*, update_service=None, preferences=None, **options):
+def create_main_window(*, profile_store=None, update_service=None, preferences=None, **options):
     from dlc_gait_assembly.app.client.app_shell_window import MainWindow
     from dlc_gait_assembly.app.client.app_update_controller import AppUpdateController
     from dlc_gait_assembly.app.infrastructure.github_app_updater import GitHubAppUpdater
 
+    icon = QIcon(str(resource_path("branding", "paw-track-app.svg")))
+    if sys.platform == "darwin":
+        # Leave enough transparent space to match the footprint of macOS Dock icons.
+        canvas_size = 1024
+        inset = 90
+        artwork_size = canvas_size - 2 * inset
+        canvas = QPixmap(canvas_size, canvas_size)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+        icon.paint(painter, QRect(inset, inset, artwork_size, artwork_size))
+        painter.end()
+        icon = QIcon(canvas)
+    QApplication.setWindowIcon(icon)
     (tools, ladder) = build_tool_specs()
-    window = MainWindow(tool_specs=tools, ladder_spec=ladder, menu_factory=create_main_menu, **options)
+    window = MainWindow(tool_specs=tools, ladder_spec=ladder,
+        menu_factory=lambda specs: create_main_menu(specs, profile_store=profile_store), **options)
     window.updates = AppUpdateController(
         window,
         update_service if update_service is not None else GitHubAppUpdater(),
@@ -208,8 +225,9 @@ def create_gait_preview():
         GaitStickplotRenderer,
     )
     from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_result_writer import GaitResultWriter
+    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab1_r_executor import RustLab1RExecutor
 
-    return GaitPreviewUseCases(GaitResultWriter(), GaitStickplotRenderer())
+    return GaitPreviewUseCases(GaitResultWriter(), GaitStickplotRenderer(), standalone=RustLab1RExecutor())
 
 
 def create_ladder_use_cases():
@@ -301,14 +319,10 @@ def create_review_artifact_reader():
 
 
 def create_rustlab1_use_cases():
-    from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_standalone_engine import (
-        RustLab1StandaloneUseCases,
-    )
-    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab1_recording_writer import (
-        RustLab1RecordingWriter,
-    )
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.rustlab1.rustlab1_r_analysis import RustLab1RUseCases
+    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab1_r_executor import RustLab1RExecutor
 
-    return RustLab1StandaloneUseCases(RustLab1RecordingWriter())
+    return RustLab1RUseCases(RustLab1RExecutor())
 
 
 def create_gait_analysis_operations():
@@ -380,15 +394,11 @@ def create_gait_result_reader():
     return GaitResultReader()
 
 
-def create_main_menu(tools):
+def create_main_menu(tools, *, profile_store=None):
     """Connect navigation surfaces without coupling the shell to workflow widgets."""
     from dlc_gait_assembly.app.client.app_home_view import MainMenuWidget
-    from dlc_gait_assembly.runway.client.runway_home_view import build_runway_home
-    from dlc_gait_assembly.runway.manual.client.manual_stage_directory import build_manual_stage_directory
 
     return MainMenuWidget(
         tools,
-        automatic_factory=create_automatic_workspace,
-        runway_builder=build_runway_home,
-        manual_builder=build_manual_stage_directory,
+        automatic_factory=lambda: create_automatic_workspace(store=profile_store),
     )

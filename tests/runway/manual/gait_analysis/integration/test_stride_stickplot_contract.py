@@ -54,6 +54,16 @@ def test_stickplot_phases_boundaries_and_title_match_actual_detector(method, alm
         np.testing.assert_array_equal(stance, detection[0])
     prepared = prepare_full_recording_stickplot(parameters, coords, bodyparts, stance)
     assert prepared is not None
+    if prepared.native_alma:
+        buffer = BytesIO()
+        render_prepared_stickplot(prepared, buffer)
+        svg = buffer.getvalue().decode()
+        assert "ALMA native" in svg
+        assert "x coordinate (pixel)" in svg
+        if method == "ALMA (confidence-aware runway)":
+            assert "consecutive retained cycles" in svg
+            assert "tracked keypoints" in svg
+        return
     assert (prepared.start_frame, prepared.end_frame) == (0, len(raw) - 1)
     assert prepared.method == method
     expected = stickplot_phase_codes(
@@ -133,7 +143,7 @@ def test_method_description_and_selection_invalidate_previous_stickplot():
     view.state.preview_validity.complete()
     view.stride_method_combo.setCurrentText("Bottom paw speed")
     assert not view.state.preview_validity.ready
-    assert "lhpaw sets left timing" in view.stride_method_description.text()
+    assert "lhpaw sets left timing" in view.stride_method_combo.toolTip()
     assert view.setup._collect_settings().stride_detection_method == "Bottom paw speed"
     view.close()
     app.processEvents()

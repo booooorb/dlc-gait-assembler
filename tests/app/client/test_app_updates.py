@@ -8,6 +8,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QWidget
 
+import dlc_gait_assembly
 from dlc_gait_assembly.app.business.app_update_contracts import AppUpdateInfo
 from dlc_gait_assembly.app.client.app_update_controller import AppUpdateController
 from dlc_gait_assembly.app.infrastructure.app_preferences_store import AppPreferencesStore
@@ -249,7 +250,7 @@ def test_main_window_exposes_update_settings_without_starting_network(tmp_path):
     window = create_main_window(update_service=operations, preferences=preferences)
     try:
         assert window.updates.check_action in window._settings_menu.actions()
-        assert "Version 0.1.0" == window.updates.version_action.text()
+        assert f"Version {dlc_gait_assembly.__version__}" == window.updates.version_action.text()
         app.processEvents()
         assert operations.checks == 0
     finally:

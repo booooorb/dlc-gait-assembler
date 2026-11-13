@@ -67,6 +67,10 @@ class AutomatedPipelineRun:
             profile, video_paths, storage, self.enable_knee_correction, self.enable_gait_analysis
         )
         self.plan = AutomaticRunPlan(profile, self.enable_knee_correction, self.enable_gait_analysis)
+        self.gait_settings = (
+            self.storage.gait_settings(profile.analysis_manifest, profile.calibration_map)
+            if self.plan.stage_enabled(AutomatedStage.GAIT_ANALYSIS) else None
+        )
         self.storage.allocate(self, project_root, output_root, profile)
         self.processed_by_region: dict[str, list[Path]] = {}
         self.dlc_jobs: list[DlcAnalysisJob] = []

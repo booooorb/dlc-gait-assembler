@@ -122,10 +122,12 @@ class KneeStickplotPreview(QWidget):
                     self.rect().adjusted(10, 8 + index * 16, -10, -8), Qt.AlignTop | Qt.AlignRight, message
                 )
         if self._correction_status and self._correction_status != "Corrected":
-            painter.setPen(QColor(theme.STATUS_ERROR))
-            painter.drawText(
-                self.rect().adjusted(10, 8, -10, -8), Qt.AlignTop | Qt.AlignLeft, f"Retained: {self._correction_status}"
-            )
+            status_text = self._correction_status
+            status_color = theme.STATUS_RUNNING if status_text.startswith("Estimated:") else theme.STATUS_ERROR
+            painter.setPen(QColor(status_color))
+            if not status_text.startswith("Estimated:"):
+                status_text = f"Retained: {status_text}"
+            painter.drawText(self.rect().adjusted(10, 8, -10, -8), Qt.AlignTop | Qt.AlignLeft, status_text)
         if self._hip is None or self._ankle is None:
             painter.setPen(QColor(theme.CONNECTOR))
             painter.drawText(
@@ -182,7 +184,9 @@ class KneeStickplotPreview(QWidget):
         for point in (hip, ankle):
             painter.drawEllipse(point[0] - 6, point[1] - 6, 12, 12)
         if new_knee is not None:
-            corrected_color = QColor(theme.STATUS_READY)
+            corrected_color = QColor(
+                theme.STATUS_RUNNING if self._correction_status.startswith("Estimated:") else theme.STATUS_READY
+            )
             painter.setPen(QPen(corrected_color, 2))
             painter.setBrush(corrected_color)
             painter.drawEllipse(new_knee[0] - 8, new_knee[1] - 8, 16, 16)
@@ -193,8 +197,9 @@ class KneeStickplotPreview(QWidget):
             painter.setPen(QColor("#8e8a84"))
             painter.drawText(old_knee[0] + 7, old_knee[1] + 14, "Old knee")
         if new_knee is not None:
-            painter.setPen(QColor(theme.STATUS_READY))
-            painter.drawText(new_knee[0] + 9, new_knee[1] - 9, "Corrected knee")
+            painter.setPen(corrected_color)
+            knee_label = "Estimated knee" if self._correction_status.startswith("Estimated:") else "Corrected knee"
+            painter.drawText(new_knee[0] + 9, new_knee[1] - 9, knee_label)
         legend_y = self.height() - 12
         painter.setPen(QPen(QColor("#aaa6a0"), 2, Qt.DashLine))
         painter.drawLine(margin, legend_y, margin + 22, legend_y)

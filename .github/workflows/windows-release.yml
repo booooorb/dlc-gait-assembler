@@ -1,0 +1,68 @@
+name: Windows build and release
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "MANIFEST.in"
+      - ".github/**"
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install build and test tools
+        run: python -m pip install --upgrade pip build pytest
+      - name: Build from the clean checkout
+        run: python -m build --sdist --wheel
+      - name: Install the built wheel
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem dist/*.whl).FullName
+          python -m pip install $wheel
+      - name: Open and verify the installed Windows interface
+        run: python -I .github/scripts/verify_installed_ui.py --output release-screenshots
+      - name: Check application behavior and architecture on Windows
+        run: python -m pytest -q tests/app tests/architecture
+      - name: Save distributions and Windows screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-release
+          path: |
+            dist/*
+            release-screenshots/*
+      - name: Publish the verified version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="$(python -c 'import dlc_gait_assembly; print(dlc_gait_assembly.__version__)')"
+          tag="v${version}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists. The Windows build was verified without replacing it."
+            exit 0
+          fi
+          gh release create "$tag" dist/*.whl dist/*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "DLC Gait Assembler $version" --latest \
+            --notes "Complete current Paw Track interface, workflow profiles, scientific analysis modules, bundled assets, and automatic/manual updates. Built and opened on Windows before publication. Activate your gait-assembler environment and install the wheel with python -m pip install --upgrade followed by its downloaded filename. Settings displays the installed version."

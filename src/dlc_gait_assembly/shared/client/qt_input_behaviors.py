@@ -8,6 +8,8 @@ from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QAbstractButton, QComboBox, QDoubleSpinBox, QSpinBox, QWidget
 
+from dlc_gait_assembly.shared.client.qt_setting_help import attach_setting_help
+
 WHEEL_VALUE_WIDGETS = (QComboBox, QDoubleSpinBox, QSpinBox)
 
 
@@ -29,6 +31,7 @@ def install_wheel_value_guard(root: QWidget) -> WheelValueGuard:
 
 def set_tooltip(widget: QWidget, text: str, shortcut: str | None = None) -> None:
     widget.setToolTip(f"{text}\nShortcut: {shortcut}" if shortcut else text)
+    attach_setting_help(widget)
 
 
 def add_shortcut(parent: QWidget, sequence: str, callback: Callable[[], None]) -> QShortcut:

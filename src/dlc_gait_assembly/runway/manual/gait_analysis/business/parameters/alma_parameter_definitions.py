@@ -98,8 +98,8 @@ def alma_formula(name: str) -> str:
         "max toe-to-crest distance (cm)": "maximum Euclidean toe-to-iliac-crest distance / pixels per cm",
         "min toe-to-crest distance (cm)": "minimum Euclidean toe-to-iliac-crest distance / pixels per cm",
         "toe-to-crest distance SD (cm)": "standard deviation of toe-to-iliac-crest distance / pixels per cm",
-        "step height (cm)": "highest swing toe position relative to stance ground level / pixels per cm",
-        "max velocity during swing (cm/s)": "maximum frame-to-frame toe displacement during swing × frame rate / pixels per cm",
+        "step height (cm)": "cycle maximum - minimum toe y-position / pixels per cm (legacy ALMA step-height definition)",
+        "max velocity during swing (cm/s)": "legacy ALMA maximum frame-to-frame toe speed in the cycle / pixels per cm; a swing phase must be present",
         "drag duration (s)": "consecutive swing frames with toe clearance below the drag threshold / frame rate",
         "drag percentage (%)": "100 × dragging swing frames / total swing frames",
     }

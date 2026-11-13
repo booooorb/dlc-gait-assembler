@@ -24,6 +24,8 @@ class KneeCorrectionController:
     def _connect_signals(self) -> None:
         self.view.add_files_button.clicked.connect(self.view.inputs._choose_files)
         self.view.add_folder_button.clicked.connect(self.view.inputs._choose_folder)
+        self.view.customize_pairings_button.clicked.connect(self.view.inputs._customize_pairings)
+        self.view.reset_pairings_button.clicked.connect(self.view.inputs._reset_pairings)
         self.view.pair_table.itemSelectionChanged.connect(self.view.preview_controller._show_selected_preview)
         self.view.remove_button.clicked.connect(self.view.inputs._remove_selected)
         self.view.clear_button.clicked.connect(self.view.inputs._clear)
@@ -41,6 +43,10 @@ class KneeCorrectionController:
         self.view.hip_knee_length.valueChanged.connect(self.view.preview_controller._preview_inputs_changed)
         self.view.knee_ankle_length.valueChanged.connect(self.view.preview_controller._preview_inputs_changed)
         self.view.likelihood_threshold.valueChanged.connect(self.view.preview_controller._preview_inputs_changed)
+        self.view.fallback_ratio_spin.valueChanged.connect(self.view.preview_controller._preview_inputs_changed)
+        self.view.adjusted_confidence_spin.valueChanged.connect(self.view.preview_controller._preview_inputs_changed)
+        self.view.adapt_lengths_checkbox.toggled.connect(self.view.preview_controller._preview_inputs_changed)
+        self.view.fill_coordinates_checkbox.toggled.connect(self.view.preview_controller._preview_inputs_changed)
         self.view.export_manifest_button.clicked.connect(self._export_manifest)
         self.view.run_button.clicked.connect(self._run)
         self.view.previous_frame_shortcut = QShortcut(QKeySequence(Qt.Key_Left), self.view.knee_preview)
@@ -95,7 +101,7 @@ class KneeCorrectionController:
         if not self.view.state.pairs:
             self.view.status_label.setText("Add matching CSV, H5, and video files.")
         elif not complete_pairs:
-            self.view.status_label.setText("Red datasets are missing a matching CSV, H5, or video.")
+            self.view.status_label.setText("Red datasets need a CSV, H5, or video. Open File pairings to assign files.")
         elif not has_calibration:
             self.view.status_label.setText("Import a calibration map to convert centimeters to pixels.")
         else:
@@ -117,6 +123,10 @@ class KneeCorrectionController:
             ankle_bodypart=str(selected_ankle) if selected_ankle else None,
             output_knee_bodypart=self.view.generated_knee_label_edit.text().strip() or "knee",
             knee_direction=str(self.view.knee_direction_combo.currentData() or "auto"),
+            adapt_infeasible_lengths=self.view.adapt_lengths_checkbox.isChecked(),
+            fallback_femur_tibia_ratio=self.view.fallback_ratio_spin.value(),
+            adjusted_confidence_cap=self.view.adjusted_confidence_spin.value(),
+            fill_missing_coordinates=self.view.fill_coordinates_checkbox.isChecked(),
         )
 
     def _export_manifest(self) -> None:

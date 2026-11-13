@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.lines import Line2D
-from matplotlib.ticker import MaxNLocator
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.temporal_speed_mixture import PHASE_SUPPORT_THRESHOLD
 
@@ -61,7 +58,13 @@ def continuous_stickplot(
     axis_limits=None,
     tracking_only=False,
     phase_confidence=None,
+    output_format="svg",
+    dpi=None,
 ):
+    from matplotlib import pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import MaxNLocator
+
     frames = np.arange(start, end + 1)
     phases = stickplot_phase_codes(is_stance, len(filt_corrected_df), trusted, is_drag, phase_confidence)
     # One shared, line-only layout for previews and exports. No point markers or
@@ -164,7 +167,8 @@ def continuous_stickplot(
             fig.text(0.075, 0.02, note, fontsize=9, color="#777777")
             fig.savefig(
                 filename,
-                format="svg",
+                format=output_format,
+                dpi=dpi,
                 metadata={
                     "Description": f"Full recording: frames {start}–{end}. Timing: {timing_source}. "
                     f"{count} detected strides; {accepted} accepted. All finite source segments retained."
@@ -186,14 +190,13 @@ class GaitStickplotRenderer:
         from io import BytesIO
 
         buffer = BytesIO()
-        try:
-            render_prepared_stickplot(prepared, buffer)
-            return buffer.getvalue()
-        finally:
-            plt.close("all")
+        render_prepared_stickplot(prepared, buffer)
+        return buffer.getvalue()
 
     def render_rustlab1_preview(self, calculation, settings):
         from io import BytesIO
+
+        from matplotlib import pyplot as plt
 
         from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.figures.rustlab1_step_figures import (
             generate_rustlab1_stride_preview,
@@ -204,7 +207,13 @@ class GaitStickplotRenderer:
         return buffer.getvalue()
 
 
-def render_prepared_stickplot(prepared, destination):
+def render_prepared_stickplot(prepared, destination, *, output_format="svg", dpi=None):
+    if prepared is not None and prepared.native_alma:
+        from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.figures.alma_native_stickplot_renderer import (
+            render_native_alma_stickplot,
+        )
+
+        return render_native_alma_stickplot(prepared, destination, output_format, dpi)
     if prepared is not None:
         continuous_stickplot(
             prepared.coordinates,
@@ -224,4 +233,6 @@ def render_prepared_stickplot(prepared, destination):
             axis_limits=prepared.axis_limits,
             tracking_only=prepared.tracking_only,
             phase_confidence=prepared.phase_confidence,
+            output_format=output_format,
+            dpi=dpi,
         )

@@ -51,14 +51,14 @@ class GaitAnalysisController:
 
     def _connect_signals(self) -> None:
         self.view.parameter_figures_button.clicked.connect(self._show_parameter_figures)
-        self.view.figure_reference_button.clicked.connect(self._show_figure_documentation)
-        self.view.parameter_reference_button.clicked.connect(self._show_parameter_documentation)
+        self.view.figure_reference_action.triggered.connect(self._show_figure_documentation)
+        self.view.parameter_reference_action.triggered.connect(self._show_parameter_documentation)
         self.view.documentation_back_button.clicked.connect(self._close_documentation)
         self.view.add_file_button.clicked.connect(self.view.inputs._add_file)
         self.view.add_folder_button.clicked.connect(self.view.inputs._add_folder)
         self.view.clear_files_button.clicked.connect(self.view.inputs._clear_files)
         self.view.edit_pairing_button.clicked.connect(self.view.inputs._open_csv_pairing_dialog)
-        self.view.label_matching_button.clicked.connect(self.view.mapping._open_label_matching_dialog)
+        self.view.label_matching_button.clicked.connect(self.view.mapping._show_label_assignments)
         self.view.output_folder_button.clicked.connect(self.view.outputs._select_output_folder)
         self.view.output_folder_edit.textChanged.connect(self._update_run_state)
         self.view.compare_strides_button.clicked.connect(self._compare_stride_methods)
@@ -90,6 +90,8 @@ class GaitAnalysisController:
             self.view.reference_segment_combo,
             self.view.direction_combo,
             self.view.stride_method_combo,
+            self.view.runway_joint_combo,
+            self.view.runway_source_combo,
         )
         for combo in preview_controls:
             combo.currentTextChanged.connect(self._invalidate_stickplot_preview)
@@ -108,14 +110,13 @@ class GaitAnalysisController:
             self.view.likelihood_threshold_spin,
             self.view.rustlab_likelihood_spin,
             self.view.rustlab_filter_cutoff_spin,
-            self.view.rustlab_stance_speed_spin,
-            self.view.rustlab_max_tracking_speed_spin,
-            self.view.rustlab_min_stance_spin,
-            self.view.rustlab_min_swing_spin,
+            self.view.rustlab_coordinate_gap_spin,
             self.view.rustlab_min_strides_spin,
         )
         for spin in (
             self.view.mixture_context_spin,
+            *self.view.runway_spins.values(),
+            self.view.runway_joint_cutoff_spin,
             *preview_spins,
             *self.view.view_scale_spins.values(),
             *self.view.view_fps_spins.values(),
@@ -126,9 +127,10 @@ class GaitAnalysisController:
             self.view.detection_gap_spin,
         ):
             spin.valueChanged.connect(self._invalidate_stickplot_preview)
-        self.view.rustlab_reference_paw_combo.currentTextChanged.connect(self._invalidate_stickplot_preview)
         self.view.frame_rate_spin.valueChanged.connect(self.view.filters._update_rustlab_filter_range)
-        self.view.rustlab_stance_speed_spin.valueChanged.connect(self.view.filters._update_rustlab_speed_range)
+        self.view.runway_spins["runway_confidence_threshold"].valueChanged.connect(
+            self.view.filters._update_confidence_scope
+        )
         for checkbox in (
             self.view.no_outlier_checkbox,
             self.view.dragging_filter_checkbox,
@@ -160,9 +162,7 @@ class GaitAnalysisController:
 
     def _close_documentation(self) -> None:
         self.view.workspace_stack.setCurrentIndex(0)
-        self.view.workspace_title.setText(
-            "RustLab1 standalone analysis" if self.view.setup._is_rustlab1_workflow() else "Runway analysis"
-        )
+        self.view.workspace_title.setText("Gait analysis")
         self.view.documentation_back_button.hide()
 
     def _run_analysis(self) -> None:
@@ -190,7 +190,7 @@ class GaitAnalysisController:
             self._run_rustlab1_analysis(output_folder)
             return
         settings = self.view.setup._collect_settings()
-        if self.view.use_custom_mapping_checkbox.isChecked() and (not settings.custom_bodypart_mapping):
+        if not self.view.inputs._is_three_view_mode() and self.view.use_custom_mapping_checkbox.isChecked() and (not settings.custom_bodypart_mapping):
             QMessageBox.warning(
                 self.view, "No body part mapping", "Select at least one body part mapping or turn off custom mapping."
             )
@@ -201,7 +201,10 @@ class GaitAnalysisController:
         animate_button_emphasis(self.view.preview_button, False)
         animate_button_emphasis(self.view.run_button, True)
         self.view.log.clear()
-        self.view.status_label.setText("Running ALMA gait analysis...")
+        self.view.status_label.setText(
+            "Running ALMA side + rust bottom..." if self.view.setup._is_combined_workflow()
+            else "Running ALMA gait analysis..."
+        )
         self.view.workspace_tabs.setCurrentWidget(self.view.log_page)
         self.view.run_button.setEnabled(False)
         analysis_inputs = (
@@ -241,6 +244,7 @@ class GaitAnalysisController:
         self._update_run_state()
 
     def _update_progress(self, value: int, text: str) -> None:
+        self.view.progress.show()
         self.view.progress.setValue(value)
         self.view.status_label.setText(text)
 
@@ -248,7 +252,11 @@ class GaitAnalysisController:
         self.view.log.append(text)
 
     def _analysis_completed(self, success: bool, message: str) -> None:
-        workflow_name = "RustLab1 analysis" if self.view.setup._is_rustlab1_workflow() else "ALMA gait analysis"
+        workflow_name = (
+            "RustLab1 analysis" if self.view.setup._is_rustlab1_workflow()
+            else "ALMA side + rust bottom" if self.view.setup._is_combined_workflow()
+            else "ALMA gait analysis"
+        )
         status_message = message
         if success and self.view.state.output_preview_paths:
             status_message += "\nPreview the generated figures and tables below."
@@ -300,7 +308,11 @@ class GaitAnalysisController:
             report = next((path for path in files if path.name == "export_report.txt"), files[0])
             self.view._saved_results_folder = report.parent
             self.view.open_results_button.setEnabled(True)
-            self.view.export_summary_label.setText(f"Saved {len(files)} files to:\n{self.view._saved_results_folder}")
+            self.view.export_summary_label.setText(f"Saved {len(files)} files. See the Results tab.")
+            self.view.export_summary_label.setToolTip(str(self.view._saved_results_folder))
+            self.view.saved_results_label.setText(f"{len(files)} files · {self.view._saved_results_folder.name}")
+            self.view.saved_results_label.setToolTip(str(self.view._saved_results_folder))
+            self.view.export_summary_label.show()
         self.view._parameter_csv_paths = tuple(
             path
             for path in files
@@ -321,8 +333,7 @@ class GaitAnalysisController:
             self._append_log("No SVG or CSV output previews were available.")
             return
         self.view.output_preview_view.load_paths(self.view.state.output_preview_paths)
-        self.view.preview_stack.setCurrentWidget(self.view.output_preview_view)
-        self.view.workspace_tabs.setCurrentWidget(self.view.preview_page)
+        self.view.workspace_tabs.setCurrentWidget(self.view.results_page)
         self._append_log(f"Loaded {len(self.view.state.output_preview_paths)} generated output previews.")
 
     def _worker_finished(self) -> None:
@@ -339,6 +350,8 @@ class GaitAnalysisController:
         has_files = self.view.inputs._has_valid_inputs()
         has_output = bool(self.view.output_folder_edit.text().strip())
         running = self._processing_running()
+        self.view.progress.setVisible(running)
+        self.view.help_button.setEnabled(not running)
         self.view.import_manifest_button.setEnabled(not running)
         for control in (
             self.view.output_folder_edit,
@@ -377,6 +390,7 @@ class GaitAnalysisController:
             self._invalidate_stickplot_preview(self.view.inputs._multiview_requirement_message())
 
     def _preview_view_set_changed(self, current, _previous) -> None:
+        self.view.mapping._refresh_view_mapping_choices()
         if current is None:
             return
         if self.view.inputs._selected_view_set() is not None:
@@ -520,7 +534,7 @@ class GaitAnalysisController:
                 settings,
                 view_bodypart_mapping=view_mappings_for_set(settings, view_set.name) if view_set is not None else None,
             )
-        if self.view.use_custom_mapping_checkbox.isChecked() and (not settings.custom_bodypart_mapping):
+        if not self.view.inputs._is_three_view_mode() and self.view.use_custom_mapping_checkbox.isChecked() and (not settings.custom_bodypart_mapping):
             QMessageBox.warning(
                 self.view, "No body part mapping", "Select at least one body part mapping or turn off custom mapping."
             )
@@ -528,14 +542,14 @@ class GaitAnalysisController:
         missing_bodyparts = self.view.inputs._missing_required_bodyparts(settings)
         if missing_bodyparts:
             if self.view.inputs._is_three_view_mode():
-                self.view.mapping._open_label_matching_dialog()
+                self.view.mapping._show_label_assignments()
             else:
                 self.view.settings_tabs.setCurrentWidget(self.view.mapping_tab)
             self.view.mapping_status_label.setText("Missing required ALMA body parts: " + ", ".join(missing_bodyparts))
             QMessageBox.warning(
                 self.view,
                 "Body part mapping incomplete",
-                "ALMA needs toe, mtp, ankle, knee, hip, and iliac crest coordinates for each side view. Open Label matching and assign the left, right, and bottom labels for the selected CSV set.",
+                "Missing required tracking: " + ", ".join(missing_bodyparts) + ". The updated runway detector needs toe and hip or iliac crest; other joints are optional. Assign the required labels before previewing.",
             )
             return
         self.view.state.preview_validity.fail()
@@ -577,18 +591,18 @@ class GaitAnalysisController:
             return
         settings = replace(
             self.view.setup._collect_rustlab1_settings(),
-            view_bodypart_mapping=self.view.state.view_label_mappings.get(view_set.name),
+            view_bodypart_mapping=view_mappings_for_set(self.view.setup._collect_rustlab1_settings(), view_set.name),
         )
         missing_bodyparts = self.view.inputs._missing_rustlab1_bodyparts(view_set, settings)
         if missing_bodyparts:
-            self.view.mapping._open_label_matching_dialog()
+            self.view.mapping._show_label_assignments()
             self.view.mapping_status_label.setText(
                 "Missing required RustLab1 body parts: " + ", ".join(missing_bodyparts)
             )
             QMessageBox.warning(
                 self.view,
                 "RustLab1 label mapping incomplete",
-                "RustLab1 needs the side-view joints and bottom-view paw labels for the selected limb scope and reference paw. Open Label matching and assign the missing labels for this CSV set.",
+                "The adapted R analysis requires hindlimb side-view joints and both bottom hind paws. Assign the missing labels in the Labels section on the left.",
             )
             return
         self.view.state.preview_validity.fail()
@@ -600,7 +614,7 @@ class GaitAnalysisController:
         animate_button_emphasis(self.view.run_button, False)
         self.view.log.clear()
         self.view.status_label.setText(f"Detecting RustLab1 strides for {view_set.name}...")
-        self.view.preview_placeholder.setText(f"Generating bottom-paw speed and stride preview for {view_set.name}...")
+        self.view.preview_placeholder.setText(f"Generating R-smoothed Speed GMM previews for {view_set.name}...")
         self.view.preview_stack.setCurrentWidget(self.view.preview_placeholder)
         self.view.workspace_tabs.setCurrentWidget(self.view.preview_page)
         self.view._preview_worker = RustLab1PreviewThread(view_set, settings, preview=self.view.preview)

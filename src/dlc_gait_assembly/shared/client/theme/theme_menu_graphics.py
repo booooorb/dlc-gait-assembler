@@ -5,12 +5,10 @@ from __future__ import annotations
 from functools import lru_cache
 
 from PySide6.QtCore import QByteArray, QRectF, Qt
-from PySide6.QtGui import QFont, QFontDatabase, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import read_resource_text, resource_path
-
-ASSETS = resource_path("icons")
+from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import read_resource_text
 
 
 def menu_colors(dark: bool) -> dict[str, str]:
@@ -37,13 +35,6 @@ def menu_colors(dark: bool) -> dict[str, str]:
     )
 
 
-@lru_cache(maxsize=1)
-def menu_font() -> QFont:
-    font_id = QFontDatabase.addApplicationFont(str(resource_path("fonts", "Geist.ttf")))
-    families = QFontDatabase.applicationFontFamilies(font_id)
-    return QFont(families[0] if families else "Sans Serif")
-
-
 @lru_cache(maxsize=128)
 def menu_icon(name: str, color: str, size: int = 24) -> QIcon:
     source = read_resource_text("icons", f"{name}.svg").replace("currentColor", color)
@@ -52,6 +43,7 @@ def menu_icon(name: str, color: str, size: int = 24) -> QIcon:
     pixmap.setDevicePixelRatio(2)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
     renderer.render(painter, QRectF(0, 0, size, size))
     painter.end()
     return QIcon(pixmap)

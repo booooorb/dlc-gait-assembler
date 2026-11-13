@@ -43,6 +43,10 @@ def test_knee_analysis_manifest_round_trips_settings(tmp_path):
         ankle_bodypart="ankle",
         output_knee_bodypart="knee_corrected",
         knee_direction="positive",
+        adapt_infeasible_lengths=False,
+        fallback_femur_tibia_ratio=0.85,
+        adjusted_confidence_cap=0.15,
+        fill_missing_coordinates=False,
     )
     write_knee_analysis_manifest(destination, settings)
     manifest = read_knee_analysis_manifest(destination)

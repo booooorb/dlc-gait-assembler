@@ -54,6 +54,10 @@ class KneeCorrectionSettings:
     ankle_bodypart: str | None = None
     output_knee_bodypart: str = "knee"
     knee_direction: str = "auto"
+    adapt_infeasible_lengths: bool = True
+    fallback_femur_tibia_ratio: float = 0.83
+    adjusted_confidence_cap: float = 0.25
+    fill_missing_coordinates: bool = True
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,12 @@ class KneeMarkerReport:
     corrected_frames: int
     retained_frames: int
     frame_statuses: tuple[str, ...]
+    frame_methods: tuple[str, ...] = ()
+    frame_confidences: tuple[float, ...] = ()
+    frame_lengths: tuple[tuple[float | None, float | None], ...] = ()
+    fallback_femur_tibia_ratio: float = 0.83
+    source_likelihood_threshold: float = 0.0
+    adjusted_confidence_cap: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -76,3 +86,4 @@ class KneeCorrectionResult:
     output_csv: Path
     output_h5: Path
     markers: tuple[KneeMarkerReport, ...]
+    report_path: Path | None = None

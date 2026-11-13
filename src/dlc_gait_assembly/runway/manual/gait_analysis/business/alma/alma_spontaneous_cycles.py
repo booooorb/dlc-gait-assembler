@@ -5,9 +5,6 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from sklearn.mixture import GaussianMixture
-
-from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_signal_filter import butterworth_filter
 
 
 def toe_contact_threshold(toe_y, toe_likelihood=None, likelihood_min=0.5):
@@ -27,6 +24,8 @@ def toe_contact_threshold(toe_y, toe_likelihood=None, likelihood_min=0.5):
         return (np.nan, np.nan)
     if len(y_valid) >= 8 and np.nanstd(y_valid) > 1e-06:
         try:
+            from sklearn.mixture import GaussianMixture
+
             gm = GaussianMixture(n_components=2, random_state=0).fit(y_valid.reshape(-1, 1))
             means = gm.means_.reshape(-1)
             ground_index = int(np.argmax(means))
@@ -128,6 +127,8 @@ def detect_dragging_movement_cycles(pd_dataframe, frame_rate, cutoff_f, right_to
     bodypart = "toe"
     x_coords = pd_dataframe[f"{bodypart} x"][pd_dataframe[f"{bodypart} likelihood"] > 0.5]
     x_change = np.diff(x_coords)
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_signal_filter import butterworth_filter
+
     x_change_smooth = butterworth_filter(np.concatenate([[0], x_change]), frame_rate, cutoff_f)
     zero_crossings = []
     for i in range(1, len(x_change_smooth)):

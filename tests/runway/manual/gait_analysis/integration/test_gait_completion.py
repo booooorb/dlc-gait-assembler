@@ -44,7 +44,7 @@ def test_map_only_settings_apply_to_export_and_preview(tmp_path, alma_fixtures_d
     assert any("Calibration: 25.0 px/cm" in message for message in messages)
 
 
-def test_selected_profile_map_replaces_shared_snapshot_only(tmp_path):
+def test_selected_profile_map_cannot_override_per_view_calibration(tmp_path):
     from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
         alma_settings_from_manifest,
         write_analysis_manifest,
@@ -55,8 +55,24 @@ def test_selected_profile_map_replaces_shared_snapshot_only(tmp_path):
     )
     loaded = alma_settings_from_manifest(manifest, write_map(tmp_path / "map.json", 25.0))
     resolved = resolve_calibration_settings(loaded)
-    assert resolved.pixels_per_cm == 25.0
+    assert resolved.pixels_per_cm is None
+    assert resolved.calibration_method == "per_view"
     assert resolved.view_calibration["left"]["pixels_per_cm"] == 80.0
+
+
+def test_selected_profile_map_replaces_only_shared_map_mode(tmp_path):
+    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
+        alma_settings_from_manifest,
+        write_analysis_manifest,
+    )
+
+    manifest = write_analysis_manifest(
+        tmp_path / "shared.json", AlmaSettings(calibration_method="map", pixels_per_cm=50.0)
+    )
+    resolved = resolve_calibration_settings(alma_settings_from_manifest(manifest, write_map(tmp_path / "map.json", 25)))
+    assert resolved.calibration_method == "map"
+    assert resolved.pixels_per_cm == 25.0
+    assert resolved.view_calibration is None
 
 
 def test_analysis_worker_accepts_map_only_scale(tmp_path):
@@ -132,6 +148,7 @@ def test_reference_segment_is_estimated_per_side_and_shared_with_post_features(t
         analysis_type="Spontaneous walking",
         pixels_per_cm=None,
         calibration_method="reference",
+        reference_length_cm=1.5,
         likelihood_threshold=0.0,
         no_outlier_filter=True,
     )
@@ -143,7 +160,7 @@ def test_reference_segment_is_estimated_per_side_and_shared_with_post_features(t
     np.testing.assert_allclose(table["left__stride length (cm)"], table["right__stride length (cm)"], equal_nan=True)
     np.testing.assert_allclose(table["l-back-ankle__Movement"], table["r-back-ankle__Movement"], equal_nan=True)
     np.testing.assert_allclose(
-        table["left_knee_vertical_excursion"], table["right_knee_vertical_excursion"], equal_nan=True
+        table["left__step height (cm)"], table["right__step height (cm)"], equal_nan=True
     )
 
 

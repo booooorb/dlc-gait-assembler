@@ -53,14 +53,15 @@ def test_gait_analysis_exposes_separate_three_view_rustlab1_workflow():
     assert widget.setup_box.title() == "RustLab1 recording"
     assert widget.speed_box.title() == "Recording timing"
     assert not widget.settings_tabs.isTabVisible(2)
-    assert not widget.settings_tabs.isTabVisible(4)
-    assert widget.settings_tabs.tabText(3) == "Stride QC"
+    assert widget.settings_tabs.isTabVisible(4)
+    assert widget.settings_tabs.tabText(3) == "Speed GMM"
+    assert not widget.settings_tabs.isTabVisible(5)
     assert not widget.rustlab_detector_box.isHidden()
     assert widget.filter_box.isHidden()
     assert widget.stroke_filter_box.isHidden()
     assert widget.output_options_box.isHidden()
-    assert widget.preview_button.text() == "1. Generate RustLab1 stick-plot preview"
-    assert widget.run_button.text() == "2. Run RustLab1 analysis"
+    assert widget.preview_button.text() == "Preview strides"
+    assert widget.run_button.text() == "Analyze and save"
     assert widget.export_manifest_button.isHidden()
     assert widget.rustlab1_checkbox.isHidden()
     assert not widget.rustlab_standalone_figures_checkbox.isHidden()
@@ -71,32 +72,27 @@ def test_gait_analysis_exposes_separate_three_view_rustlab1_workflow():
     }
     assert visible_sources == {"RustLab1"}
     settings = widget.setup._collect_rustlab1_settings()
-    assert settings.reference_paw == "d-back-left"
-    assert settings.stance_speed_threshold_px_frame == 7.0
-    assert settings.maximum_tracking_speed_px_frame == 100.0
-    assert settings.likelihood_threshold == 0.95
+    assert settings.limb_scope == "Hindlimb"
+    assert settings.enabled_parameter_names is None
+    assert settings.maximum_coordinate_gap_frames == 11
+    assert settings.likelihood_threshold == 0.5
     assert settings.minimum_complete_strides == 1
     widget.rustlab_filter_cutoff_spin.setValue(8.0)
     widget.filter_cutoff_spin.setValue(3.0)
-    widget.rustlab_max_tracking_speed_spin.setValue(125.0)
-    widget.rustlab_min_stance_spin.setValue(2)
-    widget.rustlab_min_swing_spin.setValue(3)
+    widget.rustlab_coordinate_gap_spin.setValue(6)
     widget.rustlab_min_strides_spin.setValue(4)
+    widget.calibration_method_combo.setCurrentText("Calibration by view")
     widget.bottom_x_pixels_per_cm_spin.setValue(31.367)
     widget.rustlab_standalone_figures_checkbox.setChecked(False)
     configured = widget.setup._collect_rustlab1_settings()
     assert configured.filter_cutoff == 8.0
-    assert configured.maximum_tracking_speed_px_frame == 125.0
-    assert configured.minimum_stance_frames == 2
-    assert configured.minimum_swing_frames == 3
+    assert configured.maximum_coordinate_gap_frames == 6
     assert configured.minimum_complete_strides == 4
     assert configured.view_calibration == {"bottom": {"x_pixels_per_cm": pytest.approx(31.367)}}
     assert configured.generate_figures is False
     widget.frame_rate_spin.setValue(20.0)
     assert widget.rustlab_filter_cutoff_spin.maximum() == pytest.approx(9.9)
     assert widget.rustlab_filter_cutoff_spin.value() <= 9.9
-    widget.rustlab_stance_speed_spin.setValue(15.0)
-    assert widget.rustlab_max_tracking_speed_spin.minimum() == pytest.approx(15.1)
     widget.workflow_combo.setCurrentText(ALMA_WORKFLOW_LABEL)
     app.processEvents()
     assert widget.input_mode_combo.isEnabled()
@@ -109,15 +105,37 @@ def test_gait_analysis_exposes_separate_three_view_rustlab1_workflow():
     assert widget.rustlab_detector_box.isHidden()
     assert not widget.filter_box.isHidden()
     assert not widget.output_options_box.isHidden()
-    assert widget.run_button.text() == "2. Analyze and save outputs"
+    assert widget.run_button.text() == "Analyze and save"
     assert not widget.export_manifest_button.isHidden()
-    assert not widget.rustlab1_checkbox.isHidden()
+    assert widget.rustlab1_checkbox.isHidden()
+    assert widget.setup._collect_settings().output_format == "alma"
     assert widget.rustlab_standalone_figures_checkbox.isHidden()
     assert not widget.bottom_y_pixels_per_cm_spin.isHidden()
     assert any(
         definition.source == "ALMA" and (not item.isHidden())
         for (definition, item) in widget.parameter_selection._items
     )
+    widget.close()
+    app.processEvents()
+
+
+def test_standalone_gui_accepts_reference_lh_paw_and_rh_paw_labels():
+    app = QApplication.instance() or QApplication([])
+    widget = AlmaKinematicsWidget(
+        preview=create_gait_preview(), analysis=create_gait_analysis_operations(), workspace=resolve_workspace()
+    )
+    widget.workflow_combo.setCurrentText(RUSTLAB1_WORKFLOW_LABEL)
+    fixture = Path(__file__).parents[4] / "fixtures" / "gait" / "rustlab1_r_reference"
+    widget.inputs._add_csv_paths([fixture / (side + ".csv") for side in ("left", "right", "bottom")])
+    assert len(widget.state.view_sets) == 1
+    inputs = widget.state.view_sets[0]
+    assert widget.inputs._missing_rustlab1_bodyparts(inputs, widget.setup._collect_rustlab1_settings()) == []
+    widget.frame_rate_spin.setValue(239.76)
+    widget.calibration_method_combo.setCurrentIndex(widget.calibration_method_combo.findData("manual"))
+    widget.pixels_per_cm_spin.setValue(31.3667)
+    settings = widget.setup._collect_rustlab1_settings()
+    assert settings.frame_rate == pytest.approx(239.76)
+    assert settings.pixels_per_cm == pytest.approx(31.3667)
     widget.close()
     app.processEvents()
 
@@ -178,18 +196,18 @@ def test_standalone_gui_routes_preview_and_run_only_to_rustlab1(tmp_path, monkey
         _write_minimal_dlc_csv(path)
     widget.inputs._add_csv_paths(paths)
     widget.inputs._missing_rustlab1_bodyparts = lambda *_args: []
-    widget.rustlab_reference_paw_combo.setCurrentText("Right hind paw")
+    widget.rustlab_likelihood_spin.setValue(0.62)
     widget.controller._generate_stickplot_preview()
     assert captured["preview_started"] is True
     assert captured["preview_view_set"].name == "mouse"
-    assert captured["preview_settings"].reference_paw == "d-back-right"
+    assert captured["preview_settings"].likelihood_threshold == 0.62
     widget.state.preview_validity.complete()
     widget.output_folder_edit.setText(str(tmp_path / "rustlab-results"))
     widget.controller._run_analysis()
     assert captured["run_started"] is True
     assert [view_set.name for view_set in captured["run_view_sets"]] == ["mouse"]
     assert captured["output_folder"] == (tmp_path / "rustlab-results").resolve()
-    assert captured["run_settings"].reference_paw == "d-back-right"
+    assert captured["run_settings"].likelihood_threshold == 0.62
     widget.close()
     app.processEvents()
 

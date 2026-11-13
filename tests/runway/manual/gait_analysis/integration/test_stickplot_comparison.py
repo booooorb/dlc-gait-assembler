@@ -48,7 +48,7 @@ def paired_recording(tmp_path, alma_fixtures_dir):
         }
     )
     bottom_path = tmp_path / "bottom.csv"
-    bottom.to_csv(bottom_path, index=False)
+    bottom.to_csv(bottom_path)
     return (("Left", side), ("Right", side), ("Bottom", bottom_path))
 
 
@@ -66,7 +66,7 @@ def skeleton_geometry(svg):
     return result
 
 
-def test_all_methods_draw_identical_full_recording_geometry(paired_recording):
+def test_alternative_methods_keep_geometry_and_alma_uses_native_plots(paired_recording):
     cfg = AlmaSettings(
         analysis_type="Spontaneous walking", pixels_per_cm=50.0, likelihood_threshold=0.0, n_continuous_strides=1
     )
@@ -80,6 +80,10 @@ def test_all_methods_draw_identical_full_recording_geometry(paired_recording):
         assert len(plots) == 2, (method, message)
         for label, svg in plots:
             text = svg.decode()
+            if method in {"ALMA (legacy)", "ALMA (confidence-aware runway)"}:
+                assert not skeleton_geometry(svg)
+                assert "Native ALMA stick plot" in message
+                continue
             geometry = skeleton_geometry(svg)
             assert set(frame for frame, _ in geometry) == set(range(frame_count))
             assert geometry == expected.setdefault(label, geometry), method
@@ -89,7 +93,7 @@ def test_all_methods_draw_identical_full_recording_geometry(paired_recording):
     assert len(sizes) == 1
     assert max(counts) > 1  # The obsolete display limit is ignored.
     # The standalone preview must use exactly the same coordinates and axes too.
-    for label, svg in preview.prepare(paired_recording, cfg)[0]:
+    for label, svg in preview.prepare(paired_recording, replace(cfg, stride_detection_method="Adaptive paw speed"))[0]:
         assert skeleton_geometry(svg) == expected[label]
 
 

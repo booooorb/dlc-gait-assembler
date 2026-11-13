@@ -18,7 +18,7 @@ class AutomaticProfileReadinessPanel:
         selected_models = sum(path is not None for path in self.view.profile_state.model_sources.values())
         total_models = len(self.view.profile_state.regions)
         model_state = "ready" if total_models and selected_models == total_models else "missing"
-        model_text = f"{selected_models} / {total_models} selected" if total_models else "Needs manifest"
+        model_text = f"{selected_models} / {total_models} selected" if total_models else "Needs video settings"
         self._set_profile_readiness_value(
             "manifest",
             "Selected" if self.view.profile_state.manifest_source is not None else "Required",
@@ -29,13 +29,11 @@ class AutomaticProfileReadinessPanel:
             "calibration",
             "Selected"
             if gait_enabled and self.view.profile_state.calibration_source is not None
-            else "Required"
+            else "From gait settings"
             if gait_enabled
             else "Excluded",
             "ready"
             if gait_enabled and self.view.profile_state.calibration_source is not None
-            else "missing"
-            if gait_enabled
             else "optional",
         )
         self._set_profile_readiness_value(
@@ -108,7 +106,7 @@ def build_automatic_profile_readiness(self):
         readiness_layout.addLayout(row)
         self.profile_readiness_values[key] = value
     readiness_layout.addStretch(1)
-    self.status_label = QLabel("Start with the video processing manifest in step 1.")
+    self.status_label = QLabel("Save Video settings to define the regions that need models.")
     self.status_label.setObjectName("ProfileStatusLabel")
     self.status_label.setWordWrap(True)
     readiness_layout.addWidget(self.status_label)

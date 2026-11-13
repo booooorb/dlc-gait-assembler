@@ -19,6 +19,35 @@ class GaitAnalysisStyle:
 
     def _apply_style(self) -> None:
         runway_tab_style = """
+            QWidget#WorkspaceHeader {
+                border-radius: 0;
+                border-bottom: 1px solid {theme.BORDER};
+            }
+            QWidget#WorkspaceCanvas {
+                background: {theme.SURFACE};
+                background-image: none;
+                border-radius: 0;
+            }
+            QWidget#WorkspaceSidebar QGroupBox {
+                background: transparent;
+                border: 0;
+                border-top: 1px solid {theme.BORDER};
+                border-radius: 0;
+                margin-top: 16px;
+                padding: 12px 0 4px 0;
+            }
+            QWidget#WorkspaceSidebar QGroupBox::title {
+                background: {theme.PANEL};
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px 0 0;
+            }
+            QToolButton#GaitDisclosureButton {
+                background: transparent;
+                border: 0;
+                padding: 5px 0;
+                text-align: left;
+            }
             QTabWidget#RunwaySettingsTabs {
                 background: {theme.PANEL};
             }
@@ -77,7 +106,7 @@ class GaitAnalysisStyle:
                 color: {theme.CONNECTOR};
                 border: 0;
                 border-bottom: 3px solid transparent;
-                min-width: 120px;
+                min-width: 70px;
                 padding: 8px 12px;
             }
             QTabWidget#RunwayWorkspaceTabs QTabBar::tab:hover {
@@ -116,7 +145,6 @@ class GaitAnalysisStyle:
             }
             QWidget#GaitParameterReference {
                 background: {theme.BACKGROUND};
-                background-image: url({theme.BACKGROUND_TEXTURE});
             }
             QLabel#ParameterReferenceTitle {
                 color: {theme.TEXT};
@@ -255,17 +283,16 @@ class GaitAnalysisStyle:
         icon_specs = (
             (self.view.add_file_button, "plus", theme.TEXT),
             (self.view.add_folder_button, "folder", theme.TEXT),
-            (self.view.clear_files_button, "clear", theme.STATUS_ERROR),
+            (self.view.clear_files_button, "clear", "#FFFFFF"),
             (self.view.output_folder_button, "folder", theme.TEXT),
-            (self.view.load_fps_button, "upload", theme.TEXT),
             (self.view.import_calibration_map_button, "upload", theme.TEXT),
             (self.view.export_manifest_button, "download", theme.TEXT),
             (self.view.preview_button, "eye", theme.TEXT),
             (self.view.run_button, "play", theme.PRIMARY_TEXT),
-            (self.view.figure_reference_button, "chart", theme.TEXT),
-            (self.view.parameter_reference_button, "document", theme.TEXT),
             (self.view.documentation_back_button, "arrow-left", theme.TEXT),
         )
         for button, icon_name, color in icon_specs:
             button.setIcon(interface_icon(icon_name, color))
             button.setIconSize(QSize(16, 16))
+        self.view.figure_reference_action.setIcon(interface_icon("chart", theme.TEXT))
+        self.view.parameter_reference_action.setIcon(interface_icon("document", theme.TEXT))

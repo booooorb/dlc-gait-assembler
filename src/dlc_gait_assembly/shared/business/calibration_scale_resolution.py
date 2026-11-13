@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from dlc_gait_assembly.shared.business.calibration_map_contracts import CalibrationConversionMap
 
 
@@ -10,16 +12,23 @@ def pixels_per_cm_from_conversion_node(node: dict | None) -> float | None:
         return None
     for key in ("mean_pixels_per_centimeter", "pixels_per_centimeter"):
         value = node.get(key)
-        if value:
+        if positive(value):
             return float(value)
-    centimeters_per_pixel = node.get("centimeters_per_pixel")
-    if centimeters_per_pixel:
+    centimeters_per_pixel = node.get("centimeters_per_pixel", node.get("mean_centimeters_per_pixel"))
+    if positive(centimeters_per_pixel):
         return 1.0 / float(centimeters_per_pixel)
     axis_values = [node.get("recommended_x_centimeters_per_pixel"), node.get("recommended_y_centimeters_per_pixel")]
-    axis_values = [float(value) for value in axis_values if value]
+    axis_values = [float(value) for value in axis_values if positive(value)]
     if axis_values:
         return 1.0 / (sum(axis_values) / len(axis_values))
     return None
+
+
+def positive(value):
+    try:
+        return not isinstance(value, bool) and math.isfinite(float(value)) and float(value) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def resolve_calibration_scale(payload: CalibrationConversionMap, view_index: int | None = None) -> tuple[float, str]:
@@ -29,6 +38,7 @@ def resolve_calibration_scale(payload: CalibrationConversionMap, view_index: int
         value = pixels_per_cm_from_conversion_node(view)
         if value is not None:
             return (value, f"view {view_index}")
+        raise ValueError(f"Calibration map has no usable scale for view {view_index}.")
     overall_value = pixels_per_cm_from_conversion_node(conversion_map.get("overall"))
     if overall_value is not None:
         return (overall_value, "overall")

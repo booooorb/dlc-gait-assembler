@@ -659,7 +659,7 @@ def _treadmill_real_alma_demo_settings() -> AlmaSettings:
         analysis_type="Treadmill",
         treadmill_speed_cm_s=30.0,
         frame_rate=120.0,
-        calibration_method="reference",
+        calibration_method="treadmill",  # The upstream fixture derives scale from belt speed.
         reference_segment="ankle_toe",
         reference_length_cm=1.5,
         right_to_left="auto",
@@ -688,15 +688,20 @@ def _assert_generated_parameters_match_real_alma(
     assert len(results) == 1
     assert actual_output in results[0].output_files
     assert actual_output.exists()
-    assert len(list(tmp_path.rglob("*.csv"))) == 2
+    assert len(list(tmp_path.rglob("*.csv"))) == 4
+    assert len(list(tmp_path.rglob("*_analysis_report.json"))) == 1
     assert all(path.is_file() for path in results[0].output_files)
     actual = pd.read_csv(actual_output)
     expected = pd.read_csv(expected_parameters_csv)
     columns = ["stride_start (frame)", "stride_end (frame)", *ALMA_PARAMETER_NAMES]
+    # The supplied update corrects drag run endpoints; other measurements retain
+    # the established demo baseline. Whole-run drag correctness is tested separately.
+    columns = [name for name in columns if name not in {"drag duration (s)", "drag percentage (%)"}]
     actual = actual.loc[:, columns]
     expected = expected.loc[:, columns]
     for name in ("stance percentage (%)", "swing percentage (%)", "drag percentage (%)"):
-        expected[name] *= 100.0
+        if name in expected:
+            expected[name] *= 100.0
     assert actual.shape == expected.shape
     assert_frame_equal(actual.isna(), expected.isna(), check_exact=True)
     cycle_columns = ["stride_start (frame)", "stride_end (frame)", "cycle duration (no. frames)"]
@@ -724,6 +729,7 @@ def _assert_robust_spontaneous_parameters(
     assert len(results) == 1
     assert actual_path in results[0].output_files
     from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_stride_export import STRIDE_DETAIL_COLUMNS
+    from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.stroke_recovery_parameter_definitions import STROKE_STRIDE_NAMES
 
     assert list(actual.columns) == [
         "recording",
@@ -737,6 +743,7 @@ def _assert_robust_spontaneous_parameters(
         "stride_stop (s)",
         "source_start_frame",
         "source_end_frame",
+        *STROKE_STRIDE_NAMES,
     ]
     assert actual["stride_number"].tolist() == list(range(1, expected_rows + 1))
     assert len(actual) == expected_rows

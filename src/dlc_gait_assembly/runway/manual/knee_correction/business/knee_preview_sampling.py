@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
 
 def bodypart_point(dataframe, bodypart: str, position: int) -> tuple[float, float] | None:
     x_column = next(
@@ -16,10 +18,11 @@ def bodypart_point(dataframe, bodypart: str, position: int) -> tuple[float, floa
         return None
     x = float(dataframe.iloc[position][x_column])
     y = float(dataframe.iloc[position][y_column])
-    if not (x == x and y == y):
+    if not (isfinite(x) and isfinite(y)):
         return None
     return (x, y)
 
 
 def previewable_frame_positions(frame_statuses: tuple[str, ...]) -> tuple[int, ...]:
-    return tuple(index for (index, status) in enumerate(frame_statuses) if not status.startswith("Low-confidence"))
+    # Weak estimates must remain inspectable and must not disappear from review.
+    return tuple(range(len(frame_statuses)))

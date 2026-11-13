@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSize, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMainWindow, QWidget
 
@@ -18,6 +18,7 @@ from dlc_gait_assembly.app.client.app_shell_styles import (
     WINDOW_SCREEN_MARGIN,
     AppShellStyle,
 )
+from dlc_gait_assembly.app.client.workflow_profile_controller import WorkflowProfileController
 from dlc_gait_assembly.shared.client.qt_page_stack import CurrentPageStackedWidget
 
 
@@ -55,14 +56,13 @@ class MainWindow(QMainWindow):
         self._stack = CurrentPageStackedWidget()
         self._main_menu = self._menu_factory(self._tool_specs)
         self._main_menu.tool_requested.connect(self.routes._open_tool)
-        self._main_menu.runway_requested.connect(self.routes._show_runway_menu)
-        self._main_menu.automated_requested.connect(self.routes._show_automated_pipeline)
-        self._main_menu.profiles_requested.connect(self.routes._show_automated_profiles)
-        self._main_menu.manual_requested.connect(self.routes._show_main_menu)
-        self._main_menu.pipeline_tabs.currentChanged.connect(self.routes._pipeline_tab_changed)
         self._main_menu.automated_profiles.workspace_changed.connect(self.routes._automated_workspace_changed)
         self._main_menu.automated_profiles.manual_tool_requested.connect(self.routes._open_tool)
         self._stack.addWidget(self._main_menu)
+        self.workflows = WorkflowProfileController(self)
+        self._main_menu.runway_requested.connect(
+            lambda: self.workflows.show_picker(self.routes._open_manual_workspace)
+        )
         self.header._build_shell(initial_theme_mode)
         if initial_tool_id is None:
             self.routes._show_home_menu()
@@ -70,12 +70,16 @@ class MainWindow(QMainWindow):
             self.routes._open_tool(initial_tool_id)
 
     def closeEvent(self, event):
+        if not self.workflows._can_switch():
+            event.ignore()
+            return
         for tool in self._tool_widgets.values():
             if not tool.can_close(self):
                 event.ignore()
                 return
         if hasattr(self, "updates"):
             self.updates.shutdown()
+        self.workflows.timer.stop()
         self._main_menu.automated_profiles.close()
         self.routes._release_all_tools()
         super().closeEvent(event)
@@ -84,6 +88,8 @@ class MainWindow(QMainWindow):
         self.styling._apply_shell_style()
         for logo in self.findChildren(PartnerLogoLabel):
             logo.apply_theme()
+        self.workflows.apply_bar_theme()
+        self.header._update_header_layout()
         self._main_menu._apply_style()
         for tool in self._tool_widgets.values():
             tool.apply_theme()
@@ -98,6 +104,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self.workflows.timer.start()
         if hasattr(self, "_primary_navigation_highlight"):
             self.animations._snap_primary_navigation_highlight()
         if getattr(self, "_manual_stage_expanded", False):
@@ -108,22 +115,9 @@ class MainWindow(QMainWindow):
         if getattr(self, "_manual_stage_expanded", False):
             self.animations._snap_manual_stage_highlight()
         if hasattr(self, "_settings_button"):
-            style = Qt.ToolButtonIconOnly if self.width() < 1240 else Qt.ToolButtonTextBesideIcon
-            self._settings_button.setToolButtonStyle(style)
-            self._credits_button.setToolButtonStyle(style)
-        if hasattr(self, "_runway_mode_highlight"):
-            QTimer.singleShot(0, self.animations._snap_runway_mode_highlight)
-
-    def eventFilter(self, watched, event) -> bool:
-        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.LayoutRequest):
-            if watched in (
-                self._runway_options,
-                self._automation_run_button,
-                self._automation_profiles_button,
-                self._runway_manual_button,
-            ):
-                QTimer.singleShot(0, self.animations._settle_runway_highlight)
-        return super().eventFilter(watched, event)
+            self.header._update_header_layout()
+        if hasattr(self, "_primary_navigation_highlight"):
+            QTimer.singleShot(0, self.animations._snap_primary_navigation_highlight)
 
     @staticmethod
     def _screen_aware_initial_size() -> QSize:

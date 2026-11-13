@@ -16,7 +16,7 @@ PIPELINE_REVIEW_GATES = {
         "description": "Verify each crop. Double-click a video to enlarge it.",
         "preview": "Processed region-video previews appear here.",
         "setting": "video processing manifest",
-        "tab": 0,
+        "section": "video",
         "replay_stage": 0,
     },
     3: {
@@ -24,7 +24,7 @@ PIPELINE_REVIEW_GATES = {
         "description": "Verify the knee-corrected tracking overlays. Double-click to enlarge.",
         "preview": "DeepLabCut overlay-video previews appear here.",
         "setting": "region model configuration",
-        "tab": 1,
+        "section": "models",
         "replay_stage": 3,
     },
     4: {
@@ -32,7 +32,7 @@ PIPELINE_REVIEW_GATES = {
         "description": "Verify the stickplot. Click to enlarge.",
         "preview": "The generated stickplot preview appears here.",
         "setting": "gait analysis manifest",
-        "tab": 2,
+        "section": "analysis",
         "replay_stage": 4,
     },
 }

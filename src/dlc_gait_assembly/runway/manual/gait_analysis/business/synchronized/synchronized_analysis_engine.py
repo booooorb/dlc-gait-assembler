@@ -5,11 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from dlc_gait_assembly.runway.manual.gait_analysis.business.custom_features.custom_sop_feature_calculations import (
-    extract_custom_sop_parameters,
-)
-from dlc_gait_assembly.runway.manual.gait_analysis.business.custom_features.custom_sop_feature_definitions import (
-    CUSTOM_SOP_PARAMETER_NAMES,
+from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.retired_custom_parameters import (
+    without_custom_parameters,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.rustlab1_parameter_definitions import (
     rustlab1_parameter_names_for_scope,
@@ -110,9 +107,6 @@ def calculate_synchronized_recording(merged, view_set, settings, left_parameters
         rustlab_features = align_feature_rows_to_cycles(cycles, rustlab.dataframe, enabled_rustlab, pd, np)
         if rustlab.missing_markers:
             messages.append("Missing RustLab1 markers: " + ", ".join(rustlab.missing_markers))
-    enabled_custom = _selected_parameter_names(settings, CUSTOM_SOP_PARAMETER_NAMES)
-    custom_extraction = extract_custom_sop_parameters(merged, left_parameters, settings, kinematics, preprocessed)
-    custom = align_feature_rows_to_cycles(cycles, custom_extraction.dataframe, enabled_custom, pd, np)
     metadata_frame = _metadata_frame(metadata, cycles, pd)
     stride_features = pd.concat(
         [
@@ -128,10 +122,10 @@ def calculate_synchronized_recording(merged, view_set, settings, left_parameters
             left_aligned,
             right_aligned,
             rustlab_features,
-            custom,
         ],
         axis=1,
     )
+    stride_features = without_custom_parameters(stride_features)
     stride_features = add_asymmetry_features(stride_features, metadata.lesion_hemisphere, np)
     stride_features["hindlimb_phase_offset_deviation_from_baseline"] = np.nan
     session_summary = summarize_session(stride_features, metadata, trajectory_qc, session_usable, pd, np)
@@ -182,7 +176,7 @@ def calculate_synchronized_recording(merged, view_set, settings, left_parameters
         messages.append(f"Stroke pilot QC: {valid_count} valid synchronized cycles.")
     return SynchronizedRecordingCalculation(
         {
-            "canonical_cycles": cycles,
+            "canonical_cycles": without_custom_parameters(cycles),
             "stride_features": stride_features,
             "session_summary": session_summary,
             "primary_stroke_panel": primary_panel,

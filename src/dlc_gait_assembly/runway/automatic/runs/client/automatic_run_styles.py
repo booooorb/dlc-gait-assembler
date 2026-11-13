@@ -93,7 +93,6 @@ QLabel#RunReadinessBadge[readinessState="review"] {
         25,
         """QStackedWidget#AutomationInputStack {
     background: {theme.BACKGROUND};
-    background-image: url({theme.BACKGROUND_TEXTURE});
     border: 0;
 }
 """,
@@ -376,10 +375,10 @@ QLabel#PipelineLogState[logState="complete"] {
     ),
     (
         65,
-        """QPushButton#RemoveButton, QPushButton#ClearButton {
+        """QPushButton#RemoveButton {
     background: {theme.SURFACE};
     border: 1px solid {theme.STATUS_ERROR};
-    border-radius: 2px;
+    border-radius: 0;
     color: {theme.STATUS_ERROR};
     font-weight: 650;
 }
@@ -387,7 +386,7 @@ QLabel#PipelineLogState[logState="complete"] {
     ),
     (
         66,
-        """QPushButton#RemoveButton:hover, QPushButton#ClearButton:hover {
+        """QPushButton#RemoveButton:hover {
     background: {theme.PANEL};
     border-color: {theme.STATUS_ERROR};
     color: {theme.STATUS_ERROR};
@@ -396,7 +395,7 @@ QLabel#PipelineLogState[logState="complete"] {
     ),
     (
         67,
-        """QPushButton#RemoveButton:pressed, QPushButton#ClearButton:pressed {
+        """QPushButton#RemoveButton:pressed {
     background: {theme.SOFT};
     border-color: {theme.STATUS_ERROR};
     color: {theme.STATUS_ERROR};
@@ -405,7 +404,7 @@ QLabel#PipelineLogState[logState="complete"] {
     ),
     (
         68,
-        """QPushButton#RemoveButton:disabled, QPushButton#ClearButton:disabled {
+        """QPushButton#RemoveButton:disabled {
     background: {theme.PANEL};
     border-color: {theme.STATUS_ERROR};
     color: {theme.STATUS_ERROR};

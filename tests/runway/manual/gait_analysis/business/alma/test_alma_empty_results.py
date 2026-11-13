@@ -80,7 +80,7 @@ def test_no_cycles_exports_empty_parameters_without_crashing(tmp_path, alma_fixt
     assert len(results) == 1
     assert not (output / "gait_parameters.csv").exists()
     sides = ("left", "right") if multiview else ("side",)
-    assert len(list(output.rglob("*.csv"))) == len(sides) + 1
+    assert len(list(output.rglob("*.csv"))) == len(sides) + 2
     general = pd.read_csv(next(output.rglob("general_parameters.csv")))
     assert len(general) == 1
     from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.alma_parameter_definitions import (

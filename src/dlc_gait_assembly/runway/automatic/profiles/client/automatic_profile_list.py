@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton
 
+from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
+
 
 def build_automatic_profile_list(self, configuration_layout):
     configuration_toolbar = QFrame()
@@ -35,7 +37,7 @@ def build_automatic_profile_list(self, configuration_layout):
     management_layout.addWidget(self._field_label("Profile"))
     self.configuration_profile_selector = QComboBox()
     self.configuration_profile_selector.setObjectName("ConfigurationProfileSelector")
-    self.configuration_profile_selector.setToolTip("Load an existing profile into the form for inspection or editing.")
+    set_tooltip(self.configuration_profile_selector, 'Load an existing profile into the form for inspection or editing.')
     management_layout.addWidget(self.configuration_profile_selector, 1)
     self.duplicate_profile_button = QPushButton("Duplicate profile")
     self.duplicate_profile_button.setObjectName("DuplicateProfileButton")
@@ -47,9 +49,7 @@ def build_automatic_profile_list(self, configuration_layout):
     self.profile_name = QLineEdit()
     self.profile_name.setObjectName("ProfileNameInput")
     self.profile_name.setPlaceholderText("Example: Treadmill camera setup")
-    self.profile_name.setToolTip(
-        "Enter a recognizable name for this complete automation setup, such as the camera position, animal group, or experiment type."
-    )
+    set_tooltip(self.profile_name, 'Enter a recognizable name for this complete automation setup, such as the camera position, animal group, or experiment type.')
     management_layout.addWidget(self.profile_name, 1)
     self.delete_profile_button = QPushButton("Delete profile")
     self.delete_profile_button.setObjectName("DeleteProfileButton")

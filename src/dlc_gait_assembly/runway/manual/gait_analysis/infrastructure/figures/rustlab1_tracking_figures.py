@@ -159,7 +159,8 @@ def plot_normalized_marker_overview(context, plt):
 
 def plot_down_paw_speed(context, plt):
     (figure, axis) = plt.subplots(figsize=(8.5, 4.5))
-    pixels_per_cm = context["bottom_pixels_per_cm"] or 49.143
+    pixels_per_cm = context["bottom_pixels_per_cm"]
+    speed_factor = context["frame_rate"] / pixels_per_cm if pixels_per_cm else 1.0
     plotted = False
     series = [("d-back-left", "#ef4444"), ("d-back-right", "#2563eb")]
     if context["include_forelimb"]:
@@ -170,18 +171,18 @@ def plot_down_paw_speed(context, plt):
             continue
         speed_px = context["np"].abs(context["np"].diff(x))
         valid = context["np"].isfinite(speed_px)
-        speed = speed_px[valid] * context["frame_rate"] / pixels_per_cm
+        speed = speed_px[valid] * speed_factor
         if len(speed) == 0:
             continue
         axis.hist(speed, bins=30, alpha=0.42, label=marker, color=color)
         plotted = True
     threshold_px = context["stance_speed_threshold_px_frame"]
-    threshold = threshold_px * context["frame_rate"] / pixels_per_cm
+    threshold = threshold_px * speed_factor
     axis.axvline(
         threshold, color="#111827", linestyle="--", linewidth=1.2, label=f"{threshold_px:g} px/frame stance threshold"
     )
     tracking_limit_px = context["maximum_tracking_speed_px_frame"]
-    tracking_limit = tracking_limit_px * context["frame_rate"] / pixels_per_cm
+    tracking_limit = tracking_limit_px * speed_factor
     axis.axvline(
         tracking_limit,
         color="#dc2626",
@@ -193,7 +194,7 @@ def plot_down_paw_speed(context, plt):
         axis.legend(fontsize=8)
     else:
         _no_data(axis)
-    axis.set_xlabel("Paw x-speed (cm/s)")
+    axis.set_xlabel("Paw x-speed (cm/s)" if pixels_per_cm else "Paw x-speed (px/frame; bottom uncalibrated)")
     axis.set_ylabel("Frame transitions")
     axis.set_title("Down-view paw speed quality control")
     _style_axes(axis)

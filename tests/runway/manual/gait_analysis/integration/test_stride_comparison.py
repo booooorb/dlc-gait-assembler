@@ -66,7 +66,7 @@ def multiview_fixture(tmp_path, alma_fixtures_dir):
     return AlmaViewCsvSet("test", side, side, path)
 
 
-def test_each_view_scale_applies_to_alma_rustlab_and_custom(tmp_path, alma_fixtures_dir):
+def test_each_view_scale_applies_to_alma_and_retained_rustlab_parameters(tmp_path, alma_fixtures_dir):
     item = multiview_fixture(tmp_path, alma_fixtures_dir)
     settings = AlmaSettings(
         analysis_type="Spontaneous walking",
@@ -80,6 +80,7 @@ def test_each_view_scale_applies_to_alma_rustlab_and_custom(tmp_path, alma_fixtu
         item,
         replace(
             settings,
+            calibration_method="per_view",
             view_calibration={
                 "left": {"pixels_per_cm": 25.0},
                 "right": {"pixels_per_cm": 100.0},
@@ -94,7 +95,7 @@ def test_each_view_scale_applies_to_alma_rustlab_and_custom(tmp_path, alma_fixtu
         for name in (
             f"{side}__stride length (cm)",
             f"{prefix}-back-ankle__Movement",
-            f"{side}_knee_vertical_excursion",
+            f"{prefix}-back-ankle__Average_Height",
         ):
             np.testing.assert_allclose(calibrated[name], base[name] * factor, equal_nan=True)
         np.testing.assert_allclose(
@@ -176,9 +177,10 @@ def test_rejected_cycles_still_show_stickplot_without_inventing_accepted_measure
         (("Left", alma_fixtures_dir / "alma_edge_cases_filtered.csv"),), settings
     )
     assert [name for name, _ in plots] == ["Left · stick plot"]
-    assert "0 accepted" in plots[0][1].decode()
-    assert "stick-frame-" in plots[0][1].decode()
-    assert "4 detected strides; 0 accepted" in plots[0][1].decode()
+    assert "ALMA native" in plots[0][1].decode()
+    assert '"retained_intervals": []' in plots[0][1].decode()
+    assert "x coordinate (pixel)" in plots[0][1].decode()
+    assert 'id="line2d_' in plots[0][1].decode()
     assert any("0 passed filters" in message for message in messages)
 
 

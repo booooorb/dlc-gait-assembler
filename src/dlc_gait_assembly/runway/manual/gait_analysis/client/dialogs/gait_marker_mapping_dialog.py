@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_coordinate_contracts import AlmaViewCsvSet
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_marker_requirements import (
+    BOTTOM_CENTER_LABELS,
     BOTTOM_VIEW_LABELS,
     FORELIMB_SIDE_VIEW_LABELS,
     SIDE_VIEW_LABELS,
@@ -36,6 +37,8 @@ class LabelMappingDialog(QDialog):
         parent=None,
         *,
         include_forelimb: bool = False,
+        bottom_hindlimbs_only: bool = False,
+        include_bottom_centers: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(f"Label matching: {view_set.name}")
@@ -48,7 +51,9 @@ class LabelMappingDialog(QDialog):
         tabs.setDocumentMode(True)
         layout.addWidget(tabs, 1)
         side_labels = SIDE_VIEW_LABELS + (FORELIMB_SIDE_VIEW_LABELS if include_forelimb else ())
-        bottom_labels = BOTTOM_VIEW_LABELS
+        bottom_labels = ("back left", "back right") if bottom_hindlimbs_only else BOTTOM_VIEW_LABELS
+        if include_bottom_centers:
+            bottom_labels += BOTTOM_CENTER_LABELS
         for view, title, csv_path, required_labels in (
             ("left", "Left side view", view_set.left_csv, side_labels),
             ("right", "Right side view", view_set.right_csv, side_labels),
@@ -72,7 +77,7 @@ class LabelMappingDialog(QDialog):
                 combo.addItems(choices)
                 selected = raw_label_for_standard(existing_for_view, standard_label)
                 if selected not in raw_labels:
-                    selected = auto_bodypart_label(raw_labels, standard_label)
+                    selected = auto_bodypart_label(raw_labels, standard_label, view=view)
                 combo.setCurrentText(selected or "(none)")
                 set_tooltip(combo, f"Raw DLC label to use as {standard_label}.")
                 self._combos[view, standard_label] = combo

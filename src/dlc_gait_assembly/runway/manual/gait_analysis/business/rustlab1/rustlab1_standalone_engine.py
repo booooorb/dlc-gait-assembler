@@ -68,6 +68,7 @@ def run_rustlab1_analysis(view_sets, output_folder, settings, progress_callback=
     if not view_sets:
         raise ValueError("Standalone RustLab1 analysis requires at least one three-view CSV set.")
     _validate_rustlab1_settings(settings)
+    settings = outputs.resolve_calibration(settings)
     output_folder = outputs.prepare(output_folder)
     results = []
     for index, view_set in enumerate(view_sets, start=1):

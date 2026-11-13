@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, QSize, Qt, QUrl
+from PySide6.QtCore import QByteArray, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -27,15 +27,20 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.gait_parameter_contracts import (
     GaitParameterDefinition,
+    ParameterExtractionType,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.business.parameters.gait_parameter_registry import (
     gait_parameter_catalog,
 )
-from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_parameter_panel import display_parameter_name
+from dlc_gait_assembly.runway.manual.gait_analysis.client.panels.gait_parameter_panel import (
+    display_parameter_name,
+    resize_parameter_rows,
+)
 from dlc_gait_assembly.runway.manual.gait_analysis.client.previews.gait_reference_catalog import (
     FigureDefinition,
     gait_figure_catalog,
 )
+from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 from dlc_gait_assembly.shared.client.qt_svg_preview import ClickableSvgWidget, SvgPreviewDialog
 
 
@@ -84,27 +89,30 @@ class GaitParameterReferenceWidget(QWidget):
         title = QLabel("Gait parameter reference")
         title.setObjectName("ParameterReferenceTitle")
         documentation.addWidget(title)
-        subtitle = QLabel(
-            "Browse the measurements available in generated parameter tables. Select a row to see its calculation and input requirements."
-        )
-        subtitle.setObjectName("ParameterReferenceSubtitle")
-        subtitle.setWordWrap(True)
-        documentation.addWidget(subtitle)
         controls = QHBoxLayout()
         controls.setSpacing(10)
         self.search_edit = QLineEdit()
+        set_tooltip(self.search_edit, 'Search parameter names and descriptions in the reference guide.')
         self.search_edit.setObjectName("ParameterSearch")
         self.search_edit.setPlaceholderText("Search parameters, calculations, sources, or markers")
         self.search_edit.setClearButtonEnabled(True)
         controls.addWidget(self.search_edit, 1)
         self.view_filter = QComboBox()
+        set_tooltip(self.view_filter, 'Show reference parameters for the selected camera view.')
         self.view_filter.setObjectName("ParameterViewFilter")
         self.view_filter.addItems(("All views", "Single-view", "Multi-view"))
         controls.addWidget(self.view_filter)
         self.source_filter = QComboBox()
+        set_tooltip(self.source_filter, 'Show reference parameters from the selected analysis source.')
         self.source_filter.setObjectName("ParameterSourceFilter")
-        self.source_filter.addItems(("All sources", "ALMA", "RustLab1", "Custom SOP"))
+        self.source_filter.addItems(("All sources", "ALMA", "RustLab1", "Stroke recovery"))
         controls.addWidget(self.source_filter)
+        self.extraction_type_filter = QComboBox()
+        set_tooltip(self.extraction_type_filter, 'Show parameters of the selected measurement type. This changes the guide display only.')
+        self.extraction_type_filter.setObjectName("ParameterExtractionTypeFilter")
+        self.extraction_type_filter.addItem("All extraction types")
+        self.extraction_type_filter.addItems([kind.value for kind in ParameterExtractionType])
+        controls.addWidget(self.extraction_type_filter)
         documentation.addLayout(controls)
         self.count_label = QLabel()
         self.count_label.setObjectName("MutedLabel")
@@ -129,7 +137,6 @@ class GaitParameterReferenceWidget(QWidget):
         self.parameter_splitter.addWidget(self.parameter_tree)
         details = QFrame()
         details.setObjectName("ParameterDetails")
-        details.setMinimumWidth(330)
         details_layout = QVBoxLayout(details)
         details_layout.setContentsMargins(18, 18, 18, 18)
         details_layout.setSpacing(12)
@@ -148,8 +155,18 @@ class GaitParameterReferenceWidget(QWidget):
         self.identifier_label = detail_label(details_layout, "Output column")
         self.views_label = detail_label(details_layout, "Views")
         self.markers_label = detail_label(details_layout, "Required markers")
+        self.type_label = detail_label(details_layout, "Extraction type and units")
+        self.reference_label = detail_label(details_layout, "Paper reference")
+        self.reference_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.reference_label.setOpenExternalLinks(True)
+        self.method_note_label = detail_label(details_layout, "Method and interpretation")
         details_layout.addStretch(1)
-        self.parameter_splitter.addWidget(details)
+        detail_scroll = QScrollArea()
+        detail_scroll.setMinimumWidth(360)
+        detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        detail_scroll.setWidgetResizable(True)
+        detail_scroll.setWidget(details)
+        self.parameter_splitter.addWidget(detail_scroll)
         self.parameter_splitter.setStretchFactor(0, 4)
         self.parameter_splitter.setStretchFactor(1, 1)
         self.parameter_splitter.setSizes((1040, 340))
@@ -163,15 +180,10 @@ class GaitParameterReferenceWidget(QWidget):
         heading = QLabel("Figure creator documentation")
         heading.setObjectName("FigureCreatorTitle")
         layout.addWidget(heading)
-        intro = QLabel(
-            "Preview every ALMA and RustLab1 figure created by the gait workflow. Each preview uses real project sample data and opens at full size when clicked. PCA and random-forest figures are excluded."
-        )
-        intro.setObjectName("FigureCreatorIntro")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
         filter_row = QHBoxLayout()
         filter_row.setSpacing(8)
         self.figure_source_filter = QComboBox()
+        set_tooltip(self.figure_source_filter, 'Show reference figures from the selected analysis source.')
         self.figure_source_filter.setObjectName("FigureSourceFilter")
         self.figure_source_filter.addItems(("All figures", "ALMA", "RustLab1"))
         filter_row.addWidget(self.figure_source_filter, 1)
@@ -219,9 +231,6 @@ class GaitParameterReferenceWidget(QWidget):
         self.figure_preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         detail_layout.addWidget(self.figure_preview, 3)
         preview_actions = QHBoxLayout()
-        preview_note = QLabel("Original proportions preserved")
-        preview_note.setObjectName("FigurePreviewNote")
-        preview_actions.addWidget(preview_note)
         preview_actions.addStretch(1)
         self.open_figure_button = QPushButton("Open large preview")
         self.open_figure_button.setObjectName("OpenFigurePreview")
@@ -256,7 +265,9 @@ class GaitParameterReferenceWidget(QWidget):
         self.search_edit.textChanged.connect(self._apply_filter)
         self.view_filter.currentTextChanged.connect(self._apply_filter)
         self.source_filter.currentTextChanged.connect(self._apply_filter)
+        self.extraction_type_filter.currentTextChanged.connect(self._apply_filter)
         self.parameter_tree.currentItemChanged.connect(self._selection_changed)
+        self.parameter_tree.header().sectionResized.connect(lambda *_: resize_parameter_rows(self.parameter_tree, (1, 2, 5)))
         self.figure_source_filter.currentTextChanged.connect(self._apply_figure_filter)
         self.figure_list.currentItemChanged.connect(self._figure_selection_changed)
         self.figure_preview.clicked.connect(self._show_large_figure)
@@ -344,6 +355,7 @@ class GaitParameterReferenceWidget(QWidget):
         query_terms = self.search_edit.text().strip().casefold().split()
         view_filter = self.view_filter.currentText()
         source_filter = self.source_filter.currentText()
+        type_filter = self.extraction_type_filter.currentText()
         current_item = self.parameter_tree.currentItem()
         selected_name = current_item.data(0, Qt.UserRole) if current_item else ""
         self.parameter_tree.clear()
@@ -353,6 +365,8 @@ class GaitParameterReferenceWidget(QWidget):
             if view_filter != "All views" and definition.view_mode != view_filter:
                 continue
             if source_filter != "All sources" and definition.source != source_filter:
+                continue
+            if type_filter != "All extraction types" and definition.extraction_type.value != type_filter:
                 continue
             display_name = definition.display_name or display_parameter_name(definition.name)
             searchable = " ".join(
@@ -365,6 +379,9 @@ class GaitParameterReferenceWidget(QWidget):
                     definition.markers,
                     definition.calculation,
                     display_name,
+                    definition.extraction_type.value,
+                    definition.unit,
+                    definition.method_note,
                 )
             ).casefold()
             if any(term not in searchable for term in query_terms):
@@ -383,17 +400,17 @@ class GaitParameterReferenceWidget(QWidget):
             item.setData(0, Qt.UserRole, definition.name)
             item.setToolTip(1, definition.name)
             item.setToolTip(2, definition.calculation)
-            line_count = min(3, max(1, (len(definition.calculation) + 54) // 55))
-            item.setSizeHint(2, QSize(0, 22 + (line_count - 1) * 16))
             self.parameter_tree.addTopLevelItem(item)
             if definition.name == selected_name:
                 selected_item = item
         total = sum(
             (view_filter == "All views" or definition.view_mode == view_filter)
             and (source_filter == "All sources" or definition.source == source_filter)
+            and (type_filter == "All extraction types" or definition.extraction_type.value == type_filter)
             for definition in self._definitions
         )
         self.count_label.setText(f"Showing {len(self._visible_definitions)} of {total} gait parameters")
+        resize_parameter_rows(self.parameter_tree, (1, 2, 5))
         if selected_item is None and self.parameter_tree.topLevelItemCount():
             selected_item = self.parameter_tree.topLevelItem(0)
         if selected_item is not None:
@@ -416,12 +433,28 @@ class GaitParameterReferenceWidget(QWidget):
             self.views_label.clear()
             self.markers_label.clear()
             self.calculation_label.clear()
+            self.type_label.clear()
+            self.reference_label.clear()
+            self.method_note_label.clear()
             return
         self.name_label.setText(definition.display_name or display_parameter_name(definition.name))
         self.identifier_label.setText(definition.name)
         self.views_label.setText(definition.views)
         self.markers_label.setText(definition.markers)
         self.calculation_label.setText(definition.calculation)
+        self.type_label.setText(f"{definition.extraction_type.value} · {definition.unit or 'unitless'} · {definition.output_level}")
+        titles = {
+            "10.1038/s42003-022-03077-6": "ALMA (2022)",
+            "10.1186/s12915-022-01434-9": "Weber et al. (2022)",
+            "10.1186/s12915-015-0154-0": "MouseWalker (2015)",
+            "10.1007/s11357-024-01210-3": "Rodent gait symmetry (2024)",
+            "10.3390/sym14101995": "Stroke gait variability (2022)",
+        }
+        self.reference_label.setText("<br>".join(
+            f'<a href="{url}">{titles.get(url.removeprefix("https://doi.org/"), "Source paper")}</a>'
+            for url in definition.reference.split("; ") if url
+        ))
+        self.method_note_label.setText(definition.method_note)
 
 
 def detail_label(layout: QVBoxLayout, title: str) -> QLabel:

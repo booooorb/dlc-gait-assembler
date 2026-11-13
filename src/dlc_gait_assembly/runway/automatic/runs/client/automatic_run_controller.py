@@ -21,7 +21,8 @@ class AutomaticRunController:
         self.view = view
 
     def _set_run_readiness(self, text: str, state: str) -> None:
-        self.view.run_readiness_label.setText(f"●  {text}")
+        self.view.run_readiness_label.setText(f"●  {text}" if state != "ready" else "")
+        self.view.run_readiness_label.setVisible(state != "ready")
         self.view.run_readiness_label.setProperty("readinessState", state)
         self.view.run_readiness_label.style().unpolish(self.view.run_readiness_label)
         self.view.run_readiness_label.style().polish(self.view.run_readiness_label)
@@ -44,7 +45,18 @@ class AutomaticRunController:
             self.view.run_pipeline_button.setEnabled(True)
             self._set_run_readiness("Ready", "ready")
             return
-        profile = self.view.profile_state.profiles.get(self.view.profile_state.current_profile_id or "")
+        workflow = getattr(self.view, "workflow_controller", None)
+        if workflow is not None:
+            if workflow.active is None:
+                return
+            if not self.view._video_paths:
+                QMessageBox.information(self.view, "Add videos", "Add videos to this workflow before starting automation.")
+                return
+            if not workflow.confirm_save_before_run():
+                return
+            profile = workflow.active
+        else:
+            profile = self.view.profile_state.profiles.get(self.view.profile_state.current_profile_id or "")
         if profile is None or not self.view._video_paths:
             self.view.demo._toggle_pipeline_demo()
             return

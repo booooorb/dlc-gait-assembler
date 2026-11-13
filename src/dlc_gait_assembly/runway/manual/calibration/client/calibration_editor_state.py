@@ -10,7 +10,6 @@ from dlc_gait_assembly.runway.manual.calibration.business.calibration_measuremen
 
 @dataclass
 class CalibrationEditorState:
-    profile_calibration_map_path: Path | None = None
     current_media: Path | None = None
     calibration_sticks_by_media: dict[str, tuple[CalibrationStick, ...]] = field(default_factory=lambda: {})
     timeline_ms_by_media: dict[str, int] = field(default_factory=lambda: {})
