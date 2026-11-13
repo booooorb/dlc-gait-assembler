@@ -123,6 +123,19 @@ Git is also installed inside the app environment so the in-app updater can use i
 - **The environment already exists:** skip `conda env create`, run `conda activate gait-assembler`, and continue with the relevant `python -m pip install` command.
 - **`dlc-gait-assembler` is not found:** activate `gait-assembler` first. You can also launch with `python -m dlc_gait_assembly`. If that says the module is missing, repeat the app installation in step 3.
 
+### Upgrade an existing Windows ZIP installation
+
+Close the app and open **Miniforge Prompt**. Run these commands one at a time to install the complete current version directly from GitHub; Git is not required:
+
+```bat
+conda activate gait-assembler
+python -m pip install --upgrade --no-cache-dir "dlc-gait-assembler @ https://github.com/booooorb/dlc-gait-assembler/archive/refs/heads/main.zip"
+python -c "import dlc_gait_assembly as app; print(app.__version__); print(app.__file__)"
+python -m dlc_gait_assembly
+```
+
+The version check should print **0.2.0** or newer. Launching with `python -m dlc_gait_assembly` uses the package installed in this environment. Saved workspace files stay in place.
+
 ## Updates
 
 The app checks GitHub about 2.5 seconds after opening and every six hours while running. When an update is available, choose **Install and restart**, **View changes**, or **Later**.
@@ -136,6 +149,8 @@ The app checks GitHub about 2.5 seconds after opening and every six hours while 
 **Git installs** fetch updates from their tracked branch on `origin`. If an environment refresh fails after a Git update, activate `gait-assembler`, go into the cloned folder, run `python -m pip install -e .`, and reopen the app.
 
 **ZIP installs** check stable public GitHub releases. Changes pushed only to `main` are not release updates. To get those changes without Git, close the app, download a fresh ZIP, extract it, enter its folder, activate `gait-assembler`, and run `python -m pip install --upgrade .`. Then reopen the app. Your installed app's saved data stays in its separate workspace folder; do not delete that folder. Use a regular install (`pip install .`), rather than `-e`, for the ZIP route.
+
+The Windows release workflow builds the complete package, opens the installed Paw Track interface, and checks application behavior before publishing a new version. The release must be published before an older ZIP installation can detect it. You can request a check immediately through **Settings → Check for updates…**; scheduled background checks run every six hours.
 
 ## Workflows
 

@@ -60,7 +60,7 @@ def main():
         window.workflows.new(name="Installed release verification")
         window.routes._open_tool("gait_parameter_analysis")
         QTest.qWait(400)
-        page = window._active_tool
+        page = window._active_tool.kinematics_widget
         assert page.settings_tabs.objectName() == "RunwaySettingsTabs"
         assert page.settings_tabs.tabBar().isHidden()
         assert page.settings_tabs.tabText(page.settings_tabs.indexOf(page.mapping_tab)) == "Labels"
