@@ -40,7 +40,6 @@ from dlc_gait_assembly.runway.manual.knee_correction.infrastructure.knee_setting
 from dlc_gait_assembly.runway.manual.video_processing.infrastructure.video_settings_manifest_store import (
     write_video_settings_manifest,
 )
-from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 def regions_from_processing_manifest(path):
@@ -133,7 +132,7 @@ def copy_profile_analysis(source: Path, asset_dir: Path) -> Path:
 
 
 def copy_profile_deeplabcut_project(source: Path, destination: Path, *, reuse_owned_files=False) -> Path:
-    config_path = windows_filesystem_path(validate_deeplabcut_project(source))
+    config_path = validate_deeplabcut_project(source)
     project_root = config_path.parent
     destination.mkdir(parents=True)
     shutil.copy2(config_path, destination / "config.yaml")
