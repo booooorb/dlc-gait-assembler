@@ -20,6 +20,7 @@ class KneeCorrectionController:
 
     def __init__(self, view):
         self.view = view
+        self.gait_calibration_map = None
 
     def _connect_signals(self) -> None:
         self.view.add_files_button.clicked.connect(self.view.inputs._choose_files)
@@ -66,6 +67,16 @@ class KneeCorrectionController:
             self.view.output_folder_edit.setText(folder)
 
     def _choose_calibration_map(self) -> None:
+        if self.gait_calibration_map is not None:
+            path = self.gait_calibration_map()
+            if path is None:
+                QMessageBox.information(
+                    self.view, "Calibration map required",
+                    "Select and import a Shared calibration map in Gait Analysis → Calibration first.",
+                )
+            else:
+                self._set_calibration_map(path)
+            return
         default_folder = self.view.workspace.manual / "calibration"
         (filename, _) = QFileDialog.getOpenFileName(
             self.view,
@@ -109,14 +120,14 @@ class KneeCorrectionController:
                 f"{len(self.view.state.pairs)} paired dataset(s) ready • {self.view.state.pixels_per_cm:.3f} px/cm."
             )
 
-    def _settings(self) -> KneeCorrectionSettings:
+    def _settings(self, *, pixels_per_cm: float | None = None) -> KneeCorrectionSettings:
         selected_label = self.view.knee_label_combo.currentData()
         selected_hip = self.view.hip_label_combo.currentData()
         selected_ankle = self.view.ankle_label_combo.currentData()
         return KneeCorrectionSettings(
             hip_knee_length_cm=self.view.hip_knee_length.value(),
             knee_ankle_length_cm=self.view.knee_ankle_length.value(),
-            pixels_per_cm=float(self.view.state.pixels_per_cm or 0),
+            pixels_per_cm=pixels_per_cm if pixels_per_cm is not None else float(self.view.state.pixels_per_cm or 0),
             likelihood_threshold=self.view.likelihood_threshold.value(),
             knee_bodyparts=(str(selected_label),) if selected_label else None,
             hip_bodypart=str(selected_hip) if selected_hip else None,

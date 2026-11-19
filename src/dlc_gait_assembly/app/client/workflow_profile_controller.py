@@ -30,6 +30,8 @@ from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_from
     ManualProfileSnapshot,
     combine_manual_snapshots,
 )
+from dlc_gait_assembly.runway.manual.calibration.business.calibration_conversion_map import build_conversion_factor_map
+from dlc_gait_assembly.shared.business.calibration_scale_resolution import resolve_calibration_scale
 from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 from dlc_gait_assembly.shared.client.theme.theme_icon_provider import interface_icon
 
@@ -471,13 +473,21 @@ class WorkflowProfileController:
         baseline[0].setdefault("pages", {})[tool_id] = self.workspace_state["pages"][tool_id]
         self.saved_snapshot = json.dumps(baseline, sort_keys=True, allow_nan=False)
         if tool_id == "manual_calibration":
-            page.save_to_gait_requested.connect(self._save_calibration_to_gait)
+            page.save_to_gait_requested.connect(self._save_calibration_to_analysis)
+        elif tool_id == "knee_correction":
+            page.controller.gait_calibration_map = self._gait_calibration_map
+            page.calibration_map_button.setToolTip("Use the Shared calibration map from Gait Analysis → Calibration.")
 
-    def _save_calibration_to_gait(self):
+    def _gait_calibration_map(self):
+        routes = self.window.routes
+        gait = routes._load_tool(routes._tool_spec("gait_parameter_analysis"))
+        return gait.profile_calibration_map_path() if gait is not None else None
+
+    def _save_calibration_to_analysis(self):
         gait_id = "gait_parameter_analysis"
         self.window.routes._open_tool(gait_id)
         if self.window.navigation.tool_id == gait_id:
-            self.save(send_calibration_to_gait=True)
+            self.save(send_calibration_to_analysis=True)
 
     def _apply_profile_calibration(self, tool_id, page):
         view = page_view(page)
@@ -586,13 +596,20 @@ class WorkflowProfileController:
         self._set_status("Unsaved changes" if dirty else "Saved")
         self.save_button.setText("Save *" if dirty else "Save")
 
-    def save(self, _checked=False, *, name=None, send_calibration_to_gait=False):
+    def save(self, _checked=False, *, name=None, send_calibration_to_analysis=False):
         if self.active is None:
             return False
         automatic = self.automatic
         if automatic._pipeline_worker is not None and automatic._pipeline_worker.isRunning():
             self._set_status("Save after automation stops")
             return False
+        gait_page = self.window._tool_widgets.get("gait_parameter_analysis")
+        knee = None
+        if send_calibration_to_analysis:
+            routes = self.window.routes
+            knee = routes._load_tool(routes._tool_spec("knee_correction"))
+            if knee is None or gait_page is None:
+                return False
         snapshots = []
         cleared_assets = set()
         baseline_pages = json.loads(self.saved_snapshot)[0].get("pages", {})
@@ -619,21 +636,30 @@ class WorkflowProfileController:
             knee_manifest=None if "knee_manifest" in cleared_assets else automatic.profile_state.knee_manifest_source,
         ))
         snapshot = combine_manual_snapshots(snapshots)
-        gait_page = self.window._tool_widgets.get("gait_parameter_analysis") if send_calibration_to_gait else None
-        gait = page_view(gait_page) if gait_page is not None else None
+        gait = page_view(gait_page) if send_calibration_to_analysis else None
         try:
             state = self._capture()
             if gait is not None:
                 if snapshot.calibration is None:
-                    raise ValueError("Create calibration sticks before saving to gait analysis.")
-                snapshot = replace(snapshot, gait=replace(
-                    gait.settings_snapshot(), calibration_method="map",
-                    calibration_map_path=None, pixels_per_cm=None, view_calibration=None,
-                ))
+                    raise ValueError("Create calibration sticks before saving to gait analysis and knee correction.")
+                scale, _ = resolve_calibration_scale(build_conversion_factor_map(snapshot.calibration.report))
+                snapshot = replace(
+                    snapshot,
+                    gait=replace(
+                        gait.settings_snapshot(), calibration_method="map",
+                        calibration_map_path=None, pixels_per_cm=None, view_calibration=None,
+                    ),
+                    knee=knee.controller._settings(pixels_per_cm=scale),
+                )
                 combo = gait.calibration_method_combo
                 state["pages"]["gait_parameter_analysis"]["controls"]["calibration_method_combo"] = {
                     "data": "map", "text": combo.itemText(combo.findData("map")),
                 }
+                state["pages"]["knee_correction"]["data"].update(calibration_map_path=None, pixels_per_cm=scale)
+            elif gait_page is not None:
+                selected_map = gait_page.profile_calibration_map_path()
+                if selected_map is not None and selected_map != self.active.calibration_map:
+                    snapshot = replace(snapshot, calibration=None, calibration_map=selected_map)
             with self.use_cases.manual_assets.materialize(snapshot, allow_incomplete=True) as assets:
                 if gait is not None:
                     if assets.calibration_map is None:
@@ -656,12 +682,13 @@ class WorkflowProfileController:
         self.workspace_state = state
         if gait is not None:
             self._apply_profile_calibration("gait_parameter_analysis", gait_page)
+            self._apply_profile_calibration("knee_correction", knee)
             combo = gait.calibration_method_combo
             combo.setCurrentIndex(combo.findData("map"))
             gait.settings_tabs.setCurrentWidget(gait.calibration_tab)
             gait.controller._invalidate_stickplot_preview()
             gait.controller._update_run_state()
-            gait.status_label.setText("Calibration saved to gait analysis.")
+            gait.status_label.setText("Calibration saved to gait analysis and knee correction.")
         automatic.profiles._refresh_profiles(profile.id)
         self.refresh_profiles()
         self.saved_snapshot = self._snapshot()

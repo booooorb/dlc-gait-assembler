@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QFrame, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QInputDialog, QMessageBox
 
 from dlc_gait_assembly.app.app_bootstrap import build_tool_specs, create_main_menu
 from dlc_gait_assembly.app.client.app_shell_window import MainWindow
@@ -389,7 +389,7 @@ def test_calibration_measurements_and_settings_survive_without_loading_media(win
     assert calibration.save_to_gait_button.isEnabled()
 
 
-def test_save_to_gait_analysis_applies_the_workflow_calibration(window):
+def test_save_to_gait_analysis_applies_the_workflow_calibration_to_both_stages(window):
     assert window.workflows.new(name="Calibration handoff")
     window.routes._open_tool("gait_parameter_analysis")
     gait = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
@@ -408,6 +408,10 @@ def test_save_to_gait_analysis_applies_the_workflow_calibration(window):
     assert gait.calibration_method_combo.currentData() == "map"
     assert gait.state.calibration_map_path == profile.calibration_map
     assert gait.state.calibration_map_pixels_per_cm == pytest.approx(42)
+    knee = window._tool_widgets["knee_correction"]
+    assert knee.state.calibration_map_path == profile.calibration_map
+    assert knee.state.pixels_per_cm == pytest.approx(42)
+    assert window.workflows.use_cases.inspect_knee_settings(profile.knee_manifest).pixels_per_cm == pytest.approx(42)
     saved_gait = alma_settings_from_manifest(profile.analysis_manifest, profile.calibration_map)
     assert saved_gait.calibration_method == "map"
     assert saved_gait.calibration_map_path == profile.calibration_map
@@ -417,6 +421,49 @@ def test_save_to_gait_analysis_applies_the_workflow_calibration(window):
     assert gait.calibration_method_combo.currentData() == "map"
     assert gait.state.calibration_map_path == profile.calibration_map
     assert gait.frame_rate_spin.value() == 240
+    window.routes._open_tool("knee_correction")
+    assert window._tool_widgets["knee_correction"].state.pixels_per_cm == pytest.approx(42)
+
+
+def test_knee_import_uses_the_map_selected_in_gait_calibration(window, tmp_path, monkeypatch):
+    assert window.workflows.new(name="Shared calibration map")
+    calibration = window._tool_widgets["manual_calibration"]
+    calibration.state.calibration_sticks_by_media["example.png"] = (
+        CalibrationStick("x", 1, CalibrationPoint(0, 0), CalibrationPoint(42, 0)),
+    )
+    calibration.controller._update_calibration_results()
+    calibration.save_to_gait_button.click()
+    gait = window._tool_widgets["gait_parameter_analysis"].kinematics_widget
+    map_path = tmp_path / "different_map.json"
+    map_path.write_text(json.dumps({"overall": {"pixels_per_centimeter": 30}}), encoding="utf-8")
+    dialogs = []
+
+    def select_file(parent, *_args):
+        dialogs.append(parent)
+        return str(map_path), ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", select_file)
+    gait.import_calibration_map_button.click()
+    window.routes._open_tool("knee_correction")
+    knee = window._tool_widgets["knee_correction"]
+    assert knee.state.pixels_per_cm == pytest.approx(42)
+    knee.calibration_map_button.click()
+    assert dialogs == [gait]
+    assert window.navigation.tool_id == "knee_correction"
+    assert knee.state.calibration_map_path == map_path
+    assert knee.state.pixels_per_cm == pytest.approx(30)
+
+    assert window.workflows.save()
+    profile_id = window.workflows.active.id
+    assert window.workflows.close_profile()
+    assert window.workflows.open_profile(profile_id, restore_files=False)
+    assert "gait_parameter_analysis" not in window._tool_widgets
+    knee = window._tool_widgets["knee_correction"]
+    knee.calibration_map_button.click()
+    assert dialogs == [gait]
+    assert window.navigation.tool_id == "knee_correction"
+    assert knee.state.calibration_map_path == window.workflows.active.calibration_map
+    assert knee.state.pixels_per_cm == pytest.approx(30)
 
 
 def test_automation_runs_saved_settings_and_only_prompts_for_edits(window, tmp_path, monkeypatch):

@@ -83,22 +83,9 @@ class AppRouteController:
             return
         if not self._can_leave_active_tool():
             return
-        tool = self.view._tool_widgets.get(tool_id)
+        tool = self._load_tool(spec)
         if tool is None:
-            tool = spec.widget_factory()
-            if spec.connect_back is not None:
-                spec.connect_back(tool, self._show_home_menu)
-            self.view._tool_widgets[tool_id] = tool
-            self.view._stack.addWidget(tool)
-            try:
-                self.view.workflows.attach_page(tool_id, tool)
-            except (OSError, ValueError, TypeError, KeyError) as exc:
-                self.view._tool_widgets.pop(tool_id)
-                self.view._stack.removeWidget(tool)
-                tool.release_resources()
-                tool.deleteLater()
-                QMessageBox.warning(self.view, "Could not load workflow settings", f"{spec.label}: {exc}")
-                return
+            return
         self.view.styling._apply_tool_surface_depth(tool)
         is_manual_tool = tool_id in self.view._manual_stage_buttons
         self.view._active_tool = tool
@@ -111,6 +98,27 @@ class AppRouteController:
         self._show_widget(tool)
         if is_manual_tool:
             QTimer.singleShot(240, lambda expected_tool_id=tool_id: self._enforce_manual_row(expected_tool_id))
+
+    def _load_tool(self, spec: ToolSpec) -> QWidget | None:
+        """Restore a tool for the current workflow without navigating to it."""
+        tool = self.view._tool_widgets.get(spec.id)
+        if tool is not None or spec.widget_factory is None or not spec.enabled:
+            return tool
+        tool = spec.widget_factory()
+        if spec.connect_back is not None:
+            spec.connect_back(tool, self._show_home_menu)
+        self.view._tool_widgets[spec.id] = tool
+        self.view._stack.addWidget(tool)
+        try:
+            self.view.workflows.attach_page(spec.id, tool)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            self.view._tool_widgets.pop(spec.id)
+            self.view._stack.removeWidget(tool)
+            tool.release_resources()
+            tool.deleteLater()
+            QMessageBox.warning(self.view, "Could not load workflow settings", f"{spec.label}: {exc}")
+            return None
+        return tool
 
     def _enforce_manual_row(self, expected_tool_id: str) -> None:
         """Keep manual navigation visible after a newly mounted workspace settles."""

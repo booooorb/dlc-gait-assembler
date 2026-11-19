@@ -126,7 +126,7 @@ def build_calibration_results(self, left_layout):
     results_scroll.setFrameShape(QFrame.NoFrame)
     results_scroll.setWidget(self.results_label)
     results_layout.addWidget(results_scroll)
-    self.save_to_gait_button = QPushButton("Save to gait analysis")
+    self.save_to_gait_button = QPushButton("Save to gait analysis and knee correction")
     self.save_to_gait_button.setObjectName("ExportButton")
     results_layout.addWidget(self.save_to_gait_button)
     left_layout.addWidget(results_box, 1)
