@@ -5,9 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure import deeplabcut_environment_adapter
+from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure import (
+    deeplabcut_conda_commands,
+    deeplabcut_environment_adapter,
+)
 from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_conda_commands import (
-    deeplabcut_analysis_command,
+    deeplabcut_analysis_arguments,
 )
 from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_conda_commands import (
     deeplabcut_environment_file,
@@ -60,6 +63,41 @@ def test_deeplabcut_probe_and_launch_commands_use_named_conda_env():
 def test_deeplabcut_analysis_command_runs_request_in_named_environment(tmp_path):
     script = tmp_path / "pipeline bridge.py"
     request = tmp_path / "request file.json"
-    command = deeplabcut_analysis_command(script, request, platform="darwin")
+    shell, flag, command = deeplabcut_analysis_arguments(script, request, platform="darwin")
+    assert (shell, flag) == ("/bin/bash", "-lc")
     assert "conda run -n DEEPLABCUT" in command
     assert f"python -u {shlex.quote(str(script.resolve()))} --run-request {shlex.quote(str(request.resolve()))}" in command
+
+
+def test_windows_deeplabcut_analysis_passes_paths_to_the_active_conda_executable(tmp_path, monkeypatch):
+    conda = tmp_path / "Miniforge installation" / "conda.exe"
+    conda.parent.mkdir()
+    conda.touch()
+    monkeypatch.setenv("CONDA_EXE", str(conda))
+    script = tmp_path / "pipeline bridge.py"
+    request = tmp_path / "request file.json"
+
+    assert deeplabcut_analysis_arguments(script, request, platform="win32") == (
+        str(conda),
+        "run",
+        "-n",
+        "DEEPLABCUT",
+        "--no-capture-output",
+        "python",
+        "-u",
+        str(script.resolve()),
+        "--run-request",
+        str(request.resolve()),
+    )
+
+
+def test_windows_conda_executable_can_use_a_condabin_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    root = tmp_path / "Miniforge installation"
+    conda_bat = root / "condabin" / "conda.bat"
+    conda_exe = root / "Scripts" / "conda.exe"
+    conda_exe.parent.mkdir(parents=True)
+    conda_exe.touch()
+    monkeypatch.setattr(deeplabcut_conda_commands.shutil, "which", lambda name: {"conda.bat": str(conda_bat)}.get(name))
+
+    assert deeplabcut_conda_commands.windows_conda_executable() == str(conda_exe)

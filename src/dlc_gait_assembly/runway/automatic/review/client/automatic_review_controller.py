@@ -42,11 +42,16 @@ class AutomaticReviewController:
         self.view.stage_progress._set_pipeline_stage_progress(
             stage_index, 100, False, "ready", indicator_state="active"
         )
-        self.view.run_pipeline_button.setText("Awaiting confirmation")
-        self.view.run_pipeline_button.setEnabled(False)
-        self.view.run_pipeline_button.setToolTip(
-            "The walkthrough is paused. Use Confirm and continue or Needs changes in the review panel."
-        )
+        if self.view._pipeline_worker is not None:
+            self.view.run_pipeline_button.setText("Pause run")
+            self.view.run_pipeline_button.setEnabled(True)
+            self.view.run_pipeline_button.setToolTip("Save the pending review so you can resume later.")
+        else:
+            self.view.run_pipeline_button.setText("Awaiting confirmation")
+            self.view.run_pipeline_button.setEnabled(False)
+            self.view.run_pipeline_button.setToolTip(
+                "The walkthrough is paused. Use Confirm and continue or Needs changes in the review panel."
+            )
         self.view.runs._set_run_readiness("Review required", "review")
         self.view.run_log._append_console(f"[Manual check] {gate['title']}. Pipeline paused.")
 
@@ -211,8 +216,8 @@ class AutomaticReviewController:
         self.view.pipeline_review_panel.hide()
         self.view.run_pipeline_button.setEnabled(True)
         if real_review and self.view._pipeline_worker is not None:
-            self.view.run_pipeline_button.setText("Stop pipeline")
-            self.view.run_pipeline_button.setToolTip("Stop after the currently running external operation finishes.")
+            self.view.run_pipeline_button.setText("Pause run")
+            self.view.run_pipeline_button.setToolTip("Pause at the next safe point and save progress for later.")
             self.view.runs._set_run_readiness("Continuing", "running")
             self.view.run_log._append_console(f"[Confirmed] {PIPELINE_STAGES[stage_index]}.")
             self.view._pipeline_worker.approve_review()
@@ -236,6 +241,8 @@ class AutomaticReviewController:
         self.view.run_log._set_pipeline_log_state("Paused", "paused")
         self.view.pipeline_review_title.setText("Pipeline paused — changes required")
         self.view.pipeline_review_description.setText(
+            f"Update the {gate['setting']} before starting a new run. You can reopen this review from Run history."
+            if real_review else
             f"Update the {gate['setting']}. Resuming will replay the preceding stage and show this preview check again."
         )
         self.view.pipeline_change_settings_button.setText(f"Open {gate['setting']}")
@@ -254,7 +261,7 @@ class AutomaticReviewController:
             self.view._pipeline_real_complete = True
             self.view.run_pipeline_button.setText("Back to videos")
             self.view.run_pipeline_button.setToolTip(
-                "Return to the queue. The next run will use the corrected profile."
+                "Return to the video queue. This run is saved in Run history."
             )
             if self.view._pipeline_worker is not None:
                 self.view._pipeline_worker.reject_review()

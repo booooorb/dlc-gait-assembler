@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QLockFile, QThread, Signal
 
 from dlc_gait_assembly.runway.automatic.business.automatic_execution_contracts import AutomaticReviewDecision
 from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import AutomatedPipelineProfile
@@ -18,6 +18,7 @@ from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_coordinator 
 
 class AutomatedPipelineWorker(QThread):
     output_folder_ready = Signal(object)
+    video_count_ready = Signal(int)
     stage_started = Signal(int, str)
     stage_progress = Signal(int, int, int, str)
     stage_skipped = Signal(int, str)
@@ -29,7 +30,7 @@ class AutomatedPipelineWorker(QThread):
 
     def __init__(
         self,
-        profile: AutomatedPipelineProfile,
+        profile: AutomatedPipelineProfile | None,
         video_paths: list[Path],
         project_root: Path,
         enable_knee_correction: bool = True,
@@ -38,11 +39,13 @@ class AutomatedPipelineWorker(QThread):
         *,
         run_factory,
         output_root=None,
+        resume_folder: Path | None = None,
     ):
         super().__init__(parent)
         self.setStackSize(8 * 1024 * 1024)
         self.run_factory = run_factory
         self.output_root = output_root
+        self.resume_folder = resume_folder
         self._profile = profile
         self._video_paths = video_paths
         self._project_root = project_root
@@ -64,7 +67,12 @@ class AutomatedPipelineWorker(QThread):
         self.execution_control.decide_review(AutomaticReviewDecision.REJECT)
 
     def run(self) -> None:
+        lock = None
         try:
+            options = {}
+            if self.resume_folder is not None:
+                lock = self._lock_run(self.resume_folder)
+                options["resume_folder"] = self.resume_folder
             pipeline = self.run_factory(
                 self._profile,
                 self._video_paths,
@@ -72,8 +80,12 @@ class AutomatedPipelineWorker(QThread):
                 output_root=self.output_root,
                 enable_knee_correction=self._enable_knee_correction,
                 enable_gait_analysis=self._enable_gait_analysis,
+                **options,
             )
+            if lock is None:
+                lock = self._lock_run(pipeline.output_folder)
             self.output_folder_ready.emit(pipeline.output_folder)
+            self.video_count_ready.emit(len(pipeline.video_paths))
             self.log_message.emit(f"Output folder: {pipeline.output_folder}")
             events = AutomaticExecutionEvents(
                 self.stage_started.emit,
@@ -88,3 +100,16 @@ class AutomatedPipelineWorker(QThread):
             self.run_cancelled.emit()
         except Exception as exc:
             self.run_failed.emit(self.execution_control.current_stage, str(exc))
+        finally:
+            if lock is not None:
+                lock.unlock()
+
+    @staticmethod
+    def _lock_run(folder):
+        lock = QLockFile(str(folder / "run.lock"))
+        lock.setStaleLockTime(0)
+        if lock.tryLock(0):
+            return lock
+        if lock.error() == QLockFile.LockError.LockFailedError:
+            raise RuntimeError("This automation run is already open in another window.")
+        raise OSError(f"Could not lock the automation run folder: {folder}")

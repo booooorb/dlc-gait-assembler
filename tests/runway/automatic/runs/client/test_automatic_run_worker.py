@@ -15,8 +15,11 @@ class _SuccessfulPipeline:
     instances = []
 
     def __init__(self, *_args, **_kwargs):
-        self.output_folder = Path("/tmp/automated-worker-output")
+        self.output_folder = _kwargs["output_root"]
+        self.video_paths = _args[1]
         self.stage_calls = []
+        self.completed_stages = set()
+        self.approved_reviews = set()
         type(self).instances.append(self)
 
     def stage_enabled(self, stage_index):
@@ -35,11 +38,17 @@ class _SuccessfulPipeline:
     def result(self):
         return SimpleNamespace(output_folder=self.output_folder)
 
+    def save_status(self, _status, _stage):
+        pass
 
-def test_worker_runs_all_stages_skips_disabled_stage_and_waits_for_reviews(monkeypatch):
+    def record_interruption(self, _status, _message):
+        pass
+
+
+def test_worker_runs_all_stages_skips_disabled_stage_and_waits_for_reviews(tmp_path):
     _SuccessfulPipeline.instances.clear()
     worker = AutomatedPipelineWorker(
-        SimpleNamespace(), [Path("source.mp4")], Path("."), run_factory=_SuccessfulPipeline
+        SimpleNamespace(), [Path("source.mp4")], Path("."), run_factory=_SuccessfulPipeline, output_root=tmp_path
     )
     started = []
     progress = []
@@ -69,7 +78,7 @@ def test_worker_runs_all_stages_skips_disabled_stage_and_waits_for_reviews(monke
     assert worker.waiting_for_review is False
 
 
-def test_worker_reports_the_stage_that_failed(monkeypatch):
+def test_worker_reports_the_stage_that_failed(tmp_path):
 
     class FailingPipeline(_SuccessfulPipeline):
         def run_stage(self, stage_index, progress_callback):
@@ -77,7 +86,9 @@ def test_worker_reports_the_stage_that_failed(monkeypatch):
                 raise RuntimeError("pose analysis failed")
             super().run_stage(stage_index, progress_callback)
 
-    worker = AutomatedPipelineWorker(SimpleNamespace(), [Path("source.mp4")], Path("."), run_factory=FailingPipeline)
+    worker = AutomatedPipelineWorker(
+        SimpleNamespace(), [Path("source.mp4")], Path("."), run_factory=FailingPipeline, output_root=tmp_path
+    )
     failures = []
     completions = []
     worker.review_requested.connect(lambda _index, _artifacts: worker.approve_review())

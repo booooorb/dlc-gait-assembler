@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from dlc_gait_assembly.runway.automatic.profiles.client.automatic_profile_assets_panel import (
     build_automatic_analysis_assets,
+    build_automatic_labeled_video_settings,
     build_automatic_processing_asset,
     build_automatic_stage_switches,
 )
@@ -40,6 +41,7 @@ def build_automatic_profile_editor(self):
         ("stage", build_automatic_stage_switches),
         ("video", build_automatic_processing_asset),
         ("models", build_automatic_model_assignments),
+        ("labels", build_automatic_labeled_video_settings),
         ("analysis", build_automatic_analysis_assets),
     ):
         section, section_layout = self._stage_page()

@@ -7,6 +7,18 @@ import shutil
 
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_recording_pairing import safe_name
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts import AutomatedPipelineResult
+from dlc_gait_assembly.runway.automatic.runs.infrastructure.automatic_run_checkpoint_store import write_run_json
+
+
+def reset_knee_replacements(knee_folder):
+    """Restore original coordinates if correction was interrupted before its checkpoint."""
+    work_folder = knee_folder / "work"
+    journal = work_folder / "backups.json"
+    if journal.is_file():
+        for source, backup in json.loads(journal.read_text(encoding="utf-8")):
+            shutil.copy2(backup, source)
+    if work_folder.is_dir():
+        shutil.rmtree(work_folder)
 
 
 def persist_knee_replacements(run, pair_jobs, settings, corrected, progress_callback):
@@ -33,34 +45,24 @@ def persist_knee_replacements(run, pair_jobs, settings, corrected, progress_call
             backup_h5 = backup_folder / f"{index:04d}.h5"
             shutil.copy2(pair.csv_path, backup_csv)
             shutil.copy2(pair.h5_path, backup_h5)
-            backups.append((pair, backup_csv, backup_h5))
-        try:
-            for region, pair, result in prepared:
-                result.output_csv.replace(pair.csv_path)
-                result.output_h5.replace(pair.h5_path)
-                corrected.setdefault(region, []).append(pair.csv_path)
-                replacement_records.append(
-                    {
-                        "region": region,
-                        "video": str(pair.video_path) if pair.video_path is not None else "",
-                        "csv": str(pair.csv_path),
-                        "h5": str(pair.h5_path),
-                    }
-                )
-        except Exception:
-            for pair, backup_csv, backup_h5 in backups:
-                try:
-                    shutil.copy2(backup_csv, pair.csv_path)
-                    shutil.copy2(backup_h5, pair.h5_path)
-                except OSError:
-                    pass
-            raise
-    finally:
-        if work_folder.exists():
-            shutil.rmtree(work_folder)
-    (knee_output_folder / "correction_manifest.json").write_text(
-        json.dumps({"replaced_coordinates": replacement_records}, indent=2) + "\n", encoding="utf-8"
-    )
+            backups.extend(((pair.csv_path, backup_csv), (pair.h5_path, backup_h5)))
+        write_run_json(work_folder / "backups.json", backups)
+        for region, pair, result in prepared:
+            result.output_csv.replace(pair.csv_path)
+            result.output_h5.replace(pair.h5_path)
+            corrected.setdefault(region, []).append(pair.csv_path)
+            replacement_records.append(
+                {
+                    "region": region,
+                    "video": str(pair.video_path) if pair.video_path is not None else "",
+                    "csv": str(pair.csv_path),
+                    "h5": str(pair.h5_path),
+                }
+            )
+        write_run_json(knee_output_folder / "correction_manifest.json", {"replaced_coordinates": replacement_records})
+    except Exception:
+        reset_knee_replacements(knee_output_folder)
+        raise
     return corrected
 
 
@@ -82,8 +84,9 @@ def persist_run_manifest(run, result: AutomatedPipelineResult) -> None:
     }
     payload = {
         "profile": {"id": run.profile.id, "name": run.profile.name},
+        "labeled_video_confidence": run.profile.labeled_video_confidence,
         "output_folder": str(run.output_folder),
         "folders": {name: str(path) for (name, path) in folders.items()},
         "artifacts": {name: [str(path) for path in paths] for (name, paths) in artifacts.items()},
     }
-    result.output_manifest.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_run_json(result.output_manifest, payload)

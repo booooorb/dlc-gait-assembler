@@ -5,13 +5,14 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QInputDialog, QMessageBox
 
 from dlc_gait_assembly.app.app_bootstrap import build_tool_specs, create_main_menu
 from dlc_gait_assembly.app.client.app_shell_window import MainWindow
 from dlc_gait_assembly.app.client.workflow_page_state import decode_value, encode_value
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_repository import AutomatedProfileStore
+from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts import SavedAutomaticRun
 from dlc_gait_assembly.runway.manual.calibration.business.calibration_measurements import CalibrationPoint, CalibrationStick
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_coordinate_contracts import AlmaViewCsvSet, StrokeStudyMetadata
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
@@ -62,6 +63,12 @@ def test_runway_menu_creates_and_loads_the_profile_used_by_automation(window, mo
     window._manual_stage_buttons["gait_parameter_analysis"].click()
     window._tool_widgets["gait_parameter_analysis"].kinematics_widget.frame_rate_spin.setValue(240)
     assert picker.save()
+    window.routes._show_automated_profiles()
+    cutoff = menu.automated_profiles.labeled_video_confidence_spin
+    assert cutoff.text() == "Model default"
+    cutoff.setValue(0.83)
+    assert picker.has_unsaved_changes()
+    assert picker.save()
     assert picker.new(name="Another study")
     window._home_button.click()
     menu.runway_requested.emit()
@@ -70,7 +77,9 @@ def test_runway_menu_creates_and_loads_the_profile_used_by_automation(window, mo
     picker.profile_list.setCurrentItem(saved)
     picker.open_button.click()
     assert picker.active.id == profile.id
-    assert window.navigation.tool_id == "gait_parameter_analysis"
+    assert window.navigation.automatic_page == "profiles"
+    assert cutoff.value() == 0.83
+    window.routes._open_tool("gait_parameter_analysis")
     assert window._tool_widgets["gait_parameter_analysis"].kinematics_widget.frame_rate_spin.value() == 240
 
     window._automation_run_button.click()
@@ -99,6 +108,35 @@ def test_workflows_require_a_profile_before_manual_and_automation(window):
     assert window._stack.currentWidget() is window.workflows.picker
     assert window.workflows.new(name="Study B")
     assert window.navigation.automatic_active
+
+
+def test_run_history_can_resume_from_the_picker_without_opening_a_profile(window, tmp_path, monkeypatch):
+    widget = window._main_menu.automated_profiles
+    folder = tmp_path / "previous_run"
+    saved = SavedAutomaticRun(folder, "Previous workflow", "failed", 3, "2026-06-22T10:30:00-07:00", 2, "Render failed")
+    legacy = replace(saved, status="outputs_only", profile_name="Older outputs")
+    widget.run_history = lambda _root: [saved, legacy]
+    resumed = []
+    dialog_states = []
+    monkeypatch.setattr(widget.runs, "resume_saved", resumed.append)
+    window.routes._show_automated_pipeline()
+    assert window.workflows.active is None
+
+    def choose_run():
+        dialog = QApplication.activeModalWidget()
+        dialog.runs.setCurrentRow(1)
+        dialog_states.append((dialog.open_button.isEnabled(), dialog.resume_button.isEnabled()))
+        dialog.runs.setCurrentRow(0)
+        dialog_states.append(dialog.details.text())
+        dialog.resume_button.click()
+
+    QTimer.singleShot(0, choose_run)
+    window.workflows.run_history_button.click()
+    assert dialog_states[0] == (True, False)
+    assert "Render failed" in dialog_states[1]
+    assert resumed == [saved]
+    assert window.navigation.automatic_active
+    assert window.workflows.active is None
 
 
 def test_profile_restores_settings_pairings_metadata_and_optional_csvs(window):

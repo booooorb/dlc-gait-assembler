@@ -10,7 +10,8 @@ from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts im
 def execute_gait_analysis(run, progress_callback: ProgressCallback | None) -> None:
     settings = run.gait_settings
     inputs = run._alma_inputs(settings.input_mode)
-    run.gait_results = run.operations.gait(
+    results = run.operations.gait(
         inputs, run.gait_analysis_folder, replace(settings, generate_stickplot=False), progress_callback
     )
-    run._validate_alma_results(run.gait_results, inputs)
+    run._validate_alma_results(results, inputs)
+    run.gait_results = results

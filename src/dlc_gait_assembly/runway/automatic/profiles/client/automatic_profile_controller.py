@@ -17,6 +17,14 @@ class AutomaticProfileController:
     def __init__(self, view):
         self.view = view
 
+    def labeled_video_confidence(self) -> float | None:
+        spin = self.view.labeled_video_confidence_spin
+        return None if spin.value() == spin.minimum() else spin.value()
+
+    def _set_labeled_video_confidence(self, value: float | None) -> None:
+        spin = self.view.labeled_video_confidence_spin
+        spin.setValue(spin.minimum() if value is None else value)
+
     def _refresh_profiles(self, selected_id: str | None = None) -> None:
         profiles = self.view.profile_use_cases.list_profiles()
         self.view.profile_state.profiles = {profile.id: profile for profile in profiles}
@@ -106,6 +114,7 @@ class AutomaticProfileController:
         )
         self.view.include_gait_analysis_button.setChecked(True)
         self.view.include_knee_correction_button.setChecked(False)
+        self._set_labeled_video_confidence(None)
         del blockers
         self.view.profile_assets._apply_profile_stage_option_state()
         self.view.profile_assets._refresh_paths()
@@ -137,6 +146,7 @@ class AutomaticProfileController:
         )
         self.view.include_gait_analysis_button.setChecked(profile.gait_analysis_enabled)
         self.view.include_knee_correction_button.setChecked(profile.knee_correction_enabled)
+        self._set_labeled_video_confidence(profile.labeled_video_confidence)
         del blockers
         self.view.profile_assets._apply_profile_stage_option_state()
         self.view.profile_assets._refresh_paths()
@@ -200,6 +210,7 @@ class AutomaticProfileController:
                 knee_manifest=self.view.profile_state.knee_manifest_source if knee_enabled else None,
                 gait_analysis_enabled=gait_enabled,
                 knee_correction_enabled=knee_enabled,
+                labeled_video_confidence=self.labeled_video_confidence(),
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self.view, "Could not save profile", str(exc))
@@ -272,6 +283,7 @@ class AutomaticProfileController:
             knee_manifest=self.view.profile_state.knee_manifest_source,
             gait_analysis_enabled=self.view.include_gait_analysis_button.isChecked(),
             knee_correction_enabled=self.view.include_knee_correction_button.isChecked(),
+            labeled_video_confidence=self.labeled_video_confidence(),
         ).snapshot()
 
     def _is_dirty(self) -> bool:

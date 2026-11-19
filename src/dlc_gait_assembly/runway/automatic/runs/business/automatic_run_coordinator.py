@@ -6,10 +6,12 @@ from pathlib import Path
 
 from dlc_gait_assembly.runway.automatic.business.automatic_execution_contracts import ReviewArtifact, StageReview
 from dlc_gait_assembly.runway.automatic.business.automatic_stage_definitions import (
+    AUTOMATED_STAGE_SPECS,
     AutomatedStage,
     coerce_automated_stage,
 )
 from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import AutomatedPipelineProfile
+from dlc_gait_assembly.runway.automatic.runs.business.automatic_execution_control import AutomaticRunCancelled
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_recording_pairing import (
     dlc_source_stem,
     input_name,
@@ -48,7 +50,7 @@ class AutomatedPipelineRun:
 
     def __init__(
         self,
-        profile: AutomatedPipelineProfile,
+        profile: AutomatedPipelineProfile | None,
         video_paths: list[str | Path],
         project_root: str | Path,
         output_root: str | Path | None = None,
@@ -57,29 +59,99 @@ class AutomatedPipelineRun:
         *,
         operations,
         storage,
+        resume_folder: str | Path | None = None,
     ):
         self.operations = operations
         self.storage = storage
-        self.profile = profile
-        self.enable_knee_correction = bool(enable_knee_correction)
-        self.enable_gait_analysis = bool(enable_gait_analysis)
-        self.video_paths = preflight_automatic_run(
-            profile, video_paths, storage, self.enable_knee_correction, self.enable_gait_analysis
-        )
-        self.plan = AutomaticRunPlan(profile, self.enable_knee_correction, self.enable_gait_analysis)
-        self.gait_settings = (
-            self.storage.gait_settings(profile.analysis_manifest, profile.calibration_map)
-            if self.plan.stage_enabled(AutomatedStage.GAIT_ANALYSIS) else None
-        )
-        self.storage.allocate(self, project_root, output_root, profile)
-        self.processed_by_region: dict[str, list[Path]] = {}
+        self.processed_sources: dict[int, dict[str, list[Path]]] = {}
         self.dlc_jobs: list[DlcAnalysisJob] = []
         self.dlc_results: list[DlcAnalysisResult] = []
         self.analysis_csvs_by_region: dict[str, list[Path]] = {}
         self.stickplot_results: list[AlmaRunResult] = []
         self.gait_results: list[AlmaRunResult] = []
         self._completed_stages: set[AutomatedStage] = set()
-        self._skipped_stages: set[AutomatedStage] = set()
+        self.approved_reviews: set[AutomatedStage] = set()
+        self.status = "ready"
+        self.current_stage = -1
+
+        if resume_folder is None:
+            if profile is None:
+                raise ValueError("Select a profile before starting automation.")
+            self.profile = profile
+            self.enable_knee_correction = bool(enable_knee_correction)
+            self.enable_gait_analysis = bool(enable_gait_analysis)
+            self.video_paths = preflight_automatic_run(
+                profile,
+                storage.resolve_video_paths(video_paths),
+                storage,
+                self.enable_knee_correction,
+                self.enable_gait_analysis,
+            )
+        else:
+            self.storage.attach(self, project_root, resume_folder)
+            self.storage.restore_checkpoint(self)
+            if self.status == "complete":
+                raise ValueError("This run is already complete. Use Open outputs to view its results.")
+            self.dlc_jobs = (
+                self.build_dlc_jobs() if AutomatedStage.DEEPLABCUT_ANALYSIS in self._completed_stages else []
+            )
+
+        self.plan = AutomaticRunPlan(self.profile, self.enable_knee_correction, self.enable_gait_analysis)
+        self.gait_settings = (
+            self.storage.gait_settings(self.profile.analysis_manifest, self.profile.calibration_map)
+            if self.plan.stage_enabled(AutomatedStage.GAIT_ANALYSIS)
+            else None
+        )
+        if resume_folder is None:
+            self.storage.allocate(self, project_root, output_root, self.profile)
+            self.profile = self.storage.snapshot_profile(self, self.profile)
+            self.storage.write_checkpoint(self)
+        else:
+            self._validate_checkpoint_artifacts()
+            if AutomatedStage.KNEE_CORRECTION in self._completed_stages:
+                self.storage.discard_knee_backups(self)
+
+    @property
+    def processed_by_region(self):
+        by_region: dict[str, list[Path]] = {}
+        for index in sorted(self.processed_sources):
+            for region, paths in self.processed_sources[index].items():
+                by_region.setdefault(region, []).extend(paths)
+        return by_region
+
+    @property
+    def completed_stages(self):
+        return self._completed_stages
+
+    def build_dlc_jobs(self):
+        return [
+            DlcAnalysisJob(
+                region, self.profile.deeplabcut_models[region], tuple(paths), self.profile.labeled_video_confidence
+            )
+            for region, paths in self.processed_by_region.items()
+        ]
+
+    def _validate_checkpoint_artifacts(self):
+        for path in (
+            *(path for paths in self.processed_by_region.values() for path in paths),
+            *(
+                path
+                for result in self.dlc_results
+                for path in (*result.csv_paths, *result.h5_paths, *result.labeled_video_paths)
+            ),
+            *(path for result in (*self.stickplot_results, *self.gait_results) for path in result.output_files),
+        ):
+            if not self.storage.is_file(path):
+                raise FileNotFoundError(f"Restore this file before resuming the saved run: {path}")
+
+    def save_status(self, status, stage=None):
+        self.status = status
+        if stage is not None:
+            self.current_stage = int(stage)
+        self.storage.write_checkpoint(self)
+
+    def record_interruption(self, status, message):
+        self.storage.record_interruption(self, status, message)
 
     def run_stage(self, stage_index: int | AutomatedStage, progress_callback: ProgressCallback | None = None) -> None:
         stage = coerce_automated_stage(stage_index)
@@ -95,7 +167,7 @@ class AutomatedPipelineRun:
             raise RuntimeError(f"{stage.name.replace('_', ' ').title()} has already run.")
         if not self.stage_enabled(stage):
             self._completed_stages.add(stage)
-            self._skipped_stages.add(stage)
+            self.save_status("running", stage)
             if progress_callback is not None:
                 progress_callback(1, 1, f"{self.stage_skip_reason(stage)}; skipped")
             return
@@ -109,8 +181,16 @@ class AutomatedPipelineRun:
             raise RuntimeError(
                 f"Run {predecessor.name.replace('_', ' ').title()} before {stage.name.replace('_', ' ').title()}."
             )
+        retrying = self.current_stage == stage
+        self.save_status("running", stage)
+        if retrying:
+            self.storage.reset_stage_outputs(self, stage)
         stages[int(stage)](progress_callback)
         self._completed_stages.add(stage)
+        status = "review" if AUTOMATED_STAGE_SPECS[stage].review_kind is not None else "running"
+        self.save_status(status, stage)
+        if stage is AutomatedStage.KNEE_CORRECTION:
+            self.storage.discard_knee_backups(self)
 
     def stage_enabled(self, stage_index: int | AutomatedStage) -> bool:
         return self.plan.stage_enabled(stage_index)
@@ -169,6 +249,7 @@ class AutomatedPipelineRun:
             analysis_outputs=tuple(dict.fromkeys(path for result in self.gait_results for path in result.output_files)),
         )
         self.storage.write_manifest(self, result)
+        self.save_status("complete")
         return result
 
     def _alma_inputs(self, input_mode: str) -> list[Path | AlmaViewCsvSet]:
@@ -284,30 +365,53 @@ class AutomatedPipelineRun:
 
 def execute_automatic_run(pipeline, events, control):
     """Execute stage handoffs and review gates through client-independent callbacks."""
-    from dlc_gait_assembly.runway.automatic.business.automatic_stage_definitions import AUTOMATED_STAGE_SPECS
+    try:
+        return _execute_saved_stages(pipeline, events, control)
+    except AutomaticRunCancelled:
+        _record_interruption(pipeline, events, "paused", "")
+        raise
+    except Exception as exc:
+        _record_interruption(pipeline, events, "failed", str(exc))
+        raise
 
+
+def _record_interruption(pipeline, events, status, message):
+    try:
+        pipeline.record_interruption(status, message)
+    except (OSError, ValueError) as exc:
+        events.log_message(f"Could not update the saved run status: {exc}")
+
+
+def _execute_saved_stages(pipeline, events, control):
     for spec in AUTOMATED_STAGE_SPECS:
         stage = int(spec.stage)
         control.current_stage = stage
         control.check_cancelled()
         events.stage_started(stage, spec.label)
         enabled = pipeline.stage_enabled(stage)
-        events.log_message(f"Started {spec.label}" if enabled else pipeline.stage_skip_reason(stage))
+        saved = spec.stage in pipeline.completed_stages
 
         def report(current, total, message, stage=stage):
             control.check_cancelled()
             events.stage_progress(stage, current, total, message)
 
-        pipeline.run_stage(stage, ExecutionProgress(report, control.check_cancelled))
+        if not saved:
+            events.log_message(f"Started {spec.label}" if enabled else pipeline.stage_skip_reason(stage))
+            pipeline.run_stage(stage, ExecutionProgress(report, control.check_cancelled))
         if not enabled:
             events.stage_skipped(stage, pipeline.stage_skip_reason(stage))
             events.log_message(f"Skipped {spec.label}")
             continue
-        events.stage_progress(stage, 1, 1, f"{spec.label} complete")
-        events.log_message(f"Completed {spec.label}")
+        total = len(pipeline.video_paths) if spec.stage is AutomatedStage.VIDEO_PROCESSING else 1
+        events.stage_progress(stage, total, total, f"{spec.label} complete")
+        events.log_message(f"Reused {spec.label} from saved run" if saved else f"Completed {spec.label}")
         control.check_cancelled()
-        if spec.review_kind is not None:
+        if spec.review_kind is not None and spec.stage not in pipeline.approved_reviews:
+            if saved:
+                pipeline.save_status("review", stage)
             control.review(pipeline.review_artifacts(stage), events.review_requested)
+            pipeline.approved_reviews.add(spec.stage)
+            pipeline.save_status("running", stage)
             events.log_message(f"Approved {spec.label} review")
     control.check_cancelled()
     return pipeline.result()

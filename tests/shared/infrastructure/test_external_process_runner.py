@@ -1,6 +1,8 @@
 """External commands can be stopped even when they emit no process output."""
 
+import subprocess
 import sys
+from functools import partial
 from threading import Timer
 from time import monotonic
 
@@ -39,3 +41,18 @@ def test_commands_stream_output_and_preserve_failure_status():
     )
     assert result.returncode == 9
     assert "".join(lines) == result.output == "message\n"
+
+
+def test_commands_stream_mixed_output_with_a_windows_default_encoding(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", partial(subprocess.Popen, encoding="cp1252"))
+    script = (
+        r"import sys; sys.stdout.buffer.write(b'\xe2\x96\x8f 10%\rCaf\xe9\r\ninvalid \x8f\n'); "
+        r"sys.stdout.flush(); sys.stderr.write('finished\n'); raise SystemExit(7)"
+    )
+    lines = []
+
+    result = ExternalProcessSession().run(ExternalCommand((sys.executable, "-c", script)), lines.append)
+
+    assert lines == ["\u258f 10%\n", "Caf\xe9\n", "invalid \ufffd\n", "finished\n"]
+    assert result.output == "".join(lines)
+    assert result.returncode == 7

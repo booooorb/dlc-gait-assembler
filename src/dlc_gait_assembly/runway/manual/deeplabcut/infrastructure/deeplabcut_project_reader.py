@@ -11,6 +11,7 @@ from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_project_rule
     training_dataset_identity,
     validate_project_components,
 )
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 DLC_MODEL_FOLDER_NAMES = ("dlc-models-pytorch", "dlc-models")
 DLC_TRAINING_DATASET_FOLDER_NAME = "training-datasets"
@@ -41,7 +42,8 @@ def resolve_deeplabcut_config(model_path: str | Path) -> Path:
 def validate_deeplabcut_project(model_path: str | Path) -> Path:
     """Return the project config after checking that trained inference files exist."""
     config_path = resolve_deeplabcut_config(model_path)
-    project_root = config_path.parent
+    config_file = windows_filesystem_path(config_path)
+    project_root = config_file.parent
     model_folders = [project_root / name for name in DLC_MODEL_FOLDER_NAMES if (project_root / name).is_dir()]
     has_pytorch_model = any(
         any(folder.rglob("pytorch_config.yaml")) and (any(folder.rglob("*.pt")) or any(folder.rglob("*.pth")))
@@ -53,7 +55,7 @@ def validate_deeplabcut_project(model_path: str | Path) -> Path:
     )
     training_dataset_folder = project_root / DLC_TRAINING_DATASET_FOLDER_NAME
     has_shuffle_metadata = has_deeplabcut_shuffle_metadata(
-        config_path, training_dataset_folder, allow_pytorch=has_pytorch_model, allow_tensorflow=has_tensorflow_model
+        config_file, training_dataset_folder, allow_pytorch=has_pytorch_model, allow_tensorflow=has_tensorflow_model
     )
     validate_project_components(has_pytorch_model, has_tensorflow_model, has_shuffle_metadata)
     return config_path

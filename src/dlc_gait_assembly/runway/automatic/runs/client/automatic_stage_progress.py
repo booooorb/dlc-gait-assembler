@@ -21,7 +21,7 @@ class AutomaticStageProgress:
             stage_index,
             progress=0,
             processed_videos=0 if stage_index == 0 else None,
-            total_videos=len(self.view._video_paths) if stage_index == 0 else None,
+            total_videos=self.view.run_video_count if stage_index == 0 else None,
             status_text=activity,
         )
         self.view.pipeline_current_stage_label.setText(activity)

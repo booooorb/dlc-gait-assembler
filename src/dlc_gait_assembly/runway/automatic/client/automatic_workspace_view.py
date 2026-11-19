@@ -89,7 +89,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
     manual_tool_requested = Signal(str)
     profiles_changed = Signal(str)
 
-    def __init__(self, *, run_factory, media_access: MediaAccessPort, profile_use_cases, review_artifacts, workspace):
+    def __init__(self, *, run_factory, run_history, media_access: MediaAccessPort, profile_use_cases,
+                 review_artifacts, workspace):
         super().__init__()
         self.workspace = workspace
         self.review_artifacts = review_artifacts
@@ -97,6 +98,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.profile_state = AutomaticProfileEditorState()
         self.media_access = media_access
         self.run_factory = run_factory
+        self.run_history = run_history
+        self._run_video_count: int | None = None
         self.profiles = AutomaticProfileController(self)
         self.profile_assets = AutomaticProfileAssetsPanel(self)
         self.profile_models = AutomaticProfileModelsPanel(self)
@@ -213,10 +216,17 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.run_readiness_label.setAccessibleName("Run status")
         run_row.addWidget(self.run_readiness_label)
         run_row.addStretch(1)
+        self.run_history_button = QPushButton("Run history")
+        self.run_history_button.setToolTip("Resume saved automation runs or open previous outputs.")
+        run_row.addWidget(self.run_history_button)
         self.open_pipeline_output_button = QPushButton("Open outputs")
         self.open_pipeline_output_button.setObjectName("OpenPipelineOutputButton")
         self.open_pipeline_output_button.setToolTip(str(self._automated_output_root))
         run_row.addWidget(self.open_pipeline_output_button)
+        self.resume_pipeline_button = QPushButton("Resume run")
+        self.resume_pipeline_button.setToolTip("Continue this run from its last saved checkpoint.")
+        self.resume_pipeline_button.hide()
+        run_row.addWidget(self.resume_pipeline_button)
         self.run_pipeline_button = QPushButton("Run pipeline")
         self.run_pipeline_button.setObjectName("RunPipelineButton")
         self.run_pipeline_button.setEnabled(True)
@@ -374,6 +384,8 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.video_list.pointer_left.connect(self.hover._stop_hover_preview)
         self.video_list.itemDoubleClicked.connect(self.hover._open_large_video_preview)
         self.run_pipeline_button.clicked.connect(self.runs._toggle_pipeline_run)
+        self.run_history_button.clicked.connect(self.runs.show_run_history)
+        self.resume_pipeline_button.clicked.connect(self.runs.resume_recent)
         self.open_pipeline_output_button.clicked.connect(self.runs._open_pipeline_output)
         self.pipeline_approve_button.clicked.connect(self.reviews._approve_pipeline_review)
         self.pipeline_needs_changes_button.clicked.connect(self.reviews._reject_pipeline_review)
@@ -462,7 +474,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_progress_bar.set_accent_role("running")
             self.pipeline_progress_bar.set_active(True)
             if not was_running:
-                total = len(self._video_paths)
+                total = self.run_video_count
                 self.set_pipeline_stage(
                     0, progress=0, processed_videos=0, total_videos=total, status_text="Preparing videos"
                 )
@@ -474,6 +486,10 @@ class AutomatedPipelineProfilesWidget(QWidget):
             self.pipeline_progress_bar.set_active(False)
             self.run_log._set_pipeline_log_state("Ready", "ready")
             self.runs._set_run_readiness("Ready", "ready")
+
+    @property
+    def run_video_count(self) -> int:
+        return self._run_video_count if self._run_video_count is not None else len(self._video_paths)
 
     def set_pipeline_stage(
         self,

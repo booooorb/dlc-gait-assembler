@@ -11,6 +11,7 @@ class DlcAnalysisJob:
     region: str
     model_path: Path
     video_paths: tuple[Path, ...]
+    labeled_video_confidence: float | None = None
 
 
 @dataclass(frozen=True)

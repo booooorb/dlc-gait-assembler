@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import AutomatedPipelineProfile
@@ -50,6 +51,9 @@ def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
     gait_analysis_enabled = bool(pipeline_options.get("gait_analysis_enabled", analysis_manifest is not None))
     knee_correction_enabled = bool(pipeline_options.get("knee_correction_enabled", knee_manifest is not None))
     workspace_state = validate_workspace_state(data.get("workspace_state", {}))
+    confidence = pipeline_options.get("labeled_video_confidence")
+    if confidence is not None and (not math.isfinite(confidence) or not 0 <= confidence <= 1):
+        raise ValueError("Labeled-video confidence must be between zero and one.")
     return AutomatedPipelineProfile(
         id=str(data["id"]),
         name=str(data["name"]),
@@ -62,6 +66,7 @@ def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
         knee_correction_enabled=knee_correction_enabled,
         updated_at=str(data.get("updated_at", "")),
         workspace_state=workspace_state,
+        labeled_video_confidence=confidence,
     )
 
 

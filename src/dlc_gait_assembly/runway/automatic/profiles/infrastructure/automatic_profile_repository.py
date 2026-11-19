@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profil
     read_profile_metadata,
     validate_workspace_state,
 )
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 PROFILE_FORMAT_VERSION = 6
 
@@ -61,7 +63,12 @@ class AutomatedProfileStore:
         *,
         allow_incomplete: bool = False,
         workspace_state: dict | None = None,
+        labeled_video_confidence: float | None = None,
     ) -> AutomatedPipelineProfile:
+        if labeled_video_confidence is not None and (
+            not math.isfinite(labeled_video_confidence) or not 0 <= labeled_video_confidence <= 1
+        ):
+            raise ValueError("Labeled-video confidence must be between zero and one.")
         if workspace_state is None and profile_id is not None and (self._profile_dir(profile_id) / "profile.json").is_file():
             workspace_state = self.load(profile_id).workspace_state
         workspace_state = validate_workspace_state({} if workspace_state is None else workspace_state)
@@ -78,6 +85,7 @@ class AutomatedProfileStore:
             knee_correction_enabled=knee_manifest is not None
             if knee_correction_enabled is None
             else bool(knee_correction_enabled),
+            labeled_video_confidence=labeled_video_confidence,
         )
         draft = normalize_incomplete_profile_draft(draft) if allow_incomplete else inspect_profile_draft(draft)
         clean_name = draft.name
@@ -93,9 +101,11 @@ class AutomatedProfileStore:
                 raise ValueError(f'A profile named "{clean_name}" already exists.')
         profile_id = profile_id or uuid4().hex
         target_dir = self._profile_dir(profile_id)
-        self.root.mkdir(parents=True, exist_ok=True)
-        staging_dir = self.root / f".{profile_id}.{uuid4().hex}.staging"
-        backup_dir = self.root / f".{profile_id}.{uuid4().hex}.backup"
+        target_path = windows_filesystem_path(target_dir)
+        storage_root = windows_filesystem_path(self.root)
+        storage_root.mkdir(parents=True, exist_ok=True)
+        staging_dir = storage_root / f".{profile_id}.{uuid4().hex}.staging"
+        backup_dir = storage_root / f".{profile_id}.{uuid4().hex}.backup"
         try:
             staging_dir.mkdir(parents=False, exist_ok=False)
             stored_manifest = (
@@ -141,6 +151,7 @@ class AutomatedProfileStore:
                 "pipeline_options": {
                     "gait_analysis_enabled": bool(gait_analysis_enabled),
                     "knee_correction_enabled": bool(knee_correction_enabled),
+                    "labeled_video_confidence": labeled_video_confidence,
                 },
                 "deeplabcut_models": [
                     {"region": region, "path": str(path.relative_to(staging_dir))}
@@ -150,13 +161,13 @@ class AutomatedProfileStore:
             (staging_dir / "profile.json").write_text(
                 json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
-            if target_dir.exists():
-                target_dir.rename(backup_dir)
+            if target_path.exists():
+                target_path.rename(backup_dir)
             try:
-                staging_dir.rename(target_dir)
+                staging_dir.rename(target_path)
             except Exception:
-                if backup_dir.exists() and (not target_dir.exists()):
-                    backup_dir.rename(target_dir)
+                if backup_dir.exists() and (not target_path.exists()):
+                    backup_dir.rename(target_path)
                 raise
             if backup_dir.exists():
                 shutil.rmtree(backup_dir)
@@ -167,7 +178,7 @@ class AutomatedProfileStore:
         return self.load(profile_id)
 
     def delete(self, profile_id: str) -> None:
-        profile_dir = self._profile_dir(profile_id)
+        profile_dir = windows_filesystem_path(self._profile_dir(profile_id))
         if not profile_dir.exists():
             raise FileNotFoundError(f"Profile not found: {profile_id}")
         shutil.rmtree(profile_dir)

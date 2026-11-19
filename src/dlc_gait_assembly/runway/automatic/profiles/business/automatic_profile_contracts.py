@@ -19,6 +19,7 @@ class AutomatedPipelineProfile:
     knee_correction_enabled: bool = False
     updated_at: str = ""
     workspace_state: dict = field(default_factory=dict)
+    labeled_video_confidence: float | None = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class ProfileDraft:
     knee_manifest: Path | None = None
     gait_analysis_enabled: bool = True
     knee_correction_enabled: bool = False
+    labeled_video_confidence: float | None = None
 
     def snapshot(self) -> tuple[str, ...]:
         """Return a deterministic value suitable for dirty-state comparisons."""
@@ -45,5 +47,6 @@ class ProfileDraft:
             str(self.knee_manifest or ""),
             str(self.gait_analysis_enabled),
             str(self.knee_correction_enabled),
+            str(self.labeled_video_confidence),
             *models,
         )

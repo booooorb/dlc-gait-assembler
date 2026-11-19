@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from pathlib import Path
 
@@ -73,6 +74,10 @@ def run_deeplabcut_labeled_video_creation(
     total_videos = sum(len(job.video_paths) for job in jobs)
     for job in jobs:
         result = results_by_region[job.region]
+        if job.labeled_video_confidence is not None and (
+            not math.isfinite(job.labeled_video_confidence) or not 0 <= job.labeled_video_confidence <= 1
+        ):
+            raise ValueError("Labeled-video confidence must be between zero and one.")
         coordinate_paths = (*result.csv_paths, *result.h5_paths)
         coordinate_folders = {ports.artifacts.resolve(path.parent) for path in coordinate_paths}
         if len(coordinate_folders) != 1:
@@ -86,6 +91,7 @@ def run_deeplabcut_labeled_video_creation(
                 "video_paths": [str(path) for path in job.video_paths],
                 "analysis_folder": str(next(iter(coordinate_folders))),
                 "labeled_videos_folder": str(labeled_videos_folder),
+                "pcutoff": job.labeled_video_confidence,
                 "csv_paths": [str(path) for path in result.csv_paths],
                 "h5_paths": [str(path) for path in result.h5_paths],
             }

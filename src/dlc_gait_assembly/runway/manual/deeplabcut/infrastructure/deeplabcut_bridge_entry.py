@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import shutil
 import sys
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 
 def run_request(request_path: Path) -> None:
@@ -56,6 +58,30 @@ def run_analysis_jobs(jobs: list[dict], deeplabcut) -> list[dict]:
     return results
 
 
+def render_labeled_videos(render, config_path, video_paths, analysis_folder, pcutoff):
+    videos = [str(path) for path in video_paths]
+    if pcutoff is None:
+        render(str(config_path), videos, destfolder=str(analysis_folder))
+        return
+    if "pcutoff" in inspect.signature(render).parameters:
+        render(str(config_path), videos, destfolder=str(analysis_folder), pcutoff=pcutoff)
+        return
+
+    # Older DeepLabCut versions read the cutoff exclusively from the project YAML.
+    # Keep the temporary config beside the original so project-relative paths still work.
+    import yaml
+
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["pcutoff"] = pcutoff
+    with NamedTemporaryFile(dir=config_path.parent, suffix=".yaml", delete=False) as temporary:
+        temporary_config = Path(temporary.name)
+    try:
+        temporary_config.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+        render(str(temporary_config), videos, destfolder=str(analysis_folder))
+    finally:
+        temporary_config.unlink(missing_ok=True)
+
+
 def run_labeled_video_jobs(jobs: list[dict], deeplabcut) -> list[dict]:
     results = []
     for job in jobs:
@@ -66,8 +92,8 @@ def run_labeled_video_jobs(jobs: list[dict], deeplabcut) -> list[dict]:
         analysis_folder.mkdir(parents=True, exist_ok=True)
         labeled_videos_folder.mkdir(parents=True, exist_ok=True)
         before = {path.resolve() for path in analysis_folder.iterdir() if path.is_file()}
-        deeplabcut.create_labeled_video(
-            str(config_path), [str(path) for path in video_paths], destfolder=str(analysis_folder)
+        render_labeled_videos(
+            deeplabcut.create_labeled_video, config_path, video_paths, analysis_folder, job.get("pcutoff")
         )
         produced = sorted(
             path.resolve() for path in analysis_folder.iterdir() if path.is_file() and path.resolve() not in before

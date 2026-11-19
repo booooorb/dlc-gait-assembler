@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shlex
+import shutil
 import sys
 from pathlib import Path
 
@@ -17,10 +19,13 @@ POSIX_CONDA_PROFILE_CANDIDATES = (
     "/opt/miniconda3/etc/profile.d/conda.sh",
 )
 WINDOWS_CONDA_BAT_CANDIDATES = (
+    "%USERPROFILE%\\miniforge3\\condabin\\conda.bat",
     "%USERPROFILE%\\anaconda3\\condabin\\conda.bat",
     "%USERPROFILE%\\miniconda3\\condabin\\conda.bat",
+    "%LOCALAPPDATA%\\miniforge3\\condabin\\conda.bat",
     "%LOCALAPPDATA%\\anaconda3\\condabin\\conda.bat",
     "%LOCALAPPDATA%\\miniconda3\\condabin\\conda.bat",
+    "C:\\ProgramData\\miniforge3\\condabin\\conda.bat",
     "C:\\ProgramData\\anaconda3\\condabin\\conda.bat",
     "C:\\ProgramData\\miniconda3\\condabin\\conda.bat",
 )
@@ -40,13 +45,39 @@ def deeplabcut_launch_command(platform: str | None = None) -> str:
     return conda_command(f"run -n {DEEPLABCUT_ENV_NAME} --no-capture-output python -u -m deeplabcut", platform=platform)
 
 
-def deeplabcut_analysis_command(script_path: Path, request_path: Path, platform: str | None = None) -> str:
-    script_argument = quote_path(Path(script_path).expanduser().resolve(), platform=platform)
-    request_argument = quote_path(Path(request_path).expanduser().resolve(), platform=platform)
-    return conda_command(
-        f"run -n {DEEPLABCUT_ENV_NAME} --no-capture-output python -u {script_argument} --run-request {request_argument}",
-        platform=platform,
+def deeplabcut_analysis_arguments(
+    script_path: Path, request_path: Path, platform: str | None = None
+) -> tuple[str, ...]:
+    arguments = (
+        "run",
+        "-n",
+        DEEPLABCUT_ENV_NAME,
+        "--no-capture-output",
+        "python",
+        "-u",
+        str(script_path.expanduser().resolve()),
+        "--run-request",
+        str(request_path.expanduser().resolve()),
     )
+    if is_windows(platform):
+        return (windows_conda_executable(), *arguments)
+    return ("/bin/bash", "-lc", conda_command(shlex.join(arguments), platform=platform))
+
+
+def windows_conda_executable() -> str:
+    configured = os.environ.get("CONDA_EXE")
+    if configured and Path(configured).suffix.casefold() == ".exe" and Path(configured).is_file():
+        return configured
+    executable = shutil.which("conda.exe")
+    if executable:
+        return executable
+    batch = shutil.which("conda.bat")
+    candidates = ([batch] if batch else []) + [os.path.expandvars(path) for path in WINDOWS_CONDA_BAT_CANDIDATES]
+    for candidate in candidates:
+        executable_path = Path(candidate).parent.parent / "Scripts" / "conda.exe"
+        if executable_path.is_file():
+            return str(executable_path)
+    raise RuntimeError("Conda could not be found. Launch the app from a prompt with the gait-assembler environment active.")
 
 
 def deeplabcut_install_command(environment_file: Path, platform: str | None = None) -> str:

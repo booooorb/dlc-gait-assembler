@@ -184,6 +184,10 @@ class WorkflowProfileController:
         title = QLabel("Workflows")
         title.setObjectName("WorkflowPickerTitle")
         heading.addWidget(title, 1)
+        self.run_history_button = QPushButton("Run history")
+        self.run_history_button.setMinimumHeight(40)
+        self.run_history_button.clicked.connect(self._show_run_history)
+        heading.addWidget(self.run_history_button)
         self.new_profile_button = QPushButton("New workflow…")
         self.new_profile_button.setMinimumHeight(40)
         self.new_profile_button.clicked.connect(self.new)
@@ -232,6 +236,9 @@ class WorkflowProfileController:
         outer.addStretch(1)
         self.picker.resized.connect(self._resize_profile_list)
         self.window._stack.addWidget(self.picker)
+
+    def _show_run_history(self):
+        self.automatic.runs.show_run_history(parent=self.window, resume=self.window.routes.resume_saved_automation)
 
     def refresh_profiles(self):
         from PySide6.QtWidgets import QListWidgetItem
@@ -674,6 +681,7 @@ class WorkflowProfileController:
                     gait_analysis_enabled=automatic.include_gait_analysis_button.isChecked(),
                     knee_correction_enabled=automatic.include_knee_correction_button.isChecked(),
                     allow_incomplete=True, workspace_state=state,
+                    labeled_video_confidence=automatic.profiles.labeled_video_confidence(),
                 )
         except (OSError, ValueError, TypeError) as exc:
             QMessageBox.warning(self.window, "Could not save workflow", str(exc))

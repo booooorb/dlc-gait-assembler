@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dlc_gait_assembly.app.app_bootstrap import create_automatic_workspace
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import json
 import pytest
 
@@ -10,6 +10,10 @@ pytest.importorskip("PySide6")
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QPushButton
 from dlc_gait_assembly.shared.client.qt_circular_progress import CircularProgressIndicator
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
+from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_project_reader import (
+    validate_deeplabcut_project,
+)
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
     write_analysis_manifest,
 )
@@ -124,6 +128,53 @@ def test_profile_store_packages_complete_project_when_config_file_is_selected(tm
         assert next(stored_project.rglob("pytorch_config.yaml")).is_file()
         assert next(stored_project.rglob("snapshot-1.pt")).is_file()
         assert next(stored_project.rglob("metadata.yaml")).is_file()
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (r"C:\gait\models", r"\\?\C:\gait\models"),
+        (r"\\server\share\models", r"\\?\UNC\server\share\models"),
+        (r"\\?\C:\gait\models", r"\\?\C:\gait\models"),
+    ],
+)
+def test_windows_model_filesystem_path(path, expected):
+    assert windows_filesystem_path(PureWindowsPath(path)) == PureWindowsPath(expected)
+
+
+def test_profile_store_copies_and_removes_long_deeplabcut_model_paths(tmp_path):
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    sources = _profile_sources(tmp_path)
+    model = sources["deeplabcut_models"]["Front"]
+    snapshot = next(model.rglob("snapshot-1.pt"))
+    long_snapshot = snapshot.with_name(f"snapshot-{'1' * 135}.pt")
+    windows_filesystem_path(snapshot).rename(windows_filesystem_path(long_snapshot))
+    profile = None
+    try:
+        profile = _save(store, "Long model paths", sources)
+        stored_model = profile.deeplabcut_models["Front"]
+        stored_snapshot = stored_model / long_snapshot.relative_to(model)
+        assert len(str(stored_snapshot)) >= 260
+        assert windows_filesystem_path(stored_snapshot).read_text(encoding="utf-8") == "weights-front-first"
+        assert validate_deeplabcut_project(stored_model) == stored_model / "config.yaml"
+
+        replaced_profile = store.save(
+            profile.name,
+            profile.processing_manifest,
+            profile.calibration_map,
+            profile.deeplabcut_models,
+            profile_id=profile.id,
+            analysis_manifest=profile.analysis_manifest,
+            knee_manifest=profile.knee_manifest,
+        )
+        assert replaced_profile.deeplabcut_models["Front"] == stored_model
+        assert windows_filesystem_path(stored_snapshot).is_file()
+        assert not list(store.root.glob(".*.backup"))
+    finally:
+        windows_filesystem_path(long_snapshot).unlink(missing_ok=True)
+        if profile is not None:
+            store.delete(profile.id)
+    assert not store.list_profiles()
 
 
 def test_profile_store_rejects_duplicate_names(tmp_path):

@@ -32,6 +32,9 @@ class ExternalProcessSession:
             bufsize=1,
             start_new_session=os.name != "nt",
         )
+        output_encoding = process.stdout.encoding
+        # Keep newline handling for progress updates while preserving the original bytes for decoding.
+        process.stdout.reconfigure(encoding="latin-1")
         with self._lock:
             self._process = process
         queue = Queue()
@@ -39,6 +42,11 @@ class ExternalProcessSession:
         def read_output():
             try:
                 for line in process.stdout:
+                    raw_line = line.encode("latin-1")
+                    try:
+                        line = raw_line.decode("utf-8")
+                    except UnicodeDecodeError:
+                        line = raw_line.decode(output_encoding, errors="replace")
                     queue.put(line)
             finally:
                 queue.put(None)

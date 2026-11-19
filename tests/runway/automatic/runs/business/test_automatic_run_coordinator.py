@@ -5,8 +5,16 @@ from dlc_gait_assembly.app.app_bootstrap import (
     create_knee_correction_use_cases,
 )
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_coordinator import AutomatedPipelineRun
+from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_coordinator import execute_automatic_run
+from dlc_gait_assembly.runway.automatic.runs.business.automatic_execution_control import (
+    AutomaticExecutionControl, AutomaticExecutionEvents, AutomaticRunCancelled,
+)
+from dlc_gait_assembly.runway.automatic.business.automatic_execution_contracts import AutomaticReviewDecision
 from dlc_gait_assembly.runway.automatic.business.automatic_stage_definitions import AutomatedStage
 from dlc_gait_assembly.runway.automatic.runs.infrastructure.automatic_run_storage import AutomaticRunStorage
+from dlc_gait_assembly.runway.automatic.runs.infrastructure.automatic_run_checkpoint_store import (
+    list_saved_automatic_runs,
+)
 from dlc_gait_assembly.runway.automatic.runs.business.stages.automatic_knee_correction_stage import (
     execute_knee_correction,
 )
@@ -26,6 +34,10 @@ from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_
 )
 from dlc_gait_assembly.runway.manual.video_processing.infrastructure.video_settings_manifest_store import (
     write_video_settings_manifest,
+)
+from dlc_gait_assembly.runway.manual.knee_correction.business.knee_correction_contracts import KneeCorrectionSettings
+from dlc_gait_assembly.runway.manual.knee_correction.infrastructure.knee_settings_manifest_store import (
+    write_knee_analysis_manifest,
 )
 from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import AutomatedPipelineProfile
 from dlc_gait_assembly.runway.manual.video_processing.business.video_region_geometry import CropRegion
@@ -211,7 +223,8 @@ def test_deeplabcut_config_resolution_requires_one_project(tmp_path):
         raise AssertionError("Expected an ambiguous model folder to be rejected")
 
 
-def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cutoff", [None, 0.0, 0.83])
+def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, monkeypatch, cutoff):
     video = tmp_path / "mouse.mp4"
     video.write_bytes(b"video")
     analysis_folder = tmp_path / "run" / "analyzed_videos" / "Bottom"
@@ -244,7 +257,8 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
             (destination / f"{stem}DLC_fixture.csv").write_text("csv", encoding="utf-8")
             (destination / f"{stem}DLC_fixture.h5").write_bytes(b"h5")
 
-    def fake_create_labeled(_config, videos, destfolder):
+    def fake_create_labeled(_config, videos, destfolder, pcutoff=None):
+        assert pcutoff == cutoff
         destination = Path(destfolder)
         for source in videos:
             (destination / f"{Path(source).stem}DLC_fixture_labeled.mp4").write_bytes(b"labeled")
@@ -271,6 +285,7 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
                         "labeled_videos_folder": str(labeled_folder),
                         "csv_paths": analyzed["csv_paths"],
                         "h5_paths": analyzed["h5_paths"],
+                        "pcutoff": cutoff,
                     }
                 ],
                 "result_path": str(result_path),
@@ -283,6 +298,172 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
     assert len(labeled["labeled_video_paths"]) == 1
     assert Path(labeled["labeled_video_paths"][0]).parent == labeled_folder
     assert not list(analysis_folder.glob("*_labeled.mp4"))
+
+
+def test_run_continues_other_videos_and_reopens_at_the_last_checkpoint(tmp_path, monkeypatch, automatic_adapters):
+    videos = [tmp_path / "first.mp4", tmp_path / "second.mp4"]
+    for video in videos:
+        video.write_bytes(b"source video")
+    manifest = write_video_settings_manifest(tmp_path / "video.json", ProcessingOptions())
+    profile = AutomatedPipelineProfile(
+        "resume", "Resume test", manifest, None, {"Full frame": tmp_path / "model"},
+        gait_analysis_enabled=False, labeled_video_confidence=0.83,
+    )
+    root = tmp_path / "runs"
+    processed = []
+    analyses = []
+    rendered = []
+    reviews = []
+
+    def process(source, destination, _options, **_kwargs):
+        processed.append(source.name)
+        output = destination / f"{source.stem}_processed.mp4"
+        if processed == ["first.mp4"]:
+            output.write_bytes(b"partial")
+            raise RuntimeError("recording temporarily unreadable")
+        output.write_bytes(b"processed")
+        return [SimpleNamespace(crop_region_name=None, output_path=output)]
+
+    def analyze(jobs, output, _progress):
+        job, = jobs
+        analyses.append(job.video_paths)
+        folder = output / "analyzed_videos"
+        csvs = tuple(folder / f"{path.stem}DLC_fixture.csv" for path in job.video_paths)
+        h5s = tuple(path.with_suffix(".h5") for path in csvs)
+        for path in (*csvs, *h5s):
+            path.write_bytes(b"coordinates")
+        return [DlcAnalysisResult(job.region, job.video_paths, csvs, h5s, ())]
+
+    def label(jobs, results, output, _progress):
+        job, = jobs
+        result, = results
+        assert job.labeled_video_confidence == 0.83
+        assert all(path.read_bytes() == b"coordinates" for path in result.h5_paths)
+        rendered.append(job.region)
+        labels = tuple(output / "labeled_videos" / f"{path.stem}_labeled.mp4" for path in job.video_paths)
+        if len(rendered) == 1:
+            labels[0].write_bytes(b"partial label")
+            raise RuntimeError("renderer failed")
+        assert not labels[0].exists()
+        for path in labels:
+            path.write_bytes(b"labeled")
+        return [DlcAnalysisResult(job.region, job.video_paths, result.csv_paths, result.h5_paths, labels)]
+
+    def make_run(folder=None):
+        return create_automatic_run(
+            profile if folder is None else None, videos if folder is None else [], tmp_path, root,
+            operations=automatic_adapters.operations, storage=automatic_adapters.storage, resume_folder=folder,
+        )
+
+    def execute(run, *, pause_at_labels=False):
+        control = AutomaticExecutionControl()
+
+        def review(stage, artifacts):
+            reviews.append(stage)
+            assert all(item.path.is_file() for item in artifacts.items)
+            if stage == AutomatedStage.LABELED_VIDEOS and pause_at_labels:
+                control.request_cancel()
+            else:
+                control.decide_review(AutomaticReviewDecision.APPROVE)
+
+        def ignore(*_args):
+            pass
+
+        return execute_automatic_run(run, AutomaticExecutionEvents(ignore, ignore, ignore, ignore, review), control)
+
+    monkeypatch.setattr(automatic_adapters.operations.video, "process_outputs", process)
+    monkeypatch.setattr(automatic_adapters.operations, "deeplabcut_analysis", analyze)
+    monkeypatch.setattr(automatic_adapters.operations, "labeled_videos", label)
+    first_run = make_run()
+    with pytest.raises(RuntimeError, match="recording temporarily unreadable"):
+        execute(first_run)
+    assert processed == ["first.mp4", "second.mp4"]
+    folder = first_run.output_folder
+    # Resume from run-owned settings, even if the original workflow was removed.
+    manifest.unlink()
+    with pytest.raises(RuntimeError, match="renderer failed"):
+        execute(make_run(folder))
+    failed, = list_saved_automatic_runs(root)
+    assert (failed.status, failed.stage, failed.message) == ("failed", AutomatedStage.LABELED_VIDEOS, "renderer failed")
+    assert failed.output_folder == folder
+    assert processed == ["first.mp4", "second.mp4", "first.mp4"]
+    assert [path.name for path in analyses[0]] == ["first_processed.mp4", "second_processed.mp4"]
+
+    with pytest.raises(AutomaticRunCancelled):
+        execute(make_run(folder), pause_at_labels=True)
+    paused, = list_saved_automatic_runs(root)
+    assert paused.status == "paused"
+    result = execute(make_run(folder))
+    assert result.output_folder == folder
+    assert len(result.labeled_videos) == 2
+    assert len(analyses) == 1
+    assert len(rendered) == 2
+    assert reviews == [0, 3, 3]
+    complete, = list_saved_automatic_runs(root)
+    assert complete.status == "complete"
+    assert not complete.can_resume
+
+
+def test_retry_restores_raw_coordinates_if_knee_checkpoint_was_interrupted(
+    tmp_path, monkeypatch, automatic_adapters
+):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    profile = AutomatedPipelineProfile(
+        "knee", "Knee resume", write_video_settings_manifest(tmp_path / "video.json", ProcessingOptions()),
+        None, {"Full frame": tmp_path / "model"},
+        knee_manifest=write_knee_analysis_manifest(
+            tmp_path / "knee.json",
+            KneeCorrectionSettings(hip_knee_length_cm=1.5, knee_ankle_length_cm=1.7, pixels_per_cm=42.0),
+        ),
+        gait_analysis_enabled=False, knee_correction_enabled=True,
+    )
+    storage = automatic_adapters.storage
+    run = create_automatic_run(
+        profile, [source], tmp_path, tmp_path / "runs", operations=automatic_adapters.operations, storage=storage,
+    )
+    processed = run.processed_videos_folder / "video_processed.mp4"
+    processed.write_bytes(b"processed")
+    csv = run.analyzed_videos_folder / "video_processedDLC_fixture.csv"
+    h5 = csv.with_suffix(".h5")
+    for path in (csv, h5):
+        path.write_bytes(b"original")
+    run.processed_sources[0] = {"Full frame": [processed]}
+    run.dlc_jobs = run.build_dlc_jobs()
+    run.dlc_results = [DlcAnalysisResult("Full frame", (processed,), (csv,), (h5,), ())]
+    run.analysis_csvs_by_region = {"Full frame": [csv]}
+    run.completed_stages.update((AutomatedStage.VIDEO_PROCESSING, AutomatedStage.DEEPLABCUT_ANALYSIS))
+    run.save_status("running", AutomatedStage.DEEPLABCUT_ANALYSIS)
+
+    def correct(pair, folder, _settings):
+        assert pair.csv_path.read_bytes() == pair.h5_path.read_bytes() == b"original"
+        folder.mkdir(parents=True)
+        output_csv = folder / csv.name
+        output_h5 = folder / h5.name
+        for path in (output_csv, output_h5):
+            path.write_bytes(b"corrected")
+        return SimpleNamespace(output_csv=output_csv, output_h5=output_h5)
+
+    save_checkpoint = storage.write_checkpoint
+
+    def fail_completion_checkpoint(run):
+        if AutomatedStage.KNEE_CORRECTION in run.completed_stages:
+            raise OSError("checkpoint interrupted")
+        save_checkpoint(run)
+
+    monkeypatch.setattr(automatic_adapters.operations.knee, "correct_pair", correct)
+    monkeypatch.setattr(storage, "write_checkpoint", fail_completion_checkpoint)
+    with pytest.raises(OSError, match="checkpoint interrupted"):
+        run.run_stage(AutomatedStage.KNEE_CORRECTION)
+    assert h5.read_bytes() == b"corrected"
+    monkeypatch.setattr(storage, "write_checkpoint", save_checkpoint)
+    resumed = create_automatic_run(
+        None, [], tmp_path, operations=automatic_adapters.operations, storage=storage,
+        resume_folder=run.output_folder,
+    )
+    resumed.run_stage(AutomatedStage.KNEE_CORRECTION)
+    assert h5.read_bytes() == b"corrected"
+    assert not (resumed.knee_correction_folder / "work").exists()
 
 
 def test_deeplabcut_project_validation_accepts_snapshot_selection(tmp_path):
@@ -611,7 +792,7 @@ def test_pipeline_rejects_deeplabcut_results_for_the_wrong_region(tmp_path, monk
     )
     processed = tmp_path / "source_processed.mp4"
     processed.write_bytes(b"video")
-    run.processed_by_region = {"Full frame": [processed]}
+    run.processed_sources = {0: {"Full frame": [processed]}}
     monkeypatch.setattr(
         automatic_adapters.operations,
         "deeplabcut_analysis",

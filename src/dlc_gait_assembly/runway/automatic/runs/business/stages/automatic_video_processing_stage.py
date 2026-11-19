@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from dlc_gait_assembly.runway.automatic.runs.business.automatic_execution_control import AutomaticRunCancelled
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_recording_pairing import trim_ranges_for_video
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts import ProgressCallback
 from dlc_gait_assembly.shared.business.execution_feedback_contracts import ExecutionFeedback, ExecutionProgress
@@ -13,20 +14,40 @@ def execute_video_processing(run, progress_callback: ProgressCallback | None) ->
     (options, trim_ranges) = run.storage.video_settings(run.profile.processing_manifest)
     destination = run.processed_videos_folder
     total = len(run.video_paths)
+    failures = []
     feedback = (
         ExecutionFeedback(cancellation_check=progress_callback.checkpoint)
         if isinstance(progress_callback, ExecutionProgress)
         else ExecutionFeedback()
     )
-    for index, video_path in enumerate(run.video_paths, start=1):
-        trims = trim_ranges_for_video(trim_ranges, video_path)
-        results = run.operations.video.process_outputs(
-            video_path, destination, replace(options, trim_ranges=trims), feedback=feedback
-        )
+    if run.processed_sources and progress_callback is not None:
+        progress_callback(len(run.processed_sources), total, "Restored saved video outputs")
+    for index, video_path in enumerate(run.video_paths):
+        feedback.checkpoint()
+        if index in run.processed_sources:
+            continue
+        try:
+            trims = trim_ranges_for_video(trim_ranges, video_path)
+            results = run.operations.video.process_outputs(
+                video_path, destination, replace(options, trim_ranges=trims), feedback=feedback
+            )
+            if not results:
+                raise RuntimeError("Video processing did not produce any output videos.")
+        except AutomaticRunCancelled:
+            raise
+        except Exception as exc:
+            message = f"{video_path.name}: {exc}"
+            failures.append(message)
+            if progress_callback is not None:
+                progress_callback(len(run.processed_sources), total, f"Could not process {message}")
+            continue
+        processed_by_region = {}
         for result in results:
             region = result.crop_region_name or "Full frame"
-            run.processed_by_region.setdefault(region, []).append(result.output_path)
+            processed_by_region.setdefault(region, []).append(result.output_path)
+        run.processed_sources[index] = processed_by_region
+        run.storage.write_checkpoint(run)
         if progress_callback is not None:
-            progress_callback(index, total, f"Processed {video_path.name}")
-    if not run.processed_by_region:
-        raise RuntimeError("Video processing did not produce any output videos.")
+            progress_callback(len(run.processed_sources), total, f"Processed {video_path.name}")
+    if failures:
+        raise RuntimeError("Video processing needs attention:\n" + "\n".join(failures))

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton
+from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton
 
 from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
@@ -255,3 +255,26 @@ def build_automatic_processing_asset(self, manifest_content):
     self.regions_label.setObjectName("DetectedRegionsLabel")
     self.regions_label.setWordWrap(True)
     manifest_content.addWidget(self.regions_label)
+
+
+def build_automatic_labeled_video_settings(self, layout):
+    layout.addWidget(self._field_label("Labeled video settings"))
+    row = QHBoxLayout()
+    label = QLabel("Minimum marker confidence")
+    self.labeled_video_confidence_spin = QDoubleSpinBox()
+    self.labeled_video_confidence_spin.setDecimals(2)
+    self.labeled_video_confidence_spin.setRange(-0.01, 1.0)
+    self.labeled_video_confidence_spin.setSpecialValueText("Model default")
+    self.labeled_video_confidence_spin.setSingleStep(0.01)
+    self.labeled_video_confidence_spin.setValue(self.labeled_video_confidence_spin.minimum())
+    self.labeled_video_confidence_spin.setAccessibleName("Labeled video minimum marker confidence")
+    label.setBuddy(self.labeled_video_confidence_spin)
+    set_tooltip(
+        self.labeled_video_confidence_spin,
+        "Hide markers below this confidence in generated labeled videos. "
+        "Model default uses each DeepLabCut model's cutoff. Gait and knee filters use their own settings.",
+    )
+    row.addWidget(label)
+    row.addWidget(self.labeled_video_confidence_spin)
+    row.addStretch()
+    layout.addLayout(row)

@@ -26,8 +26,20 @@ def allocate_run_output(run, project_root, output_root, profile):
         else resolve_workspace(run.project_root).automatic_runs
     )
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run.output_folder = unique_run_folder(base / f"{timestamp}_{safe_name(profile.name)}")
-    run.output_folder.mkdir(parents=True, exist_ok=True)
+    base.mkdir(parents=True, exist_ok=True)
+    while True:
+        output_folder = unique_run_folder(base / f"{timestamp}_{safe_name(profile.name)}")
+        try:
+            output_folder.mkdir()
+        except FileExistsError:
+            continue
+        break
+    attach_run_output(run, project_root, output_folder)
+
+
+def attach_run_output(run, project_root, output_folder):
+    run.project_root = Path(project_root).expanduser().resolve()
+    run.output_folder = Path(output_folder).expanduser().resolve()
     run.processed_videos_folder = run.output_folder / "01_processed_videos"
     run.deeplabcut_folder = run.output_folder / "02_deeplabcut"
     run.analyzed_videos_folder = run.deeplabcut_folder / "analyzed_videos"

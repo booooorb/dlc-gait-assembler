@@ -31,6 +31,7 @@ class AutomaticProfileUseCases:
             knee_correction_enabled=source.knee_correction_enabled,
             allow_incomplete=True,
             workspace_state=source.workspace_state,
+            labeled_video_confidence=source.labeled_video_confidence,
         )
 
     def delete(self, profile_id):
@@ -43,6 +44,7 @@ class AutomaticProfileUseCases:
             profile_id=source.id, analysis_manifest=source.analysis_manifest, knee_manifest=source.knee_manifest,
             gait_analysis_enabled=source.gait_analysis_enabled, knee_correction_enabled=source.knee_correction_enabled,
             allow_incomplete=True, workspace_state=source.workspace_state,
+            labeled_video_confidence=source.labeled_video_confidence,
         )
 
     def create_from_manual(self, name, snapshot):

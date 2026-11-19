@@ -167,6 +167,8 @@ Runway tools follow this sequence:
 
 Use automation profiles to reuse settings and run selected stages across videos. Review the results at each review gate. Ladder analysis provides a separate workflow for detecting and reviewing paw placements and footfall events.
 
+In **Automation settings → Labeled video settings**, set the minimum marker confidence for generated overlays. **Model default** uses the cutoff in each DeepLabCut project. Runs save their progress automatically. Open **Run history** from Batch run or the workflow picker to resume after a pause or failure, or open earlier outputs. Resuming reuses completed stages, completed video processing, and approved reviews in the same output folder.
+
 Before analysis, check marker assignments, camera timing, frame rates, confidence thresholds, and calibration. Exported measurements depend on those settings. In-app reference guides describe the available measurements and methods.
 
 ## Saved data

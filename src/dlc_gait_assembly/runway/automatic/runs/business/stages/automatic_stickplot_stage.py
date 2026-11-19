@@ -10,7 +10,7 @@ from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts im
 def execute_stickplot(run, progress_callback: ProgressCallback | None) -> None:
     settings = run.gait_settings
     inputs = run._alma_inputs(settings.input_mode)
-    run.stickplot_results = run.operations.stickplots(
+    results = run.operations.stickplots(
         inputs,
         run.stickplots_folder,
         replace(
@@ -22,4 +22,5 @@ def execute_stickplot(run, progress_callback: ProgressCallback | None) -> None:
         ),
         progress_callback,
     )
-    run._validate_alma_results(run.stickplot_results, inputs, require_stickplot=True)
+    run._validate_alma_results(results, inputs, require_stickplot=True)
+    run.stickplot_results = results

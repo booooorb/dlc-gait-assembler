@@ -18,3 +18,18 @@ class AutomatedPipelineResult:
     labeled_videos: tuple[Path, ...]
     stickplots: tuple[Path, ...]
     analysis_outputs: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class SavedAutomaticRun:
+    output_folder: Path
+    profile_name: str
+    status: str
+    stage: int
+    updated_at: str
+    video_count: int
+    message: str = ""
+
+    @property
+    def can_resume(self) -> bool:
+        return self.status in {"ready", "running", "review", "paused", "failed"}

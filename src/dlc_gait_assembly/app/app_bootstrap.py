@@ -275,11 +275,15 @@ def create_automatic_run(profile, videos, project_root, output_root=None, **opti
 
 def create_automatic_workspace(store=None):
     from dlc_gait_assembly.runway.automatic.client.automatic_workspace_view import AutomatedPipelineProfilesWidget
+    from dlc_gait_assembly.runway.automatic.runs.infrastructure.automatic_run_checkpoint_store import (
+        list_saved_automatic_runs,
+    )
 
     return AutomatedPipelineProfilesWidget(
         review_artifacts=create_review_artifact_reader(),
         profile_use_cases=create_profile_use_cases(store),
         run_factory=create_automatic_run,
+        run_history=list_saved_automatic_runs,
         media_access=create_media_access(),
         workspace=resolve_workspace(),
     )

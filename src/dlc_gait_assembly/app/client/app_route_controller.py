@@ -46,11 +46,15 @@ class AppRouteController:
     def _show_automated_profiles(self) -> None:
         self._open_automation("profiles")
 
-    def _open_automation(self, page: str) -> None:
-        if not self.view.workflows.ensure_profile(lambda: self._open_automation(page)):
-            return
+    def resume_saved_automation(self, run) -> None:
+        if self._open_automation("run", require_profile=False):
+            self.view._main_menu.automated_profiles.runs.resume_saved(run)
+
+    def _open_automation(self, page: str, *, require_profile=True) -> bool:
+        if require_profile and not self.view.workflows.ensure_profile(lambda: self._open_automation(page)):
+            return False
         if not self._can_leave_active_tool():
-            return
+            return False
         self.view._active_tool = None
         self.view.navigation.tool_id = None
         self.view.navigation.home_active = False
@@ -63,6 +67,7 @@ class AppRouteController:
             profiles._show_profile_configuration()
         else:
             profiles._show_automation_menu()
+        return True
 
     def _automated_workspace_changed(self, page: str) -> None:
         self.view.navigation.automatic_page = page
