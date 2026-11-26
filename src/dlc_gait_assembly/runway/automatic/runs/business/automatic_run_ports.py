@@ -16,6 +16,7 @@ class AutomaticStageOperations:
     deeplabcut_analysis: Callable
     labeled_videos: Callable
     stickplots: Callable
+    fine_tune: Callable | None = None
 
 
 class AutomaticRunStoragePort(Protocol):
@@ -32,6 +33,8 @@ class AutomaticRunStoragePort(Protocol):
     def gait_settings(self, manifest, calibration): ...
 
     def persist_knee_replacements(self, run, pairs, settings, corrected, progress): ...
+
+    def apply_label_edits(self, sources, edits, progress): ...
 
     def write_manifest(self, run, result): ...
 

@@ -31,6 +31,8 @@ def run_bridge_request(
     initial_message: str,
     failure_label: str,
     progress_callback: Callable[[int, int, str], None] | None,
+    *,
+    script_name: str = "deeplabcut_bridge_entry.py",
 ) -> dict:
     with tempfile.TemporaryDirectory(prefix="dlc-automated-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -40,7 +42,7 @@ def run_bridge_request(
         request_path.write_text(json.dumps(request), encoding="utf-8")
         if progress_callback is not None:
             progress_callback(0, _DLC_PROGRESS_SCALE, initial_message)
-        arguments = deeplabcut_analysis_arguments(Path(__file__).with_name("deeplabcut_bridge_entry.py"), request_path)
+        arguments = deeplabcut_analysis_arguments(Path(__file__).with_name(script_name), request_path)
         progress_parser = _DlcProgressParser(total_videos, progress_callback, phase=progress_phase)
         completed = ExternalProcessSession().run(
             ExternalCommand(arguments),

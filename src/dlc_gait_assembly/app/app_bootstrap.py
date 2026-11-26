@@ -251,6 +251,7 @@ def create_ladder_use_cases():
 def create_automatic_run(profile, videos, project_root, output_root=None, **options):
     from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_coordinator import AutomatedPipelineRun
     from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_ports import AutomaticStageOperations
+    from dlc_gait_assembly.runway.automatic.runs.infrastructure.automatic_model_refinement import fine_tune_models
     from dlc_gait_assembly.runway.automatic.runs.infrastructure.automatic_run_storage import AutomaticRunStorage
     from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_preview_writer import (
         write_gait_stickplot_previews,
@@ -266,6 +267,7 @@ def create_automatic_run(profile, videos, project_root, output_root=None, **opti
         create_deeplabcut_analysis().analyze,
         create_deeplabcut_analysis().create_labeled_videos,
         write_gait_stickplot_previews,
+        fine_tune_models,
     )
     storage = options.pop("storage", None) or AutomaticRunStorage()
     return AutomatedPipelineRun(

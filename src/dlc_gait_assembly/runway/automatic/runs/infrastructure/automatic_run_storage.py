@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from dlc_gait_assembly.runway.automatic.business.automatic_stage_definitions import AutomatedStage
+from dlc_gait_assembly.runway.automatic.review.infrastructure.automatic_label_artifacts import apply_label_edits
 from dlc_gait_assembly.runway.automatic.runs.infrastructure.automatic_run_checkpoint_store import (
     persist_run_checkpoint,
     record_run_interruption,
@@ -52,6 +53,7 @@ class AutomaticRunStorage:
                 settings_for_view(settings, view)
         return settings
 
+    apply_label_edits = staticmethod(apply_label_edits)
     persist_knee_replacements = staticmethod(persist_knee_replacements)
     write_manifest = staticmethod(persist_run_manifest)
 

@@ -5,8 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+)
 
+from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import (
+    DEFAULT_FINE_TUNE_EPOCHS,
+    MAX_FINE_TUNE_EPOCHS,
+)
 from dlc_gait_assembly.shared.client.qt_input_behaviors import set_tooltip
 from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
 
@@ -278,3 +291,17 @@ def build_automatic_labeled_video_settings(self, layout):
     row.addWidget(self.labeled_video_confidence_spin)
     row.addStretch()
     layout.addLayout(row)
+
+    layout.addWidget(self._field_label("Model fine-tuning"))
+    training_row = QHBoxLayout()
+    epoch_label = QLabel("Training epochs")
+    self.fine_tune_epochs_spin = QSpinBox()
+    self.fine_tune_epochs_spin.setRange(1, MAX_FINE_TUNE_EPOCHS)
+    self.fine_tune_epochs_spin.setValue(DEFAULT_FINE_TUNE_EPOCHS)
+    self.fine_tune_epochs_spin.setAccessibleName("Model fine-tuning epochs")
+    self.fine_tune_epochs_spin.setToolTip("Used when you save corrected labels and fine-tune during Batch Run.")
+    epoch_label.setBuddy(self.fine_tune_epochs_spin)
+    training_row.addWidget(epoch_label)
+    training_row.addWidget(self.fine_tune_epochs_spin)
+    training_row.addStretch()
+    layout.addLayout(training_row)

@@ -886,3 +886,153 @@ def automatic_adapters():
 
 
 from dlc_gait_assembly.app.app_bootstrap import create_deeplabcut_analysis
+
+
+@pytest.mark.parametrize(
+    "review_at,fine_tune,fail_first_training",
+    [
+        (AutomatedStage.LABELED_VIDEOS, False, False),
+        (AutomatedStage.STICKPLOT, True, False),
+        (AutomatedStage.STICKPLOT, True, True),
+    ],
+)
+def test_label_correction_replays_the_right_batch_stages(
+    tmp_path, monkeypatch, automatic_adapters, review_at, fine_tune, fail_first_training
+):
+    from dataclasses import replace
+
+    import pandas as pd
+
+    from dlc_gait_assembly.runway.automatic.review.business.automatic_label_correction import LabelCorrection, LabelEdit
+    from dlc_gait_assembly.runway.automatic.review.infrastructure.automatic_label_artifacts import load_label_artifacts
+    from dlc_gait_assembly.shared.infrastructure.coordinate_csv_codec import read_dlc_csv
+    from dlc_gait_assembly.shared.infrastructure.coordinate_h5_codec import read_dlc_h5
+
+    videos = [tmp_path / "mouse1.mp4", tmp_path / "mouse2.mp4"]
+    for video in videos:
+        video.touch()
+    model = tmp_path / "config.yaml"
+    model.write_text("Task: demo\ncropping: false\n")
+    tuned = tmp_path / "config.gait-refinement-test.yaml"
+    tuned.write_text(model.read_text())
+    processing = write_video_settings_manifest(tmp_path / "video.json", ProcessingOptions())
+    gait = write_analysis_manifest(tmp_path / "gait.json", AlmaSettings(input_mode="Single side view"))
+    profile = AutomatedPipelineProfile(
+        "test", "Corrections", processing, None, {"Full frame": model}, gait, fine_tune_epochs=4
+    )
+    columns = pd.MultiIndex.from_product(
+        [["DLC_fixture"], ["hip", "knee", "ankle"], ["x", "y", "likelihood"]],
+        names=["scorer", "bodyparts", "coords"],
+    )
+    predictions = pd.DataFrame([[5, 10, 0.9, 15, 10, 0.14, 25, 10, 0.95]], columns=columns)
+    calls = {"process": [], "analyze": [], "label": [], "plot": [], "train": []}
+
+    def process(source, output_folder, options, **kwargs):
+        calls["process"].append(source)
+        output = output_folder / f"{source.stem}_processed.mp4"
+        output.touch()
+        return [SimpleNamespace(crop_region_name=None, output_path=output)]
+
+    def analyze(jobs, output_folder, progress):
+        job, = jobs
+        calls["analyze"].append((job.model_path, job.video_paths))
+        csvs = []
+        h5s = []
+        for path in job.video_paths:
+            csv = output_folder / "analyzed_videos" / f"{path.stem}DLC_fixture.csv"
+            h5 = csv.with_suffix(".h5")
+            predictions.to_csv(csv)
+            predictions.to_hdf(h5, key="df_with_missing")
+            csvs.append(csv)
+            h5s.append(h5)
+        return [DlcAnalysisResult(job.region, job.video_paths, tuple(csvs), tuple(h5s), ())]
+
+    def label(jobs, results, output_folder, progress):
+        result, = results
+        calls["label"].append(read_dlc_h5(result.h5_paths[0])[0].iloc[0].tolist())
+        outputs = tuple(output_folder / "labeled_videos" / f"{csv.stem}_labeled.mp4" for csv in result.csv_paths)
+        for path in outputs:
+            path.touch()
+        return [replace(result, labeled_video_paths=outputs)]
+
+    def plot(inputs, output_folder, settings, progress):
+        calls["plot"].append(inputs)
+        results = []
+        for item in inputs:
+            preview = output_folder / f"{item.stem}.svg"
+            preview.write_text("<svg/>")
+            results.append(AlmaRunResult(item, (preview,)))
+        return results
+
+    def train(sources, edits, epochs, revision, progress):
+        calls["train"].append((sources, edits, epochs, revision))
+        if fail_first_training and len(calls["train"]) == 1:
+            raise RuntimeError("Temporary training failure")
+        return {"Full frame": tuned}
+
+    monkeypatch.setattr(automatic_adapters.operations.video, "process_outputs", process)
+    for name, operation in {"deeplabcut_analysis": analyze, "labeled_videos": label, "stickplots": plot,
+                            "fine_tune": train, "gait": plot}.items():
+        monkeypatch.setattr(automatic_adapters.operations, name, operation, raising=False)
+
+    def make_run(folder=None):
+        return create_automatic_run(
+            profile if folder is None else None, videos, tmp_path, tmp_path / "runs",
+            operations=automatic_adapters.operations, storage=automatic_adapters.storage, resume_folder=folder,
+        )
+
+    run = make_run()
+    reviews = []
+    control = AutomaticExecutionControl()
+
+    def review(stage, request):
+        reviews.append(stage)
+        if request.label_error:
+            assert request.label_error == "Temporary training failure"
+            assert request.label_draft == calls["train"][0][1]
+            control.decide_review(
+                AutomaticReviewDecision.CORRECT_LABELS, LabelCorrection(request.label_draft, True)
+            )
+        elif stage == review_at and reviews.count(stage) == 1:
+            first, second = request.label_sources
+            assert first.video != second.video
+            assert request.fine_tune_epochs == 4
+            edits = (
+                LabelEdit(first.region, first.video, 0, ("knee",), (18.0, 12.0)),
+                LabelEdit(first.region, first.video, 0, ("ankle",), None),
+            )
+            control.decide_review(AutomaticReviewDecision.CORRECT_LABELS, LabelCorrection(edits, fine_tune))
+        elif stage == AutomatedStage.LABELED_VIDEOS and reviews.count(stage) == 2:
+            control.request_cancel()
+        else:
+            control.decide_review(AutomaticReviewDecision.APPROVE)
+
+    def quiet(*_):
+        pass
+    events = AutomaticExecutionEvents(quiet, quiet, quiet, quiet, review)
+    with pytest.raises(AutomaticRunCancelled):
+        execute_automatic_run(run, events, control)
+
+    assert len(calls["process"]) == 2
+    assert len(calls["analyze"]) == int(fine_tune) + 1
+    assert len(calls["label"]) == 2
+    if fine_tune:
+        assert calls["analyze"][-1] == (tuned, calls["analyze"][0][1])
+        assert calls["train"][0][2] == 4
+        assert len(calls["train"]) == 1 + int(fail_first_training)
+        assert calls["train"][0][3] == calls["train"][-1][3]
+    else:
+        assert not calls["train"]
+    assert calls["label"][-1][3:6] == [18.0, 12.0, 1.0]
+    assert pd.isna(calls["label"][-1][6])
+
+    resumed = make_run(run.output_folder)
+    first, second = resumed.label_sources()
+    edited, raw, _ = load_label_artifacts(first)
+    pd.testing.assert_frame_equal(read_dlc_csv(first.csv), edited)
+    assert edited.iloc[0, 3] == 18.0 and raw.iloc[0, 3] == 15.0
+    assert load_label_artifacts(second)[0].iloc[0, 3] == 15.0
+    control = AutomaticExecutionControl()
+    result = execute_automatic_run(resumed, events, control)
+    assert len(result.stickplots) == 2
+    assert len(calls["label"]) == 2

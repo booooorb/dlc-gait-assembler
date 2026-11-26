@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QInputDialog, Q
 
 from dlc_gait_assembly.app.app_bootstrap import build_tool_specs, create_main_menu
 from dlc_gait_assembly.app.client.app_shell_window import MainWindow
+from dlc_gait_assembly.app.client import workflow_profile_controller
 from dlc_gait_assembly.app.client.workflow_page_state import decode_value, encode_value
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_repository import AutomatedProfileStore
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts import SavedAutomaticRun
@@ -108,6 +109,53 @@ def test_workflows_require_a_profile_before_manual_and_automation(window):
     assert window._stack.currentWidget() is window.workflows.picker
     assert window.workflows.new(name="Study B")
     assert window.navigation.automatic_active
+
+
+@pytest.mark.parametrize(
+    ("platform", "command", "args"),
+    [
+        ("darwin", "/usr/bin/open", ["-R"]),
+        ("win32", "explorer.exe", ["/select,"]),
+        ("linux", None, []),
+    ],
+)
+def test_show_project_folder_uses_the_selected_or_active_workflow(window, tmp_path, monkeypatch, platform, command, args):
+    workflows = window.workflows
+    repository = AutomatedProfileStore(tmp_path / "Saved projects")
+    workflows.use_cases.repository = repository
+    assert not workflows.project_folder_button.isEnabled()
+    assert not workflows.show_project_folder_button.isEnabled()
+    assert workflows.new(name="Active project")
+    active = workflows.active
+    selected = repository.save("Selected project", None, None, {}, allow_incomplete=True)
+    revealed = []
+    monkeypatch.setattr(workflow_profile_controller, "platform", platform)
+
+    def reveal(program, arguments):
+        assert program == command and arguments[:-1] == args
+        revealed.append(Path(arguments[-1]))
+        return True, 123
+
+    def open_folder(url):
+        assert command is None and url.isLocalFile()
+        revealed.append(Path(url.toLocalFile()))
+        return True
+
+    monkeypatch.setattr(workflow_profile_controller.QProcess, "startDetached", reveal)
+    monkeypatch.setattr(workflow_profile_controller.QDesktopServices, "openUrl", open_folder)
+
+    workflows.project_folder_button.click()
+    workflows.show_picker()
+    assert not workflows.show_project_folder_button.isEnabled()
+    item, = workflows.profile_list.findItems(selected.name, Qt.MatchExactly)
+    workflows.profile_list.setCurrentItem(item)
+    assert workflows.show_project_folder_button.isEnabled()
+    workflows.show_project_folder_button.click()
+    workflows.profile_search.setText("no matching projects")
+    assert not workflows.show_project_folder_button.isEnabled()
+    assert workflows.active == active
+    assert revealed == [repository.root / active.id, repository.root / selected.id]
+    assert all((folder / "profile.json").is_file() for folder in revealed)
 
 
 def test_run_history_can_resume_from_the_picker_without_opening_a_profile(window, tmp_path, monkeypatch):

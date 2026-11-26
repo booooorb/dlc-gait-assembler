@@ -14,6 +14,7 @@ from dlc_gait_assembly.runway.automatic.client.automatic_display_constants impor
     PIPELINE_STAGES,
     STOP_PREVIEW_TOOLTIP,
 )
+from dlc_gait_assembly.runway.automatic.review.client.automatic_label_dialog import LabelCorrectionDialog
 
 
 class AutomaticReviewController:
@@ -28,8 +29,12 @@ class AutomaticReviewController:
         self.view._pipeline_demo_waiting_for_review = stage_index
         self.view.stage_progress._set_pipeline_overview_compact(True)
         self.view.pipeline_review_title.setText(str(gate["title"]))
-        self.view.pipeline_review_description.setText(str(gate["description"]))
+        description = str(gate["description"])
+        if artifacts is not None and artifacts.label_error:
+            description = "Fine-tuning stopped. Open Correct labels to view the error, retry, or save frame corrections."
+        self.view.pipeline_review_description.setText(description)
         self._populate_pipeline_review_preview(stage_index, artifacts)
+        self.view.pipeline_correct_labels_button.setVisible(bool(artifacts and artifacts.label_sources))
         self.view.pipeline_change_settings_button.hide()
         self.view.pipeline_needs_changes_button.show()
         self.view.pipeline_approve_button.show()
@@ -206,6 +211,31 @@ class AutomaticReviewController:
                 active.append(name.replace("_", " "))
         return ", ".join(active) if active else "none"
 
+    def _open_label_correction(self) -> None:
+        review = self.view._pipeline_review_artifacts
+        worker = self.view._pipeline_worker
+        if review is None or not review.label_sources or worker is None or not worker.waiting_for_review:
+            return
+        items = self.view.pipeline_component_tabs.currentWidget()
+        item = items.currentItem() if review.kind == "videos" and items is not None else None
+        preferred = next(
+            (
+                source for source in review.label_sources
+                if item is not None and source.region == item.data(Qt.UserRole + 4)
+                and Path(item.data(Qt.UserRole)).stem.startswith(source.csv.stem)
+            ),
+            None,
+        )
+        dialog = LabelCorrectionDialog(self.view, review, self.view.review_artifacts, self.view.media_access, preferred)
+        if dialog.exec() and self.view._pipeline_worker is worker and worker.waiting_for_review:
+            self.view._pipeline_real_waiting_for_review = None
+            self.view._pipeline_demo_waiting_for_review = None
+            self.view.pipeline_review_panel.hide()
+            self.view.pipeline_activity_panel.show()
+            self.view.runs._set_run_readiness("Saving corrected labels", "running")
+            worker.correct_labels(dialog.correction)
+        dialog.deleteLater()
+
     def _approve_pipeline_review(self) -> None:
         stage_index = self.view._pipeline_demo_waiting_for_review
         if stage_index is None:
@@ -248,6 +278,7 @@ class AutomaticReviewController:
         self.view.pipeline_change_settings_button.setText(f"Open {gate['setting']}")
         self.view.pipeline_change_settings_button.show()
         self.view.pipeline_needs_changes_button.hide()
+        self.view.pipeline_correct_labels_button.hide()
         self.view.pipeline_approve_button.hide()
         card = self.view.pipeline_stage_cards[stage_index]
         card.setProperty("pipelineState", "blocked")

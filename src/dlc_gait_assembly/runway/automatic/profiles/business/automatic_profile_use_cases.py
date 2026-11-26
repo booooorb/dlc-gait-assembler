@@ -15,6 +15,9 @@ class AutomaticProfileUseCases:
     def load(self, profile_id):
         return self.repository.load(profile_id)
 
+    def profile_folder(self, profile_id):
+        return self.repository.profile_folder(profile_id)
+
     def save(self, *args, **settings):
         return self.repository.save(*args, **settings)
 
@@ -32,6 +35,7 @@ class AutomaticProfileUseCases:
             allow_incomplete=True,
             workspace_state=source.workspace_state,
             labeled_video_confidence=source.labeled_video_confidence,
+            fine_tune_epochs=source.fine_tune_epochs,
         )
 
     def delete(self, profile_id):
@@ -45,6 +49,7 @@ class AutomaticProfileUseCases:
             gait_analysis_enabled=source.gait_analysis_enabled, knee_correction_enabled=source.knee_correction_enabled,
             allow_incomplete=True, workspace_state=source.workspace_state,
             labeled_video_confidence=source.labeled_video_confidence,
+            fine_tune_epochs=source.fine_tune_epochs,
         )
 
     def create_from_manual(self, name, snapshot):

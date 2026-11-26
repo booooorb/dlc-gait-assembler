@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from dlc_gait_assembly.runway.automatic.review.infrastructure.automatic_label_artifacts import load_label_artifacts
 from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
 
 
 class AutomaticReviewArtifactReader:
+    label_artifacts = staticmethod(load_label_artifacts)
+
     def reference_stickplot(self) -> Path:
         return resource_path("analysis_previews", "alma", "stickplot.svg")
 

@@ -387,6 +387,7 @@ class AutomatedPipelineProfilesWidget(QWidget):
         self.run_history_button.clicked.connect(self.runs.show_run_history)
         self.resume_pipeline_button.clicked.connect(self.runs.resume_recent)
         self.open_pipeline_output_button.clicked.connect(self.runs._open_pipeline_output)
+        self.pipeline_correct_labels_button.clicked.connect(self.reviews._open_label_correction)
         self.pipeline_approve_button.clicked.connect(self.reviews._approve_pipeline_review)
         self.pipeline_needs_changes_button.clicked.connect(self.reviews._reject_pipeline_review)
         self.pipeline_change_settings_button.clicked.connect(self.review_settings._open_pipeline_fix_settings)

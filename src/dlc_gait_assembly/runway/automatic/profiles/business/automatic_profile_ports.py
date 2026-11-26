@@ -1,5 +1,6 @@
 """Persistence and owned-asset interfaces required by profile operations."""
 
+from pathlib import Path
 from typing import Protocol
 
 
@@ -7,6 +8,8 @@ class AutomaticProfileRepositoryPort(Protocol):
     def list_profiles(self): ...
 
     def load(self, profile_id: str): ...
+
+    def profile_folder(self, profile_id: str) -> Path: ...
 
     def save(self, **settings): ...
 

@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from uuid import uuid4
 
-from dlc_gait_assembly.runway.automatic.business.automatic_execution_contracts import ReviewArtifact, StageReview
+from dlc_gait_assembly.runway.automatic.business.automatic_execution_contracts import (
+    AutomaticReviewDecision,
+    ReviewArtifact,
+    StageReview,
+)
 from dlc_gait_assembly.runway.automatic.business.automatic_stage_definitions import (
     AUTOMATED_STAGE_SPECS,
     AutomatedStage,
     coerce_automated_stage,
 )
 from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import AutomatedPipelineProfile
+from dlc_gait_assembly.runway.automatic.review.business.automatic_label_correction import LabelReviewSource
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_execution_control import AutomaticRunCancelled
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_recording_pairing import (
     dlc_source_stem,
@@ -73,6 +80,11 @@ class AutomatedPipelineRun:
         self.approved_reviews: set[AutomatedStage] = set()
         self.status = "ready"
         self.current_stage = -1
+        self.label_edits = ()
+        self.pending_label_edits = ()
+        self.pending_fine_tune = ""
+        self.reset_from = None
+        self.label_error = ""
 
         if resume_folder is None:
             if profile is None:
@@ -198,6 +210,97 @@ class AutomatedPipelineRun:
     def stage_skip_reason(self, stage_index: int | AutomatedStage) -> str:
         return self.plan.stage_skip_reason(stage_index)
 
+    def label_sources(self):
+        return tuple(
+            LabelReviewSource(result.region, pair.video_path, pair.csv_path, pair.h5_path,
+                              self.profile.deeplabcut_models[result.region])
+            for result in self.dlc_results
+            for pair in pair_dlc_result(result)
+            if pair.is_paired
+        )
+
+    def label_review_settings(self):
+        knee = self.profile.knee_manifest
+        try:
+            knee_settings = self.storage.knee_settings(knee) if knee is not None else None
+        except (OSError, ValueError):
+            knee_settings = None
+        return {
+            "label_sources": self.label_sources(),
+            "knee_settings": knee_settings,
+            "fine_tune_epochs": self.profile.fine_tune_epochs,
+            "label_draft": self.pending_label_edits if self.label_error else (),
+            "label_error": self.label_error,
+        }
+
+    def request_label_correction(self, correction, stage):
+        if not correction.edits:
+            raise ValueError("Correct at least one label before saving.")
+        previous_revision = self.pending_fine_tune if correction.edits == self.pending_label_edits else ""
+        self.pending_fine_tune = (previous_revision or uuid4().hex) if correction.fine_tune else ""
+        self.pending_label_edits = correction.edits
+        self.label_error = ""
+        self.save_status("running", stage)
+
+    def finish_label_correction(self, events, control):
+        if self.pending_label_edits and not self.label_error:
+            stage = AutomatedStage(self.current_stage)
+            control.current_stage = int(stage)
+            rewind = AutomatedStage.LABELED_VIDEOS
+            if self.pending_fine_tune:
+                title = "Fine-tuning DeepLabCut models"
+                events.stage_started(int(stage), title)
+                events.log_message(title)
+                events.stage_progress(int(stage), 0, 100, title)
+
+                def report(current, total, message):
+                    control.check_cancelled()
+                    events.stage_progress(int(stage), current, total, message)
+
+                try:
+                    if self.operations.fine_tune is None:
+                        raise RuntimeError("Model fine-tuning is unavailable.")
+                    tuned = self.operations.fine_tune(
+                        self.label_sources(), self.pending_label_edits, self.profile.fine_tune_epochs,
+                        self.pending_fine_tune, ExecutionProgress(report, control.check_cancelled),
+                    )
+                except AutomaticRunCancelled:
+                    raise
+                except Exception as exc:
+                    # Leave the original review and corrections available if training fails.
+                    self.label_error = str(exc) or type(exc).__name__
+                    events.log_message(
+                        f"Fine-tuning failed. Open Correct labels for details. {self.label_error.splitlines()[0]}"
+                    )
+                    self.save_status("review", stage)
+                    return
+                self.profile = replace(self.profile, deeplabcut_models={**self.profile.deeplabcut_models, **tuned})
+                rewind = AutomatedStage.DEEPLABCUT_ANALYSIS
+                events.log_message("Fine-tuning complete. Running inference again on all batch videos")
+            edits = {edit.key: edit for edit in (*self.label_edits, *self.pending_label_edits)}
+            self.label_edits = tuple(edits.values())
+            self.pending_label_edits = ()
+            self.pending_fine_tune = ""
+            self._completed_stages = {stage for stage in self._completed_stages if stage < rewind}
+            self.approved_reviews = {stage for stage in self.approved_reviews if stage < rewind}
+            self.stickplot_results = []
+            self.gait_results = []
+            if rewind is AutomatedStage.DEEPLABCUT_ANALYSIS:
+                self.dlc_results = []
+                self.dlc_jobs = []
+                self.analysis_csvs_by_region = {}
+            else:
+                self.dlc_results = [replace(result, labeled_video_paths=()) for result in self.dlc_results]
+            self.reset_from = rewind
+            self.save_status("running", -1)
+        if self.reset_from is not None:
+            for stage in reversed(tuple(AutomatedStage)):
+                if stage >= self.reset_from:
+                    control.check_cancelled()
+                    self.storage.reset_stage_outputs(self, stage)
+            self.reset_from = None
+            self.save_status("running", -1)
+
     def review_artifacts(self, stage_index: int | AutomatedStage) -> StageReview:
         stage = coerce_automated_stage(stage_index)
         if stage is AutomatedStage.VIDEO_PROCESSING:
@@ -219,6 +322,7 @@ class AutomatedPipelineRun:
                     for result in self.dlc_results
                     for path in result.labeled_video_paths
                 ),
+                **self.label_review_settings(),
             )
         if stage is AutomatedStage.STICKPLOT:
             return StageReview(
@@ -230,6 +334,7 @@ class AutomatedPipelineRun:
                     for path in result.output_files
                     if path.suffix.casefold() in {".svg", ".png", ".jpg", ".jpeg"}
                 ),
+                **self.label_review_settings(),
             )
         return StageReview(stage=stage, kind="none")
 
@@ -366,7 +471,12 @@ class AutomatedPipelineRun:
 def execute_automatic_run(pipeline, events, control):
     """Execute stage handoffs and review gates through client-independent callbacks."""
     try:
-        return _execute_saved_stages(pipeline, events, control)
+        while True:
+            control.check_cancelled()
+            if getattr(pipeline, "pending_label_edits", ()) or getattr(pipeline, "reset_from", None) is not None:
+                pipeline.finish_label_correction(events, control)
+            if (result := _execute_saved_stages(pipeline, events, control)) is not None:
+                return result
     except AutomaticRunCancelled:
         _record_interruption(pipeline, events, "paused", "")
         raise
@@ -409,7 +519,14 @@ def _execute_saved_stages(pipeline, events, control):
         if spec.review_kind is not None and spec.stage not in pipeline.approved_reviews:
             if saved:
                 pipeline.save_status("review", stage)
-            control.review(pipeline.review_artifacts(stage), events.review_requested)
+            decision = control.review(pipeline.review_artifacts(stage), events.review_requested)
+            if decision is AutomaticReviewDecision.CORRECT_LABELS:
+                pipeline.request_label_correction(control.correction, stage)
+                return None
+            if getattr(pipeline, "label_error", ""):
+                pipeline.pending_label_edits = ()
+                pipeline.pending_fine_tune = ""
+                pipeline.label_error = ""
             pipeline.approved_reviews.add(spec.stage)
             pipeline.save_status("running", stage)
             events.log_message(f"Approved {spec.label} review")

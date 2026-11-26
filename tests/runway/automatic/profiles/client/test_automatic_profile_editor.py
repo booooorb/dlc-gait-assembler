@@ -130,6 +130,26 @@ def test_profile_store_packages_complete_project_when_config_file_is_selected(tm
         assert next(stored_project.rglob("metadata.yaml")).is_file()
 
 
+def test_workflow_folder_can_move_to_another_profile_store(tmp_path):
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    profile = _save(store, "Move this project", _profile_sources(tmp_path))
+    folder = store.profile_folder(profile.id)
+    other_store = AutomatedProfileStore(tmp_path / "Other workspace" / "profiles")
+    other_store.root.mkdir(parents=True)
+    moved = folder.rename(other_store.root / folder.name)
+
+    with pytest.raises(FileNotFoundError, match="saved project folder is missing"):
+        store.profile_folder(profile.id)
+    assert other_store.profile_folder(profile.id) == moved
+    reopened = other_store.load(profile.id)
+    assert reopened.name == profile.name
+    for asset in (reopened.processing_manifest, reopened.calibration_map, reopened.analysis_manifest, reopened.knee_manifest):
+        assert moved in asset.parents and asset.is_file()
+    for model in reopened.deeplabcut_models.values():
+        assert moved in model.parents
+        assert validate_deeplabcut_project(model).is_file()
+
+
 @pytest.mark.parametrize(
     ("path", "expected"),
     [
@@ -628,11 +648,20 @@ def test_rejected_pipeline_check_opens_correct_settings_and_rechecks_on_resume(t
 def test_selected_profile_can_be_duplicated_under_a_new_name(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     store = AutomatedProfileStore(tmp_path / "profiles")
-    _save(store, "Original", _profile_sources(tmp_path))
+    source = _save(store, "Original", _profile_sources(tmp_path))
     widget = create_automatic_workspace(store)
+    assert widget.fine_tune_epochs_spin.value() == 30
+    store.save(
+        source.name, source.processing_manifest, source.calibration_map, source.deeplabcut_models,
+        profile_id=source.id, analysis_manifest=source.analysis_manifest, fine_tune_epochs=17,
+    )
+    widget.profiles._refresh_profiles(source.id)
+    assert widget.fine_tune_epochs_spin.value() == 17
     monkeypatch.setattr(QInputDialog, "getText", lambda *args: ("Original copy", True))
     widget.profiles._duplicate_profile()
     assert [profile.name for profile in store.list_profiles()] == ["Original", "Original copy"]
     assert widget.profile_name.text() == "Original copy"
+    assert widget.fine_tune_epochs_spin.value() == 17
+    assert store.list_profiles()[1].fine_tune_epochs == 17
     widget.close()
     app.processEvents()

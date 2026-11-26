@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 
+from dlc_gait_assembly.runway.automatic.review.infrastructure.automatic_label_artifacts import preserve_raw_tracking
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_recording_pairing import safe_name
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts import AutomatedPipelineResult
 from dlc_gait_assembly.runway.automatic.runs.infrastructure.automatic_run_checkpoint_store import write_run_json
@@ -45,6 +46,7 @@ def persist_knee_replacements(run, pair_jobs, settings, corrected, progress_call
             backup_h5 = backup_folder / f"{index:04d}.h5"
             shutil.copy2(pair.csv_path, backup_csv)
             shutil.copy2(pair.h5_path, backup_h5)
+            preserve_raw_tracking(pair.h5_path)
             backups.extend(((pair.csv_path, backup_csv), (pair.h5_path, backup_h5)))
         write_run_json(work_folder / "backups.json", backups)
         for region, pair, result in prepared:
@@ -85,6 +87,9 @@ def persist_run_manifest(run, result: AutomatedPipelineResult) -> None:
     payload = {
         "profile": {"id": run.profile.id, "name": run.profile.name},
         "labeled_video_confidence": run.profile.labeled_video_confidence,
+        "fine_tune_epochs": run.profile.fine_tune_epochs,
+        "deeplabcut_models": run.profile.deeplabcut_models,
+        "corrected_frame_count": len({edit.key[:3] for edit in run.label_edits}),
         "output_folder": str(run.output_folder),
         "folders": {name: str(path) for (name, path) in folders.items()},
         "artifacts": {name: [str(path) for path in paths] for (name, paths) in artifacts.items()},

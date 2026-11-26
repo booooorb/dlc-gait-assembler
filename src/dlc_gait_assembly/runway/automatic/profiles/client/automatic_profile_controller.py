@@ -6,6 +6,7 @@ from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
 from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import (
+    DEFAULT_FINE_TUNE_EPOCHS,
     AutomatedPipelineProfile,
     ProfileDraft,
 )
@@ -16,6 +17,9 @@ class AutomaticProfileController:
 
     def __init__(self, view):
         self.view = view
+
+    def fine_tune_epochs(self) -> int:
+        return self.view.fine_tune_epochs_spin.value()
 
     def labeled_video_confidence(self) -> float | None:
         spin = self.view.labeled_video_confidence_spin
@@ -115,6 +119,7 @@ class AutomaticProfileController:
         self.view.include_gait_analysis_button.setChecked(True)
         self.view.include_knee_correction_button.setChecked(False)
         self._set_labeled_video_confidence(None)
+        self.view.fine_tune_epochs_spin.setValue(DEFAULT_FINE_TUNE_EPOCHS)
         del blockers
         self.view.profile_assets._apply_profile_stage_option_state()
         self.view.profile_assets._refresh_paths()
@@ -147,6 +152,7 @@ class AutomaticProfileController:
         self.view.include_gait_analysis_button.setChecked(profile.gait_analysis_enabled)
         self.view.include_knee_correction_button.setChecked(profile.knee_correction_enabled)
         self._set_labeled_video_confidence(profile.labeled_video_confidence)
+        self.view.fine_tune_epochs_spin.setValue(profile.fine_tune_epochs)
         del blockers
         self.view.profile_assets._apply_profile_stage_option_state()
         self.view.profile_assets._refresh_paths()
@@ -211,6 +217,7 @@ class AutomaticProfileController:
                 gait_analysis_enabled=gait_enabled,
                 knee_correction_enabled=knee_enabled,
                 labeled_video_confidence=self.labeled_video_confidence(),
+                fine_tune_epochs=self.fine_tune_epochs(),
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self.view, "Could not save profile", str(exc))
@@ -284,6 +291,7 @@ class AutomaticProfileController:
             gait_analysis_enabled=self.view.include_gait_analysis_button.isChecked(),
             knee_correction_enabled=self.view.include_knee_correction_button.isChecked(),
             labeled_video_confidence=self.labeled_video_confidence(),
+            fine_tune_epochs=self.fine_tune_epochs(),
         ).snapshot()
 
     def _is_dirty(self) -> bool:

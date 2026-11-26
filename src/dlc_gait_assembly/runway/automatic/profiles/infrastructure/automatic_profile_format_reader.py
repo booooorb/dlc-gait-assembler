@@ -6,7 +6,11 @@ import json
 import math
 from pathlib import Path
 
-from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import AutomatedPipelineProfile
+from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import (
+    DEFAULT_FINE_TUNE_EPOCHS,
+    AutomatedPipelineProfile,
+    validate_fine_tune_epochs,
+)
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
     regions_from_processing_manifest,
 )
@@ -67,6 +71,7 @@ def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
         updated_at=str(data.get("updated_at", "")),
         workspace_state=workspace_state,
         labeled_video_confidence=confidence,
+        fine_tune_epochs=validate_fine_tune_epochs(pipeline_options.get("fine_tune_epochs", DEFAULT_FINE_TUNE_EPOCHS)),
     )
 
 

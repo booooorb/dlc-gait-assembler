@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from sys import platform
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QProcess, QSignalBlocker, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -77,6 +78,7 @@ class WorkflowProfileController:
         self.loading = False
         self._build_bar()
         self._build_picker()
+        self.apply_bar_theme()
         self.refresh_profiles()
         self.timer = QTimer(window)
         self.timer.setInterval(1000)
@@ -145,20 +147,29 @@ class WorkflowProfileController:
         self.save_as_button.setAccessibleName("Save workflow as")
         self.save_as_button.setToolTip("Save as a separate workflow")
         self.save_as_button.clicked.connect(self.save_as)
+        self.project_folder_button = QPushButton()
+        self.project_folder_button.setAccessibleName("Show project folder")
+        self.project_folder_button.setToolTip(
+            "Show the project folder in your file manager. It contains the saved settings and model copies."
+        )
+        self.project_folder_button.clicked.connect(self._show_active_project_folder)
         self.close_button = QPushButton("×")
         self.close_button.setAccessibleName("Close workflow")
         self.close_button.setToolTip("Close the active workflow")
         self.close_button.clicked.connect(self.close_profile)
-        for button in (self.save_button, self.new_button, self.save_as_button, self.close_button):
+        for button in (
+            self.save_button, self.new_button, self.save_as_button, self.project_folder_button, self.close_button
+        ):
             layout.addWidget(button)
-        for button in (self.new_button, self.save_as_button, self.close_button):
+        for button in (self.new_button, self.save_as_button, self.project_folder_button, self.close_button):
             button.setFixedWidth(30)
-        self.apply_bar_theme()
 
     def apply_bar_theme(self):
         self.new_button.setIcon(interface_icon("plus", theme.TEXT))
         self.save_button.setIcon(interface_icon("download", theme.PRIMARY_TEXT, size=16))
         self.save_as_button.setIcon(interface_icon("copy", theme.TEXT))
+        self.project_folder_button.setIcon(interface_icon("folder", theme.TEXT))
+        self.show_project_folder_button.setIcon(interface_icon("folder", theme.TEXT))
 
     def _set_status(self, message):
         self.status.setText(message)
@@ -224,12 +235,16 @@ class WorkflowProfileController:
         self.delete_button = QPushButton("Delete workflow…")
         self.delete_button.setObjectName("DeleteButton")
         self.delete_button.clicked.connect(self.delete_selected)
+        self.show_project_folder_button = QPushButton("Show project folder")
+        self.show_project_folder_button.setToolTip(self.project_folder_button.toolTip())
+        self.show_project_folder_button.clicked.connect(self._show_selected_project_folder)
         self.profile_list.itemSelectionChanged.connect(self._sync_picker_actions)
         row.addWidget(self.rename_button)
         row.addWidget(self.delete_button)
         row.addStretch()
+        row.addWidget(self.show_project_folder_button)
         row.addWidget(self.open_button)
-        for button in (self.rename_button, self.delete_button, self.open_button):
+        for button in (self.rename_button, self.delete_button, self.show_project_folder_button, self.open_button):
             button.setMinimumHeight(38)
         body.addWidget(actions)
         outer.addWidget(content, 0, Qt.AlignTop | Qt.AlignHCenter)
@@ -269,16 +284,41 @@ class WorkflowProfileController:
         self._filter_profiles()
         self.open_button.setEnabled(False)
         self._sync_picker_actions()
-        for button in (self.save_button, self.save_as_button, self.close_button):
+        for button in (self.save_button, self.save_as_button, self.project_folder_button, self.close_button):
             button.setEnabled(self.active is not None)
 
     def _sync_picker_actions(self):
         item = self.profile_list.currentItem()
         selected = item is not None and item.isSelected() and not item.isHidden()
         self.open_button.setEnabled(selected)
+        self.show_project_folder_button.setEnabled(selected)
         editable = selected and (self.active is None or item.data(Qt.UserRole) != self.active.id)
         self.rename_button.setEnabled(editable)
         self.delete_button.setEnabled(editable)
+
+    def _show_active_project_folder(self):
+        if self.active is not None:
+            self._show_project_folder(self.active.id)
+
+    def _show_selected_project_folder(self):
+        item = self.profile_list.currentItem()
+        if item is not None and self.show_project_folder_button.isEnabled():
+            self._show_project_folder(item.data(Qt.UserRole))
+
+    def _show_project_folder(self, profile_id):
+        try:
+            folder = self.use_cases.profile_folder(profile_id)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self.window, "Could not show project folder", str(exc))
+            return
+
+        started = False
+        if platform == "darwin":
+            started, _ = QProcess.startDetached("/usr/bin/open", ["-R", str(folder)])
+        elif platform == "win32":
+            started, _ = QProcess.startDetached("explorer.exe", ["/select,", str(folder)])
+        if not started and not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            QMessageBox.warning(self.window, "Could not show project folder", str(folder))
 
     def _filter_profiles(self):
         query = self.profile_search.text().strip().casefold()
@@ -682,6 +722,7 @@ class WorkflowProfileController:
                     knee_correction_enabled=automatic.include_knee_correction_button.isChecked(),
                     allow_incomplete=True, workspace_state=state,
                     labeled_video_confidence=automatic.profiles.labeled_video_confidence(),
+                    fine_tune_epochs=automatic.profiles.fine_tune_epochs(),
                 )
         except (OSError, ValueError, TypeError) as exc:
             QMessageBox.warning(self.window, "Could not save workflow", str(exc))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -15,12 +16,13 @@ from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import win
 
 DLC_MODEL_FOLDER_NAMES = ("dlc-models-pytorch", "dlc-models")
 DLC_TRAINING_DATASET_FOLDER_NAME = "training-datasets"
+SOURCE_PROJECT_FILENAME = "source_project.json"
 
 
 def resolve_deeplabcut_config(model_path: str | Path) -> Path:
     """Resolve a saved model file/folder to one unambiguous DLC config.yaml."""
     candidate = Path(model_path).expanduser().resolve()
-    if candidate.is_file() and candidate.name.casefold() == "config.yaml":
+    if candidate.is_file() and (candidate.name.casefold() == "config.yaml" or is_refined_config(candidate)):
         return candidate
     if candidate.is_file():
         for parent in candidate.parents:
@@ -37,6 +39,36 @@ def resolve_deeplabcut_config(model_path: str | Path) -> Path:
     if not configs:
         raise FileNotFoundError(f'No DeepLabCut config.yaml was found in "{candidate.name}".')
     raise ValueError(f'"{candidate.name}" contains multiple DeepLabCut projects. Select one project folder.')
+
+
+def is_refined_config(path):
+    return path.name.startswith("config.gait-refinement-") and path.suffix == ".yaml"
+
+
+def deeplabcut_source_reference(config_path):
+    """Retain provenance when copying a trained model, even if its source drive is offline."""
+    source_file = config_path.with_name(SOURCE_PROJECT_FILENAME)
+    if source_file.is_file():
+        return Path(json.loads(source_file.read_text(encoding="utf-8"))["config"])
+    if (config_path.parent / "labeled-data").is_dir():
+        return config_path
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    project_path = config.get("project_path")
+    return Path(project_path) / "config.yaml" if project_path else config_path
+
+
+def original_deeplabcut_config(config_path):
+    origin = deeplabcut_source_reference(config_path)
+    if not origin.is_file() or not (origin.parent / "labeled-data").is_dir():
+        raise FileNotFoundError(
+            f"The original DLC training project is unavailable at {origin.parent}. "
+            "Restore the source project or save frame corrections only."
+        )
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    candidate = yaml.safe_load(origin.read_text(encoding="utf-8"))
+    if any(candidate.get(key) != config.get(key) for key in ("Task", "date", "scorer")):
+        raise ValueError(f"The source DLC project at {origin.parent} differs from the Batch Run model.")
+    return origin
 
 
 def validate_deeplabcut_project(model_path: str | Path) -> Path:

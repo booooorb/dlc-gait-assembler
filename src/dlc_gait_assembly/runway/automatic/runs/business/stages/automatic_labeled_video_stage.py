@@ -6,6 +6,8 @@ from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts im
 
 
 def execute_labeled_video(run, progress_callback: ProgressCallback | None) -> None:
+    if run.label_edits:
+        run.storage.apply_label_edits(run.label_sources(), run.label_edits, progress_callback)
     coordinate_paths = {result.region: (result.csv_paths, result.h5_paths) for result in run.dlc_results}
     labeled_results = run.operations.labeled_videos(
         run.dlc_jobs, run.dlc_results, run.deeplabcut_folder, progress_callback

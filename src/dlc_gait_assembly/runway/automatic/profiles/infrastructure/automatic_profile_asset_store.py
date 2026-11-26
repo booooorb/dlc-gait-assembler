@@ -25,6 +25,8 @@ from dlc_gait_assembly.runway.manual.calibration.infrastructure.calibration_expo
 from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_project_reader import (
     DLC_MODEL_FOLDER_NAMES,
     DLC_TRAINING_DATASET_FOLDER_NAME,
+    SOURCE_PROJECT_FILENAME,
+    deeplabcut_source_reference,
     validate_deeplabcut_project,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
@@ -114,6 +116,7 @@ def normalize_incomplete_profile_draft(draft: ProfileDraft) -> ProfileDraft:
         gait_analysis_enabled=bool(draft.gait_analysis_enabled),
         knee_correction_enabled=bool(draft.knee_correction_enabled),
         labeled_video_confidence=draft.labeled_video_confidence,
+        fine_tune_epochs=draft.fine_tune_epochs,
     )
 
 
@@ -138,6 +141,8 @@ def copy_profile_deeplabcut_project(source: Path, destination: Path, *, reuse_ow
     project_root = config_path.parent
     destination.mkdir(parents=True)
     shutil.copy2(config_path, destination / "config.yaml")
+    original = deeplabcut_source_reference(config_path)
+    (destination / SOURCE_PROJECT_FILENAME).write_text(json.dumps({"config": str(original)}), encoding="utf-8")
     for folder_name in DLC_MODEL_FOLDER_NAMES:
         model_folder = project_root / folder_name
         if model_folder.is_dir():

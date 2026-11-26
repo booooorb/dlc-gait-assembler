@@ -35,6 +35,7 @@ class AutomaticExecutionControl:
         self._cancelled = Event()
         self._review_released = Event()
         self._decision = AutomaticReviewDecision.REJECT
+        self.correction = None
         self.waiting_for_review = False
         self.current_stage = -1
 
@@ -42,7 +43,8 @@ class AutomaticExecutionControl:
         self._cancelled.set()
         self._review_released.set()
 
-    def decide_review(self, decision: AutomaticReviewDecision) -> None:
+    def decide_review(self, decision: AutomaticReviewDecision, correction=None) -> None:
+        self.correction = correction
         self._decision = decision
         self._review_released.set()
 
@@ -50,7 +52,7 @@ class AutomaticExecutionControl:
         if self._cancelled.is_set():
             raise AutomaticRunCancelled()
 
-    def review(self, request: StageReview, notify: Callable[[int, StageReview], None]) -> None:
+    def review(self, request: StageReview, notify: Callable[[int, StageReview], None]) -> AutomaticReviewDecision:
         self._decision = AutomaticReviewDecision.REJECT
         self._review_released.clear()
         self.waiting_for_review = True
@@ -59,7 +61,9 @@ class AutomaticExecutionControl:
             notify(int(request.stage), request)
             self._review_released.wait()
             self.check_cancelled()
-            if validate_review_decision(request, self._decision) is not AutomaticReviewDecision.APPROVE:
+            decision = validate_review_decision(request, self._decision)
+            if decision in (AutomaticReviewDecision.REJECT, AutomaticReviewDecision.CANCEL):
                 raise AutomaticRunCancelled()
+            return decision
         finally:
             self.waiting_for_review = False

@@ -10,8 +10,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import (
+    DEFAULT_FINE_TUNE_EPOCHS,
     AutomatedPipelineProfile,
     ProfileDraft,
+    validate_fine_tune_epochs,
 )
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
     copy_profile_analysis,
@@ -49,6 +51,12 @@ class AutomatedProfileStore:
     def load(self, profile_id: str) -> AutomatedPipelineProfile:
         return read_profile_metadata(self._profile_dir(profile_id) / "profile.json")
 
+    def profile_folder(self, profile_id: str) -> Path:
+        folder = self._profile_dir(profile_id)
+        if not (windows_filesystem_path(folder) / "profile.json").is_file():
+            raise FileNotFoundError(f"The saved project folder is missing: {folder}")
+        return folder
+
     def save(
         self,
         name: str,
@@ -64,13 +72,21 @@ class AutomatedProfileStore:
         allow_incomplete: bool = False,
         workspace_state: dict | None = None,
         labeled_video_confidence: float | None = None,
+        fine_tune_epochs: int | None = None,
     ) -> AutomatedPipelineProfile:
         if labeled_video_confidence is not None and (
             not math.isfinite(labeled_video_confidence) or not 0 <= labeled_video_confidence <= 1
         ):
             raise ValueError("Labeled-video confidence must be between zero and one.")
-        if workspace_state is None and profile_id is not None and (self._profile_dir(profile_id) / "profile.json").is_file():
-            workspace_state = self.load(profile_id).workspace_state
+        if profile_id is not None and (self._profile_dir(profile_id) / "profile.json").is_file():
+            previous = self.load(profile_id)
+            if workspace_state is None:
+                workspace_state = previous.workspace_state
+            if fine_tune_epochs is None:
+                fine_tune_epochs = previous.fine_tune_epochs
+        fine_tune_epochs = validate_fine_tune_epochs(
+            DEFAULT_FINE_TUNE_EPOCHS if fine_tune_epochs is None else fine_tune_epochs
+        )
         workspace_state = validate_workspace_state({} if workspace_state is None else workspace_state)
         # Validate before staging any assets. Profiles contain JSON, never executable objects.
         json.dumps(workspace_state, allow_nan=False)
@@ -86,6 +102,7 @@ class AutomatedProfileStore:
             if knee_correction_enabled is None
             else bool(knee_correction_enabled),
             labeled_video_confidence=labeled_video_confidence,
+            fine_tune_epochs=fine_tune_epochs,
         )
         draft = normalize_incomplete_profile_draft(draft) if allow_incomplete else inspect_profile_draft(draft)
         clean_name = draft.name
@@ -152,6 +169,7 @@ class AutomatedProfileStore:
                     "gait_analysis_enabled": bool(gait_analysis_enabled),
                     "knee_correction_enabled": bool(knee_correction_enabled),
                     "labeled_video_confidence": labeled_video_confidence,
+                    "fine_tune_epochs": fine_tune_epochs,
                 },
                 "deeplabcut_models": [
                     {"region": region, "path": str(path.relative_to(staging_dir))}

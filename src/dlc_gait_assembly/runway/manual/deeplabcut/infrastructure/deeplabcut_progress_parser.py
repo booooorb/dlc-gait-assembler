@@ -16,7 +16,7 @@ class DlcProgressParser:
     def __init__(
         self, total_videos: int, progress_callback: Callable[[int, int, str], None] | None, phase: str = "analysis"
     ):
-        if phase not in {"analysis", "labels"}:
+        if phase not in {"analysis", "labels", "training"}:
             raise ValueError(f"Unsupported DeepLabCut progress phase: {phase}")
         self.total_videos = max(1, total_videos)
         self.progress_callback = progress_callback
@@ -31,6 +31,12 @@ class DlcProgressParser:
 
     def feed(self, output_line: str) -> None:
         line = output_line.strip()
+        if self.expected_phase == "training":
+            match = re.search(r"\bEpoch (\d+)/(\d+)", line)
+            if match and self.progress_callback is not None:
+                current, total = map(int, match.groups())
+                self.progress_callback(current, total, f"Training epoch {current} of {total}")
+            return
         analysis_marker = "Starting to analyze "
         labels_marker = "Starting to process video:"
         if self.expected_phase == "analysis" and analysis_marker in line:
@@ -60,6 +66,8 @@ class DlcProgressParser:
             self._emit(video_percent)
 
     def finish(self) -> None:
+        if self.expected_phase == "training":
+            return
         self.phase = self.expected_phase
         self.phase_index = self.total_videos
         self._emit(100, force=True)

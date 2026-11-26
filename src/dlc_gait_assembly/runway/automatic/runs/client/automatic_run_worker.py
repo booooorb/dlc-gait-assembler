@@ -63,6 +63,9 @@ class AutomatedPipelineWorker(QThread):
     def approve_review(self) -> None:
         self.execution_control.decide_review(AutomaticReviewDecision.APPROVE)
 
+    def correct_labels(self, correction) -> None:
+        self.execution_control.decide_review(AutomaticReviewDecision.CORRECT_LABELS, correction)
+
     def reject_review(self) -> None:
         self.execution_control.decide_review(AutomaticReviewDecision.REJECT)
 

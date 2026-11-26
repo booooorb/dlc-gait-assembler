@@ -14,6 +14,7 @@ from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_cont
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
     copy_profile_deeplabcut_project,
 )
+from dlc_gait_assembly.runway.automatic.review.business.automatic_label_correction import LabelEdit
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_run_contracts import SavedAutomaticRun
 from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_job_contracts import DlcAnalysisResult
 from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_analysis_contracts import AlmaRunResult
@@ -70,6 +71,11 @@ def persist_run_checkpoint(run):
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "completed_stages": sorted(run.completed_stages),
         "approved_reviews": sorted(run.approved_reviews),
+        "label_edits": [asdict(edit) for edit in run.label_edits],
+        "pending_label_edits": [asdict(edit) for edit in run.pending_label_edits],
+        "pending_fine_tune": run.pending_fine_tune,
+        "label_error": run.label_error,
+        "reset_from": run.reset_from,
         "processed_sources": run.processed_sources,
         "dlc_results": [asdict(result) for result in run.dlc_results],
         "analysis_csvs_by_region": run.analysis_csvs_by_region,
@@ -110,6 +116,12 @@ def restore_run_checkpoint(run):
     run.current_stage = data["stage"]
     run.completed_stages.update(AutomatedStage(stage) for stage in data["completed_stages"])
     run.approved_reviews.update(AutomatedStage(stage) for stage in data["approved_reviews"])
+    run.label_edits = tuple(map(LabelEdit.from_record, data.get("label_edits", ())))
+    run.pending_label_edits = tuple(map(LabelEdit.from_record, data.get("pending_label_edits", ())))
+    run.pending_fine_tune = data.get("pending_fine_tune", "")
+    run.label_error = data.get("label_error", "")
+    reset_from = data.get("reset_from")
+    run.reset_from = AutomatedStage(reset_from) if reset_from is not None else None
     run.processed_sources = {
         int(index): {region: list(map(Path, paths)) for region, paths in outputs.items()}
         for index, outputs in data["processed_sources"].items()

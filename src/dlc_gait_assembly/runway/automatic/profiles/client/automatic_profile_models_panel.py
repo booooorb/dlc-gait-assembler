@@ -20,7 +20,7 @@ class AutomaticProfileModelsPanel:
             self.view,
             f"Choose DeepLabCut config for {region}",
             str(Path.home()),
-            "DeepLabCut config (config.yaml);;YAML files (*.yaml);;All files (*)",
+            "DeepLabCut config (config*.yaml);;YAML files (*.yaml);;All files (*)",
         )
         if path:
             self._set_model_source(region, Path(path))
