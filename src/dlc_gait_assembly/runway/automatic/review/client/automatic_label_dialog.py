@@ -27,11 +27,12 @@ from PySide6.QtWidgets import (
 from dlc_gait_assembly.runway.automatic.review.business.automatic_label_correction import (
     LabelCorrection,
     LabelEdit,
-    confidence_scores,
+    frame_confidences,
     frame_positions,
     knee_distance_errors,
     marker_columns,
 )
+from dlc_gait_assembly.runway.automatic.review.client.automatic_confidence_timeline import ConfidenceTimeline
 from dlc_gait_assembly.runway.automatic.review.client.automatic_label_canvas import LabelCanvas, marker_color
 from dlc_gait_assembly.shared.client.qt_frame_conversion import rgb_array_to_qimage
 from dlc_gait_assembly.shared.client.theme import theme_application_state as theme
@@ -41,10 +42,12 @@ class ReviewFrames(QAbstractListModel):
     def __init__(self, parent):
         super().__init__(parent)
         self.frames = ()
+        self.rows = {}
 
     def replace(self, frames):
         self.beginResetModel()
         self.frames = tuple(frames)
+        self.rows = {frame: row for row, frame in enumerate(self.frames)}
         self.endResetModel()
 
     def rowCount(self, parent=None):
@@ -62,12 +65,13 @@ class LabelCorrectionDialog(QDialog):
     def __init__(self, parent, review, artifacts, media_access, preferred=None):
         super().__init__(parent)
         self.setWindowTitle("Correct DeepLabCut labels")
-        self.resize(1090, 690)
-        self.setMinimumSize(820, 535)
+        self.resize(1090, 730)
+        self.setMinimumWidth(820)
         self.review = review
         self.artifacts = artifacts
         self.media_access = media_access
         self.edits = {edit.key: edit for edit in review.label_draft}
+        self.saved_edit_keys = {edit.key for edit in review.saved_label_edits}
         self.undo_stack = []
         self.clipboard = {}
         self.clipboard_source = None
@@ -76,12 +80,15 @@ class LabelCorrectionDialog(QDialog):
         self.capture = None
         self.table = None
         self.frame = None
+        self.frame_confidence = None
+        self.fps = 0.0
         self.frame_images = OrderedDict()
         self.recording_frames = {}
         self.offset = (0, 0)
         self.columns = {}
         self.source = None
         self.points = {}
+        self.manual_markers = set()
         self.active_marker = None
         self.mode = "select"
         self._build()
@@ -162,6 +169,21 @@ class LabelCorrectionDialog(QDialog):
         self.empty_preview.setWordWrap(True)
         self.preview.addWidget(self.empty_preview)
         center.addWidget(self.preview, 1)
+        timeline_row = QHBoxLayout()
+        timeline_label = QLabel("Confidence over time")
+        self.confidence_mode = QComboBox()
+        self.confidence_mode.addItems(("Mean", "Min"))
+        self.confidence_mode.setAccessibleName("Timeline confidence metric")
+        self.confidence_mode.setToolTip("Show the mean or lowest model keypoint confidence for each frame.")
+        timeline_label.setBuddy(self.confidence_mode)
+        timeline_row.addWidget(timeline_label)
+        timeline_row.addStretch()
+        self.timeline_value = QLabel()
+        timeline_row.addWidget(self.timeline_value)
+        timeline_row.addWidget(self.confidence_mode)
+        center.addLayout(timeline_row)
+        self.timeline = ConfidenceTimeline()
+        center.addWidget(self.timeline)
         self.frame_status = QLabel()
         self.frame_status.setWordWrap(True)
         center.addWidget(self.frame_status)
@@ -172,6 +194,9 @@ class LabelCorrectionDialog(QDialog):
 
         markers = QVBoxLayout()
         markers.addWidget(QLabel("Markers"))
+        legend = QLabel("● Automatic    ◆ Manual")
+        legend.setToolTip("Circles show automatic labels. Diamonds show labels you edited or kept.")
+        markers.addWidget(legend)
         self.marker_list = QListWidget()
         self.marker_list.setMaximumWidth(200)
         self.marker_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -220,7 +245,9 @@ class LabelCorrectionDialog(QDialog):
         self.filter.currentIndexChanged.connect(self._filter_frames)
         self.confidence.valueChanged.connect(self._filter_frames)
         self.distance.valueChanged.connect(self._filter_frames)
-        self.frame_list.selectionModel().currentChanged.connect(lambda current, _: self._load_frame(current.row()))
+        self.frame_list.selectionModel().currentChanged.connect(self._frame_selected)
+        self.timeline.frame_requested.connect(self._seek_frame)
+        self.confidence_mode.currentIndexChanged.connect(self._update_confidence_plot)
         self.canvas.positions_changed.connect(self._edit)
         self.canvas.selection_changed.connect(self._select_from_canvas)
         self.marker_list.itemSelectionChanged.connect(self._marker_selection)
@@ -260,52 +287,58 @@ class LabelCorrectionDialog(QDialog):
         self.frame_images.clear()
         self.frame = None
         self.table = None
+        self.frame_confidence = None
+        self.fps = 0.0
         self.source = self.review.label_sources[index]
         self._show_error(self.review.label_error)
         try:
             self.table, raw, self.offset = self.artifacts.label_artifacts(self.source)
             self.columns = marker_columns(self.table)
             self.model_markers[self.source.region, self.source.video] = set(marker_columns(raw))
-            self.confidences = confidence_scores(raw)
-            self.knee_errors = knee_distance_errors(raw, self.review.knee_settings)
             self.capture = self.media_access.open_video(self.source.video)
             count = self.capture.info.frame_count or len(self.table)
             if count != len(self.table) or len(raw) != len(self.table):
                 raise ValueError(f"The video has {count} frames and its tracking table has {len(self.table)} rows.")
+            self.knee_errors = knee_distance_errors(raw, self.review.knee_settings)
+            self.frame_confidence = frame_confidences(raw)
+            self.fps = getattr(self.capture.info, "fps", 0.0)
         except (OSError, ValueError, TypeError, KeyError) as exc:
             self._close_capture()
             self.table = None
             self.columns = {}
             self._show_error(str(exc))
+        with QSignalBlocker(self.timeline):
+            self.timeline.set_recording(len(self.table) if self.table is not None else 0, self.fps)
+        self.confidence_mode.setEnabled(self.frame_confidence is not None and self.frame_confidence.mean is not None)
+        self._update_confidence_plot()
         self._build_markers()
         self._filter_frames(preferred_frame=self.recording_frames.get(self.source))
         self._update_save()
 
     def _filter_frames(self, *_, preferred_frame=None):
-        old_frame = self.frame if preferred_frame is None else preferred_frame
+        old_frame = self.frame
         with QSignalBlocker(self.frame_list.selectionModel()):
             if self.table is None:
                 self.frame_model.replace(())
             else:
                 mode = self.filter.currentIndex()
-                low = self.confidences < self.confidence.value() / 100
+                minimum = self.frame_confidence.minimum
+                low = minimum < self.confidence.value() / 100
                 knee = self.knee_errors >= self.distance.value() / 100
                 matches = (low, knee, low | knee, np.ones(len(low), dtype=bool))[mode]
-                order = (self.confidences, -self.knee_errors, np.arange(len(low)), np.arange(len(low)))[mode]
+                order = (minimum, -self.knee_errors, np.arange(len(low)), np.arange(len(low)))[mode]
                 indices = np.argsort(order, kind="stable")
                 self.frame_model.replace(indices[matches[indices]])
         self.confidence_row.setVisible(self.filter.currentIndex() in (0, 2))
         self.distance_row.setVisible(self.filter.currentIndex() in (1, 2))
         frames = self.frame_model.frames
         count = len(frames)
-        self.frame_summary.setText(f"{count:,} frame{'s' if count != 1 else ''}")
+        self.frame_summary.setText(f"{count:,} matching frame{'s' if count != 1 else ''}")
         self.show_all.setVisible(not count and self.table is not None and self.filter.currentIndex() != 3)
-        if frames:
-            row = frames.index(old_frame) if old_frame in frames else 0
-            self.frame_list.setCurrentIndex(self.frame_model.index(row, 0))
-            if self.frame != frames[row]:
-                self._load_frame(row)
-            self._update_navigation()
+        if preferred_frame is not None and self.table is not None:
+            self._seek_frame(preferred_frame)
+        elif frames:
+            self._seek_frame(old_frame if old_frame in self.frame_model.rows else int(frames[0]))
         else:
             message = "No frames match this filter."
             if self.table is None:
@@ -313,11 +346,14 @@ class LabelCorrectionDialog(QDialog):
             elif self.filter.currentIndex() == 1 and not np.isfinite(self.knee_errors).any():
                 message = "Knee distances are unavailable for this recording."
             self._show_empty_frame(message)
+            self.timeline.set_current_frame(None)
+            self._update_timeline_value()
             self._update_navigation()
 
     def _show_empty_frame(self, message):
         self.frame = None
         self.points = {}
+        self.manual_markers = set()
         self.frame_status.clear()
         self.canvas.set_frame(QPixmap(), {}, (), self.offset)
         self.empty_preview.setText(message)
@@ -333,14 +369,33 @@ class LabelCorrectionDialog(QDialog):
     def _update_navigation(self):
         row = self.frame_list.currentIndex().row()
         self.previous.setEnabled(row > 0)
-        self.next.setEnabled(0 <= row < len(self.frame_model.frames) - 1)
+        self.next.setEnabled(row < len(self.frame_model.frames) - 1)
 
-    def _load_frame(self, row):
-        if self.capture is None or not 0 <= row < len(self.frame_model.frames):
+    def _frame_selected(self, current, _previous):
+        if current.isValid():
+            self._select_frame(int(self.frame_model.frames[current.row()]))
+
+    def _seek_frame(self, frame):
+        row = self.frame_model.rows.get(frame)
+        if row is None:
+            self.frame_list.selectionModel().clear()
+        elif row != self.frame_list.currentIndex().row():
+            self.frame_list.setCurrentIndex(self.frame_model.index(row, 0))
             return
-        frame = int(self.frame_model.frames[row])
-        pixmap = self._frame_image(frame)
+        self._select_frame(frame)
+
+    def _select_frame(self, frame):
+        if self.capture is None or not 0 <= frame < len(self.table):
+            return
+        with QSignalBlocker(self.timeline):
+            self.timeline.set_current_frame(frame)
         self._update_navigation()
+        if self.frame != frame:
+            self._show_frame(frame)
+        self._update_timeline_value()
+
+    def _show_frame(self, frame):
+        pixmap = self._frame_image(frame)
         if pixmap.isNull():
             self._show_empty_frame(f"Frame {frame + 1:,} could not be read. Select another frame.")
             self._show_error(self.review.label_error)
@@ -349,14 +404,33 @@ class LabelCorrectionDialog(QDialog):
         self.frame = frame
         self._refresh_points()
         self.preview.setCurrentWidget(self.canvas)
-        self.canvas.set_frame(pixmap, self.points, self.columns, self.offset, fit=fit)
+        self.canvas.set_frame(
+            pixmap, self.points, self.columns, self.offset, manual_markers=self.manual_markers, fit=fit
+        )
         knee = self.knee_errors[frame]
-        details = f"Frame {frame + 1:,} / {len(self.table):,}  ·  Lowest confidence {self.confidences[frame]:.0%}"
+        details = f"Frame {frame + 1:,} / {len(self.table):,}"
+        if self.fps > 0:
+            details += f"  ·  {frame / self.fps:,.2f} s"
+        if self.frame_confidence.mean is not None:
+            details += f"  ·  Lowest confidence {self.frame_confidence.minimum[frame]:.0%}"
         if np.isfinite(knee):
             details += f"  ·  Knee distance error {knee:.0%}"
         self.frame_status.setText(details)
         self._update_marker_actions()
         self._show_error(self.review.label_error)
+
+    def _timeline_scores(self):
+        if self.frame_confidence is None or self.frame_confidence.mean is None:
+            return None
+        return self.frame_confidence.minimum if self.confidence_mode.currentIndex() else self.frame_confidence.mean
+
+    def _update_confidence_plot(self):
+        self.timeline.set_scores(self._timeline_scores())
+        self._update_timeline_value()
+
+    def _update_timeline_value(self):
+        scores = self._timeline_scores()
+        self.timeline_value.setText(f"{scores[self.frame]:.0%}" if scores is not None and self.frame is not None else "")
 
     def _frame_image(self, frame):
         if frame in self.frame_images:
@@ -448,13 +522,17 @@ class LabelCorrectionDialog(QDialog):
 
     def _refresh_points(self):
         self.points = frame_positions(self.table, self.columns, self.frame)
+        self.manual_markers = set()
         for marker in self.columns:
-            edit = self.edits.get((self.source.region, self.source.video, self.frame, marker))
+            key = self.source.region, self.source.video, self.frame, marker
+            edit = self.edits.get(key)
             if edit is not None:
                 if edit.point is None:
                     self.points.pop(marker, None)
                 else:
                     self.points[marker] = edit.point
+            if marker in self.points and (edit is not None or key in self.saved_edit_keys):
+                self.manual_markers.add(marker)
 
     def _edit(self, updates):
         if self.frame is None or not updates:
@@ -466,7 +544,7 @@ class LabelCorrectionDialog(QDialog):
             self.edits[edit.key] = edit
         self.undo_stack.append(old_values)
         self._refresh_points()
-        self.canvas.set_points(self.points, self.columns)
+        self.canvas.set_points(self.points, self.columns, self.manual_markers)
         self._update_save()
         self._update_marker_actions()
 
@@ -481,7 +559,7 @@ class LabelCorrectionDialog(QDialog):
                 self.edits[key] = edit
         if self.frame is not None:
             self._refresh_points()
-            self.canvas.set_points(self.points, self.columns)
+            self.canvas.set_points(self.points, self.columns, self.manual_markers)
         self._update_save()
         _, video, frame, _ = next(iter(previous))
         location = f"frame {frame + 1:,}"

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPen, QPixmap
-from PySide6.QtWidgets import QGraphicsEllipseItem, QGraphicsItem, QGraphicsScene, QGraphicsView, QRubberBand
+from PySide6.QtGui import QBrush, QColor, QPen, QPixmap, QPolygonF
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView, QRubberBand
 
 
 def marker_color(index):
@@ -24,6 +24,7 @@ class LabelCanvas(QGraphicsView):
         self.setBackgroundBrush(QColor("#181b1e"))
         self._image = self.scene().addPixmap(QPixmap())
         self._items = {}
+        self._manual_markers = set()
         self._selected = set()
         self._offset = (0, 0)
         self._mode = "select"
@@ -35,7 +36,7 @@ class LabelCanvas(QGraphicsView):
         self.active_marker = None
         self._set_cursor()
 
-    def set_frame(self, pixmap, points, markers, offset, *, fit=False):
+    def set_frame(self, pixmap, points, markers, offset, *, manual_markers=(), fit=False):
         self._gesture = None
         self._origins.clear()
         self._rubber.hide()
@@ -44,7 +45,7 @@ class LabelCanvas(QGraphicsView):
         self._image.setPixmap(pixmap)
         self.scene().setSceneRect(self._image.boundingRect())
         self._offset = offset
-        self.set_points(points, markers)
+        self.set_points(points, markers, manual_markers)
         if fit or size_changed:
             self.fit_frame()
 
@@ -52,21 +53,26 @@ class LabelCanvas(QGraphicsView):
         if not self._image.pixmap().isNull():
             self.fitInView(self._image, Qt.KeepAspectRatio)
 
-    def set_points(self, points, markers):
+    def set_points(self, points, markers, manual_markers):
         for item in self._items.values():
             self.scene().removeItem(item)
         self._items.clear()
+        self._manual_markers = manual_markers
         for index, marker in enumerate(markers):
             if marker not in points:
                 continue
-            item = QGraphicsEllipseItem(-5.5, -5.5, 11, 11)
+            if marker in self._manual_markers:
+                diamond = QPolygonF([QPointF(0, -8), QPointF(8, 0), QPointF(0, 8), QPointF(-8, 0)])
+                item = self.scene().addPolygon(diamond)
+                origin = "Manual label"
+            else:
+                item = self.scene().addEllipse(-5.5, -5.5, 11, 11)
+                origin = "Automatic label"
             item.setFlag(QGraphicsItem.ItemIgnoresTransformations)
             item.setBrush(QBrush(marker_color(index)))
-            item.setToolTip(" / ".join(marker))
+            item.setToolTip(f"{' / '.join(marker)} · {origin}")
             x, y = points[marker]
             item.setPos(x + self._offset[0], y + self._offset[1])
-            item.setZValue(1)
-            self.scene().addItem(item)
             self._items[marker] = item
         self.set_selected(self._selected)
 
@@ -74,8 +80,9 @@ class LabelCanvas(QGraphicsView):
         self._selected = set(markers)
         for marker, item in self._items.items():
             selected = marker in self._selected
-            item.setPen(QPen(QColor("#ffffff" if selected else "#232529"), 2.5 if selected else 1.5))
-            item.setZValue(2 if selected else 1)
+            manual = marker in self._manual_markers
+            item.setPen(QPen(QColor("#ffffff" if selected or manual else "#232529"), 2.5 if selected else 1.5))
+            item.setZValue(1 + 2 * selected + manual)
 
     def set_mode(self, mode):
         self._mode = mode

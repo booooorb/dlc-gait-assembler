@@ -7,7 +7,10 @@ from pathlib import Path
 
 import numpy as np
 
-from dlc_gait_assembly.runway.manual.knee_correction.business.knee_coordinate_correction import xy_values
+from dlc_gait_assembly.runway.manual.knee_correction.business.knee_coordinate_correction import (
+    confidence_values,
+    xy_values,
+)
 from dlc_gait_assembly.runway.manual.knee_correction.business.knee_correction_contracts import KneeCorrectionSettings
 from dlc_gait_assembly.runway.manual.knee_correction.business.knee_marker_matching import (
     coordinate_columns,
@@ -59,6 +62,12 @@ class LabelCorrection:
     fine_tune: bool
 
 
+@dataclass(frozen=True)
+class FrameConfidence:
+    minimum: np.ndarray
+    mean: np.ndarray | None
+
+
 def marker_columns(table):
     return {
         (*prefix[1:], bodypart): cols
@@ -77,16 +86,19 @@ def frame_positions(table, columns, frame):
     return points
 
 
-def confidence_scores(table):
-    """Use the weakest keypoint, counting missing predictions as zero confidence."""
-    scores = np.ones(len(table))
+def frame_confidences(table) -> FrameConfidence:
+    """Summarize model keypoints per frame, counting missing predictions as zero confidence."""
+    minimum = np.ones(len(table))
+    total = np.zeros(len(table))
+    count = 0
     for cols in marker_columns(table).values():
-        likelihood = cols.get("likelihood")
-        if likelihood is not None:
-            values = table[likelihood].to_numpy(dtype=float)
-            missing = ~np.isfinite(xy_values(table, cols)).all(axis=1) | ~np.isfinite(values)
-            scores = np.minimum(scores, np.where(missing, 0, values))
-    return scores
+        if "likelihood" in cols:
+            valid = np.isfinite(xy_values(table, cols)).all(axis=1)
+            values = np.where(valid, confidence_values(table, cols), 0)
+            np.minimum(minimum, values, out=minimum)
+            total += values
+            count += 1
+    return FrameConfidence(minimum, total / count if count else None)
 
 
 def knee_distance_errors(table, settings: KneeCorrectionSettings | None):

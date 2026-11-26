@@ -17,10 +17,11 @@ from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_projec
 )
 from dlc_gait_assembly.shared.infrastructure.coordinate_csv_codec import write_dlc_csv
 from dlc_gait_assembly.shared.infrastructure.coordinate_h5_codec import read_dlc_h5, write_dlc_h5
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 def raw_tracking_path(path):
-    return path.parent / ".raw_tracking" / path.name
+    return windows_filesystem_path(path.parent / ".raw_tracking" / path.name)
 
 
 def preserve_raw_tracking(path):
@@ -64,7 +65,7 @@ def apply_label_edits(sources, edits, progress):
                 if coordinate in cols:
                     table.iat[edit.frame, table.columns.get_loc(cols[coordinate])] = value
         # Prepare both files before replacing them. Reapplying the same edits on retry is idempotent.
-        with TemporaryDirectory(dir=source.h5.parent) as staging:
+        with TemporaryDirectory(dir=windows_filesystem_path(source.h5.parent)) as staging:
             csv, h5 = Path(staging) / source.csv.name, Path(staging) / source.h5.name
             write_dlc_csv(table, csv)
             write_dlc_h5(table, h5, hdf_key, source_path=source.h5)

@@ -9,7 +9,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGraphicsEllipseItem, QGraphicsPolygonItem
 
 from dlc_gait_assembly.app.app_bootstrap import create_automatic_workspace
 from dlc_gait_assembly.runway.automatic.business.automatic_execution_contracts import ReviewArtifact, StageReview
@@ -17,7 +17,7 @@ from dlc_gait_assembly.runway.automatic.business.automatic_stage_definitions imp
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_repository import (
     AutomatedProfileStore,
 )
-from dlc_gait_assembly.runway.automatic.review.business.automatic_label_correction import LabelReviewSource
+from dlc_gait_assembly.runway.automatic.review.business.automatic_label_correction import LabelEdit, LabelReviewSource
 from dlc_gait_assembly.runway.automatic.review.client.automatic_label_dialog import LabelCorrectionDialog
 from dlc_gait_assembly.runway.manual.knee_correction.business.knee_correction_contracts import KneeCorrectionSettings
 
@@ -39,7 +39,7 @@ def labels():
 
 
 class Capture:
-    info = SimpleNamespace(frame_count=3)
+    info = SimpleNamespace(frame_count=3, fps=25)
 
     def __init__(self):
         self.closed = False
@@ -107,6 +107,9 @@ def test_edit_move_copy_remove_and_restore_markers_with_filtered_frames(labels):
         QTest.mouseRelease(canvas.viewport(), Qt.LeftButton, pos=begin + QPoint(18, 22))
         moved = dict(dialog.points)
         assert moved[("hip",)][0] > 21 and moved[("knee",)][1] > 30
+        assert isinstance(canvas._items[("hip",)], QGraphicsPolygonItem)
+        assert isinstance(canvas._items[("knee",)], QGraphicsPolygonItem)
+        assert isinstance(canvas._items[("ankle",)], QGraphicsEllipseItem)
 
         QTest.mouseClick(dialog.copy_button, Qt.LeftButton)
         assert dialog.marker_status.text() == "2 copied"
@@ -184,6 +187,68 @@ def test_edit_move_copy_remove_and_restore_markers_with_filtered_frames(labels):
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
+def test_timeline_shows_context_with_original_confidence_and_saved_manual_markers(labels):
+    app = QApplication.instance() or QApplication([])
+    source = LabelReviewSource("Side", Path("video.mp4"), Path("video.csv"), Path("video.h5"), Path("model"))
+    saved = LabelEdit(source.region, source.video, 0, ("knee",), (31, 30))
+    table = labels.copy()
+    table.iloc[0, 5] = 1.0
+    review = StageReview(
+        AutomatedStage.LABELED_VIDEOS, "videos", label_sources=(source,), saved_label_edits=(saved,)
+    )
+    dialog = LabelCorrectionDialog(
+        None,
+        review,
+        SimpleNamespace(label_artifacts=lambda _: (table, labels, (0, 0))),
+        SimpleNamespace(open_video=lambda _: Capture()),
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        timeline = dialog.timeline
+        assert dialog.frame_model.frames == (2, 0)
+        assert timeline.maximum() == 2 and timeline.value() == dialog.frame == 2
+        assert dialog.confidence_mode.currentText() == "Mean"
+        assert dialog.timeline_value.text() == "63%"
+
+        plot = timeline._plot_rect()
+        middle = plot.center().toPoint()
+        start = QPoint(round(plot.left()), middle.y())
+        QTest.mousePress(timeline, Qt.LeftButton, pos=middle)
+        assert dialog.frame == 1
+        assert not dialog.frame_list.currentIndex().isValid()
+        assert dialog.frame_model.frames == (2, 0)
+        assert dialog.frame_status.text().startswith("Frame 2 / 3  ·  0.04 s")
+        QTest.mouseMove(timeline, start)
+        QTest.mouseRelease(timeline, Qt.LeftButton, pos=start)
+        assert dialog.frame == 0 and dialog.frame_list.currentIndex().row() == 1
+        assert dialog.timeline_value.text() == "76%"
+        assert isinstance(dialog.canvas._items[("knee",)], QGraphicsPolygonItem)
+        assert isinstance(dialog.canvas._items[("hip",)], QGraphicsEllipseItem)
+        assert not dialog.frame_save.isEnabled()
+
+        dialog.confidence_mode.setCurrentText("Min")
+        assert dialog.timeline_value.text() == "43%"
+        assert dialog.frame_model.frames == (2, 0)
+        dialog.keep_button.click()
+        assert all(isinstance(item, QGraphicsPolygonItem) for item in dialog.canvas._items.values())
+        dialog.undo_button.click()
+        assert isinstance(dialog.canvas._items[("knee",)], QGraphicsPolygonItem)
+        assert isinstance(dialog.canvas._items[("hip",)], QGraphicsEllipseItem)
+        assert not dialog.frame_save.isEnabled()
+
+        dialog.confidence.setValue(0)
+        assert dialog.frame is None and timeline.isEnabled()
+        QTest.mouseClick(timeline, Qt.LeftButton, pos=start)
+        assert dialog.frame == 0 and dialog.timeline_value.text() == "43%"
+        QTest.keyClick(timeline, Qt.Key_Right)
+        assert dialog.frame == 1 and dialog.timeline_value.text() == "90%"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
 def test_switching_recordings_keeps_edits_and_loads_the_right_video(labels):
     app = QApplication.instance() or QApplication([])
     sources = tuple(
@@ -200,6 +265,7 @@ def test_switching_recordings_keeps_edits_and_loads_the_right_video(labels):
     review = StageReview(AutomatedStage.LABELED_VIDEOS, "videos", label_sources=sources)
     right = labels.copy()
     right.iloc[0, 0] = 32
+    right.iloc[0, 5] = 0.60
     dialog = LabelCorrectionDialog(
         None,
         review,
@@ -213,11 +279,13 @@ def test_switching_recordings_keeps_edits_and_loads_the_right_video(labels):
         app.processEvents()
         dialog.filter.setCurrentIndex(3)
         assert dialog.frame == 2
+        assert dialog.timeline_value.text() == "63%"
         dialog.keep_button.click()
         dialog.copy_button.click()
         assert dialog.paste_button.isEnabled()
         dialog.recording.setCurrentIndex(1)
         assert captures[0].closed and captures[1].read_calls == [0]
+        assert dialog.timeline_value.text() == "82%"
         assert dialog.points[("hip",)] == (32, 30)
         assert not dialog.paste_button.isEnabled()
         assert dialog.saved_status.text() == "1 frame ready to save"

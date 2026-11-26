@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_job_contracts import (
     DlcAnalysisResult,
@@ -22,6 +22,7 @@ from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_progre
 from dlc_gait_assembly.shared.business.execution_feedback_contracts import ExecutionProgress
 from dlc_gait_assembly.shared.business.external_command_contracts import ExternalCommand
 from dlc_gait_assembly.shared.infrastructure.external_process_runner import ExternalProcessSession
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 def run_bridge_request(
@@ -38,8 +39,16 @@ def run_bridge_request(
         temp_path = Path(temp_dir)
         request_path = temp_path / "request.json"
         result_path = temp_path / "result.json"
-        request["result_path"] = str(result_path)
-        request_path.write_text(json.dumps(request), encoding="utf-8")
+        payload = {**request, "result_path": str(result_path)}
+        if request.get("operation") in ("analyze", "create_labeled_videos") and "jobs" in request:
+            # DeepLabCut appends the video stem and model scorer inside the child process.
+            # Even a short destination directory can produce a filename beyond MAX_PATH.
+            payload["jobs"] = [dict(job) for job in request["jobs"]]
+            for job in payload["jobs"]:
+                for key in ("analysis_folder", "labeled_videos_folder"):
+                    if key in job:
+                        job[key] = str(windows_filesystem_path(Path(job[key])))
+        request_path.write_text(json.dumps(payload), encoding="utf-8")
         if progress_callback is not None:
             progress_callback(0, _DLC_PROGRESS_SCALE, initial_message)
         arguments = deeplabcut_analysis_arguments(Path(__file__).with_name(script_name), request_path)
@@ -62,13 +71,28 @@ def run_bridge_request(
         return result
 
 
+def _artifact_path(value: str) -> Path:
+    path = Path(value)
+    prefix = "\\\\?\\"
+    unc_prefix = prefix + "UNC\\"
+    if isinstance(path, PureWindowsPath) and value.startswith(prefix):
+        if value.startswith(unc_prefix):
+            ordinary = "\\\\" + value.removeprefix(unc_prefix)
+        else:
+            ordinary = value.removeprefix(prefix)
+        # MAX_PATH counts UTF-16 code units and the terminating null.
+        if len(ordinary.encode("utf-16-le", errors="surrogatepass")) < 2 * 260:
+            return Path(ordinary)
+    return path
+
+
 def result_from_json(item: dict) -> DlcAnalysisResult:
     return DlcAnalysisResult(
         region=str(item["region"]),
         video_paths=tuple(Path(path) for path in item.get("video_paths", [])),
-        csv_paths=tuple(Path(path) for path in item.get("csv_paths", [])),
-        h5_paths=tuple(Path(path) for path in item.get("h5_paths", [])),
-        labeled_video_paths=tuple(Path(path) for path in item.get("labeled_video_paths", [])),
+        csv_paths=tuple(map(_artifact_path, item.get("csv_paths", []))),
+        h5_paths=tuple(map(_artifact_path, item.get("h5_paths", []))),
+        labeled_video_paths=tuple(map(_artifact_path, item.get("labeled_video_paths", []))),
     )
 
 

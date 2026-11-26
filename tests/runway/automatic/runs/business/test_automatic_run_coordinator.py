@@ -55,12 +55,14 @@ from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_bridge
 )
 from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_project_reader import (
     resolve_deeplabcut_config,
+    select_deeplabcut_model,
 )
 from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_project_reader import (
     validate_deeplabcut_project,
 )
 from dlc_gait_assembly.runway.manual.video_processing.business.video_processing_contracts import ProcessingOptions
 from dlc_gait_assembly.runway.manual.video_processing.business.video_processing_contracts import ProcessingResult
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 def test_automated_pipeline_hands_outputs_through_all_six_stages(tmp_path, monkeypatch, automatic_adapters):
@@ -347,10 +349,13 @@ def test_run_continues_other_videos_and_reopens_at_the_last_checkpoint(tmp_path,
         assert all(path.read_bytes() == b"coordinates" for path in result.h5_paths)
         rendered.append(job.region)
         labels = tuple(output / "labeled_videos" / f"{path.stem}_labeled.mp4" for path in job.video_paths)
+        staged_label = windows_filesystem_path(output / "analyzed_videos") / f"{'x' * 200}_labeled.mp4"
         if len(rendered) == 1:
             labels[0].write_bytes(b"partial label")
+            staged_label.write_bytes(b"partial label beside coordinates")
             raise RuntimeError("renderer failed")
         assert not labels[0].exists()
+        assert not staged_label.exists()
         for path in labels:
             path.write_bytes(b"labeled")
         return [DlcAnalysisResult(job.region, job.video_paths, result.csv_paths, result.h5_paths, labels)]

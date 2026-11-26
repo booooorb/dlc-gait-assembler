@@ -234,6 +234,7 @@ class AutomatedPipelineRun:
             "fine_tune_epochs": self.profile.fine_tune_epochs,
             "label_draft": self.pending_label_edits if self.label_error else (),
             "label_error": self.label_error,
+            "saved_label_edits": self.label_edits,
         }
 
     def request_label_correction(self, correction, stage):

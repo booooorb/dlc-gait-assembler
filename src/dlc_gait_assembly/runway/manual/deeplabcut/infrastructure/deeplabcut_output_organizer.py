@@ -11,6 +11,7 @@ from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_artifact_rul
 )
 from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_job_contracts import OrganizedManualOutputs
 from dlc_gait_assembly.shared.business.workspace_path_contracts import ManualPipelineOutputFolders
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 def organize_manual_deeplabcut_outputs(folders: ManualPipelineOutputFolders) -> OrganizedManualOutputs:
@@ -53,10 +54,10 @@ class DeepLabCutArtifactStore:
 
     def analysis_folder(self, destination, region):
         folder = self.resolve(destination) / "analyzed_videos" / deeplabcut_region_directory(region)
-        folder.mkdir(parents=True, exist_ok=True)
+        windows_filesystem_path(folder).mkdir(parents=True, exist_ok=True)
         return folder
 
     def labeled_folder(self, destination, region):
         folder = self.resolve(destination) / "labeled_videos" / deeplabcut_region_directory(region)
-        folder.mkdir(parents=True, exist_ok=True)
+        windows_filesystem_path(folder).mkdir(parents=True, exist_ok=True)
         return folder

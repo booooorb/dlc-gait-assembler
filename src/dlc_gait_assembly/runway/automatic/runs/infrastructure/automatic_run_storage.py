@@ -34,6 +34,7 @@ from dlc_gait_assembly.runway.manual.knee_correction.infrastructure.knee_setting
 from dlc_gait_assembly.runway.manual.video_processing.infrastructure.video_settings_manifest_store import (
     video_settings_from_manifest,
 )
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 class AutomaticRunStorage:
@@ -74,24 +75,28 @@ class AutomaticRunStorage:
             run.stickplots_folder,
             run.gait_analysis_folder,
         )
-        folder = folders[stage]
+        run_folder = run.output_folder
+        if stage in (AutomatedStage.DEEPLABCUT_ANALYSIS, AutomatedStage.LABELED_VIDEOS):
+            run_folder = windows_filesystem_path(run_folder)
+        folder = run_folder / folders[stage].relative_to(run.output_folder)
         partial_paths = list(folder.iterdir())
         if stage is AutomatedStage.VIDEO_PROCESSING:
             saved = {path for paths in run.processed_by_region.values() for path in paths}
             partial_paths = [path for path in folder.rglob("*") if path.is_file() and path not in saved]
         if stage is AutomatedStage.LABELED_VIDEOS:
             # DLC renders beside its coordinate files before the bridge moves the videos.
+            analyzed_folder = run_folder / run.analyzed_videos_folder.relative_to(run.output_folder)
             partial_paths.extend(
                 path
-                for path in run.analyzed_videos_folder.rglob("*")
+                for path in analyzed_folder.rglob("*")
                 if path.is_file()
                 and path.suffix.casefold() in {".mp4", ".avi", ".mov", ".mkv"}
                 and "label" in path.stem.casefold()
             )
         if partial_paths:
-            archive = run.output_folder / ".partial" / f"{stage.name.lower()}_{uuid4().hex[:8]}"
+            archive = run_folder / ".partial" / f"{stage.name.lower()}_{uuid4().hex[:8]}"
             for path in partial_paths:
-                destination = archive / path.relative_to(run.output_folder)
+                destination = archive / path.relative_to(run_folder)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 path.replace(destination)
 

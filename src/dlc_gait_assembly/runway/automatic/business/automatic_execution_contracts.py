@@ -39,3 +39,4 @@ class StageReview:
     fine_tune_epochs: int = DEFAULT_FINE_TUNE_EPOCHS
     label_draft: tuple[LabelEdit, ...] = ()
     label_error: str = ""
+    saved_label_edits: tuple[LabelEdit, ...] = ()
