@@ -7,11 +7,25 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
+class DlcTrainedModel:
+    config_path: Path
+    iteration: int
+    training_fraction: float
+    trainingsetindex: int
+    shuffle: int
+
+    @property
+    def training_identity(self) -> tuple[int, float, int]:
+        return self.iteration, self.training_fraction, self.shuffle
+
+
+@dataclass(frozen=True)
 class DlcAnalysisJob:
     region: str
     model_path: Path
     video_paths: tuple[Path, ...]
     labeled_video_confidence: float | None = None
+    shuffle: int | None = None
 
 
 @dataclass(frozen=True)

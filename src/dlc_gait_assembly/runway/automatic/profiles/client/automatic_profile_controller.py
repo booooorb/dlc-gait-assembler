@@ -112,6 +112,7 @@ class AutomaticProfileController:
         self.view.profile_state.knee_manifest_source = None
         self.view.profile_state.regions = ()
         self.view.profile_state.model_sources = {}
+        self.view.profile_state.model_shuffles = {}
         blockers = (
             QSignalBlocker(self.view.include_gait_analysis_button),
             QSignalBlocker(self.view.include_knee_correction_button),
@@ -144,6 +145,10 @@ class AutomaticProfileController:
         )
         self.view.profile_state.model_sources = {
             region: profile.deeplabcut_models.get(region) for region in self.view.profile_state.regions
+        }
+        self.view.profile_state.model_shuffles = {
+            region: shuffle for region, shuffle in profile.deeplabcut_shuffles.items()
+            if region in self.view.profile_state.regions
         }
         blockers = (
             QSignalBlocker(self.view.include_gait_analysis_button),
@@ -218,6 +223,7 @@ class AutomaticProfileController:
                 knee_correction_enabled=knee_enabled,
                 labeled_video_confidence=self.labeled_video_confidence(),
                 fine_tune_epochs=self.fine_tune_epochs(),
+                deeplabcut_shuffles=self.view.profile_state.model_shuffles,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self.view, "Could not save profile", str(exc))
@@ -292,6 +298,7 @@ class AutomaticProfileController:
             knee_correction_enabled=self.view.include_knee_correction_button.isChecked(),
             labeled_video_confidence=self.labeled_video_confidence(),
             fine_tune_epochs=self.fine_tune_epochs(),
+            deeplabcut_shuffles=self.view.profile_state.model_shuffles,
         ).snapshot()
 
     def _is_dirty(self) -> bool:

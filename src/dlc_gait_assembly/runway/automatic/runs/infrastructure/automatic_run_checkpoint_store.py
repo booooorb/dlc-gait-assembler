@@ -53,7 +53,10 @@ def snapshot_run_profile(run, profile):
         source = Path(source).expanduser().resolve()
         # Workflow-owned models can be replaced or removed as the user edits profiles.
         if source.is_dir() and (source.parent.parent / "profile.json").is_file():
-            source = copy_profile_deeplabcut_project(source, assets / f"model_{index:02d}", reuse_owned_files=True)
+            source = copy_profile_deeplabcut_project(
+                source, assets / f"model_{index:02d}", reuse_owned_files=True,
+                shuffle=profile.deeplabcut_shuffles.get(region),
+            )
         models[region] = source
     return replace(profile, workspace_state={}, deeplabcut_models=models, **manifests)
 

@@ -239,6 +239,8 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
                     {
                         "region": "Bottom",
                         "config_path": str(tmp_path / "config.yaml"),
+                        "shuffle": 7,
+                        "trainingsetindex": 1,
                         "video_paths": [str(video)],
                         "analysis_folder": str(analysis_folder),
                     }
@@ -249,16 +251,18 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
         encoding="utf-8",
     )
 
-    def fake_analyze(_config, videos, destfolder, save_as_csv):
+    def fake_analyze(_config, videos, destfolder, save_as_csv, shuffle, trainingsetindex):
         assert save_as_csv is True
+        assert (shuffle, trainingsetindex) == (7, 1)
         destination = Path(destfolder)
         for source in videos:
             stem = Path(source).stem
             (destination / f"{stem}DLC_fixture.csv").write_text("csv", encoding="utf-8")
             (destination / f"{stem}DLC_fixture.h5").write_bytes(b"h5")
 
-    def fake_create_labeled(_config, videos, destfolder, pcutoff=None):
+    def fake_create_labeled(_config, videos, destfolder, shuffle, trainingsetindex, pcutoff=None):
         assert pcutoff == cutoff
+        assert (shuffle, trainingsetindex) == (7, 1)
         destination = Path(destfolder)
         for source in videos:
             (destination / f"{Path(source).stem}DLC_fixture_labeled.mp4").write_bytes(b"labeled")
@@ -280,6 +284,8 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
                     {
                         "region": "Bottom",
                         "config_path": str(tmp_path / "config.yaml"),
+                        "shuffle": 7,
+                        "trainingsetindex": 1,
                         "video_paths": [str(video)],
                         "analysis_folder": str(analysis_folder),
                         "labeled_videos_folder": str(labeled_folder),
@@ -468,7 +474,7 @@ def test_retry_restores_raw_coordinates_if_knee_checkpoint_was_interrupted(
 
 def test_deeplabcut_project_validation_accepts_snapshot_selection(tmp_path):
     project = tmp_path / "model"
-    train = project / "dlc-models-pytorch" / "iteration-0" / "run" / "train"
+    train = project / "dlc-models-pytorch" / "iteration-0" / "fixtureJan1-trainset95shuffle7" / "train"
     train.mkdir(parents=True)
     config = project / "config.yaml"
     config.write_text("Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95]\n", encoding="utf-8")
@@ -478,10 +484,11 @@ def test_deeplabcut_project_validation_accepts_snapshot_selection(tmp_path):
     metadata = project / "training-datasets" / "iteration-0" / "UnaugmentedDataSet_fixtureJan1" / "metadata.yaml"
     metadata.parent.mkdir(parents=True)
     metadata.write_text(
-        "shuffles:\n  fixture-trainset95shuffle1:\n    train_fraction: 0.95\n    index: 1\n    engine: pytorch\n",
+        "shuffles:\n  fixtureJan1-trainset95shuffle7:\n    train_fraction: 0.95\n    index: 7\n    engine: pytorch\n",
         encoding="utf-8",
     )
     assert validate_deeplabcut_project(snapshot) == config
+    assert select_deeplabcut_model(snapshot).shuffle == 7
 
 
 def test_deeplabcut_project_validation_rejects_config_without_trained_model(tmp_path):
@@ -490,14 +497,14 @@ def test_deeplabcut_project_validation_rejects_config_without_trained_model(tmp_
     try:
         validate_deeplabcut_project(config)
     except FileNotFoundError as exc:
-        assert "no complete trained model" in str(exc)
+        assert "no complete trained model" in str(exc).casefold()
     else:
         raise AssertionError("Expected an incomplete DeepLabCut project to be rejected")
 
 
 def test_deeplabcut_project_validation_rejects_empty_shuffle_metadata(tmp_path):
     project = tmp_path / "model"
-    train = project / "dlc-models-pytorch" / "iteration-0" / "run" / "train"
+    train = project / "dlc-models-pytorch" / "iteration-0" / "fixtureJan1-trainset95shuffle1" / "train"
     train.mkdir(parents=True)
     config = project / "config.yaml"
     config.write_text("Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95]\n", encoding="utf-8")
@@ -509,14 +516,14 @@ def test_deeplabcut_project_validation_rejects_empty_shuffle_metadata(tmp_path):
     try:
         validate_deeplabcut_project(project)
     except ValueError as exc:
-        assert "does not define shuffle 1" in str(exc)
+        assert "matches the configured TrainingFraction and training metadata" in str(exc)
     else:
         raise AssertionError("Expected empty shuffle metadata to be rejected")
 
 
 def test_deeplabcut_project_validation_rejects_wrong_shuffle_metadata(tmp_path):
     project = tmp_path / "model"
-    train = project / "dlc-models-pytorch" / "iteration-0" / "run" / "train"
+    train = project / "dlc-models-pytorch" / "iteration-0" / "fixtureJan1-trainset95shuffle1" / "train"
     train.mkdir(parents=True)
     config = project / "config.yaml"
     config.write_text("Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95]\n", encoding="utf-8")
@@ -525,13 +532,13 @@ def test_deeplabcut_project_validation_rejects_wrong_shuffle_metadata(tmp_path):
     metadata = project / "training-datasets" / "iteration-0" / "UnaugmentedDataSet_fixtureJan1" / "metadata.yaml"
     metadata.parent.mkdir(parents=True)
     metadata.write_text(
-        "shuffles:\n  fixture-trainset95shuffle2:\n    train_fraction: 0.95\n    index: 2\n    engine: pytorch\n",
+        "shuffles:\n  fixtureJan1-trainset95shuffle2:\n    train_fraction: 0.95\n    index: 2\n    engine: pytorch\n",
         encoding="utf-8",
     )
     try:
         validate_deeplabcut_project(project)
     except ValueError as exc:
-        assert "does not define shuffle 1" in str(exc)
+        assert "matches the configured TrainingFraction and training metadata" in str(exc)
     else:
         raise AssertionError("Expected mismatched shuffle metadata to be rejected")
 

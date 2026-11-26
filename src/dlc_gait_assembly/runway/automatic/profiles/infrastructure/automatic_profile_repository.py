@@ -13,6 +13,7 @@ from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_cont
     DEFAULT_FINE_TUNE_EPOCHS,
     AutomatedPipelineProfile,
     ProfileDraft,
+    validate_deeplabcut_shuffles,
     validate_fine_tune_epochs,
 )
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
@@ -73,6 +74,7 @@ class AutomatedProfileStore:
         workspace_state: dict | None = None,
         labeled_video_confidence: float | None = None,
         fine_tune_epochs: int | None = None,
+        deeplabcut_shuffles: dict[str, int] | None = None,
     ) -> AutomatedPipelineProfile:
         if labeled_video_confidence is not None and (
             not math.isfinite(labeled_video_confidence) or not 0 <= labeled_video_confidence <= 1
@@ -84,6 +86,12 @@ class AutomatedProfileStore:
                 workspace_state = previous.workspace_state
             if fine_tune_epochs is None:
                 fine_tune_epochs = previous.fine_tune_epochs
+            if deeplabcut_shuffles is None:
+                deeplabcut_shuffles = {
+                    region: shuffle for region, shuffle in previous.deeplabcut_shuffles.items()
+                    if region in deeplabcut_models
+                    and Path(deeplabcut_models[region]).expanduser().resolve() == previous.deeplabcut_models[region]
+                }
         fine_tune_epochs = validate_fine_tune_epochs(
             DEFAULT_FINE_TUNE_EPOCHS if fine_tune_epochs is None else fine_tune_epochs
         )
@@ -103,6 +111,9 @@ class AutomatedProfileStore:
             else bool(knee_correction_enabled),
             labeled_video_confidence=labeled_video_confidence,
             fine_tune_epochs=fine_tune_epochs,
+            deeplabcut_shuffles=validate_deeplabcut_shuffles(
+                {} if deeplabcut_shuffles is None else deeplabcut_shuffles, deeplabcut_models
+            ),
         )
         draft = normalize_incomplete_profile_draft(draft) if allow_incomplete else inspect_profile_draft(draft)
         clean_name = draft.name
@@ -148,6 +159,7 @@ class AutomatedProfileStore:
                 stored_models[region] = copy_profile_deeplabcut_project(
                     source, staging_dir / "deeplabcut_models" / f"{index:02d}",
                     reuse_owned_files=target_dir in source.parents,
+                    shuffle=draft.deeplabcut_shuffles.get(region),
                 )
             assets = {}
             if stored_manifest is not None:
@@ -172,7 +184,10 @@ class AutomatedProfileStore:
                     "fine_tune_epochs": fine_tune_epochs,
                 },
                 "deeplabcut_models": [
-                    {"region": region, "path": str(path.relative_to(staging_dir))}
+                    {
+                        "region": region, "path": str(path.relative_to(staging_dir)),
+                        **({"shuffle": draft.deeplabcut_shuffles[region]} if region in draft.deeplabcut_shuffles else {}),
+                    }
                     for (region, path) in stored_models.items()
                 ],
             }

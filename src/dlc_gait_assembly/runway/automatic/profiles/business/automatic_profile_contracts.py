@@ -15,6 +15,14 @@ def validate_fine_tune_epochs(value: int) -> int:
     return value
 
 
+def validate_deeplabcut_shuffles(shuffles: dict[str, int], models) -> dict[str, int]:
+    if not isinstance(shuffles, dict) or any(
+        region not in models or type(shuffle) is not int or shuffle < 0 for region, shuffle in shuffles.items()
+    ):
+        raise ValueError("A DeepLabCut shuffle selection is invalid for its assigned region.")
+    return dict(shuffles)
+
+
 @dataclass(frozen=True)
 class AutomatedPipelineProfile:
     id: str
@@ -30,6 +38,7 @@ class AutomatedPipelineProfile:
     workspace_state: dict = field(default_factory=dict)
     labeled_video_confidence: float | None = None
     fine_tune_epochs: int = DEFAULT_FINE_TUNE_EPOCHS
+    deeplabcut_shuffles: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -46,10 +55,14 @@ class ProfileDraft:
     knee_correction_enabled: bool = False
     labeled_video_confidence: float | None = None
     fine_tune_epochs: int = DEFAULT_FINE_TUNE_EPOCHS
+    deeplabcut_shuffles: dict[str, int] = field(default_factory=dict)
 
     def snapshot(self) -> tuple[str, ...]:
         """Return a deterministic value suitable for dirty-state comparisons."""
-        models = tuple(f"{region}={path}" for (region, path) in sorted(self.deeplabcut_models.items()))
+        models = tuple(
+            f"{region}={path}, shuffle={self.deeplabcut_shuffles.get(region)}"
+            for region, path in sorted(self.deeplabcut_models.items())
+        )
         return (
             self.name.strip(),
             str(self.processing_manifest or ""),

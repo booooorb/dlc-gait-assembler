@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import yaml
 
+from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_job_contracts import DlcTrainedModel
 from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_project_rules import (
-    shuffle_metadata_matches,
+    shuffle_metadata_entries,
     training_dataset_identity,
-    validate_project_components,
 )
 from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 DLC_MODEL_FOLDER_NAMES = ("dlc-models-pytorch", "dlc-models")
 DLC_TRAINING_DATASET_FOLDER_NAME = "training-datasets"
 SOURCE_PROJECT_FILENAME = "source_project.json"
+MODEL_LAYOUTS = (
+    ("pytorch", DLC_MODEL_FOLDER_NAMES[0], "pytorch_config.yaml", ("*.pt", "*.pth")),
+    ("tensorflow", DLC_MODEL_FOLDER_NAMES[1], "pose_cfg.yaml", ("*.index", "*.h5")),
+)
 
 
 def resolve_deeplabcut_config(model_path: str | Path) -> Path:
@@ -71,57 +76,83 @@ def original_deeplabcut_config(config_path):
     return origin
 
 
-def validate_deeplabcut_project(model_path: str | Path) -> Path:
-    """Return the project config after checking that trained inference files exist."""
+def validate_deeplabcut_project(model_path: str | Path, shuffle: int | None = None) -> Path:
+    return select_deeplabcut_model(model_path, shuffle).config_path
+
+
+def select_deeplabcut_model(model_path: str | Path, shuffle: int | None = None) -> DlcTrainedModel:
+    choices = deeplabcut_model_choices(model_path)
+    for model in choices:
+        if shuffle is None or model.shuffle == shuffle:
+            return model
+    raise ValueError(f'Shuffle {shuffle} is unavailable in "{choices[0].config_path}".')
+
+
+def deeplabcut_model_choices(model_path: str | Path) -> tuple[DlcTrainedModel, ...]:
+    """Return trained models in config fraction order, with shuffle 1 preferred at each fraction."""
     config_path = resolve_deeplabcut_config(model_path)
     config_file = windows_filesystem_path(config_path)
     project_root = config_file.parent
-    model_folders = [project_root / name for name in DLC_MODEL_FOLDER_NAMES if (project_root / name).is_dir()]
-    has_pytorch_model = any(
-        any(folder.rglob("pytorch_config.yaml")) and (any(folder.rglob("*.pt")) or any(folder.rglob("*.pth")))
-        for folder in model_folders
+    if not any((project_root / folder).is_dir() for folder in DLC_MODEL_FOLDER_NAMES):
+        raise FileNotFoundError(f'No complete trained model was found next to "{config_path}".')
+
+    config = read_project_yaml(config_file)
+    identity = training_dataset_identity(config) if isinstance(config, dict) else None
+    if identity is None:
+        raise ValueError(f'Check Task, date, iteration and TrainingFraction in "{config_path}".')
+    iteration, project_name, fractions = identity
+    iteration_folder = f"iteration-{iteration}"
+    trained = sorted(
+        trained_shuffles(project_root, iteration_folder, project_name),
+        key=lambda item: (item[1] != 1, item[1]),
     )
-    has_tensorflow_model = any(
-        any(folder.rglob("pose_cfg.yaml")) and (any(folder.rglob("*.index")) or any(folder.rglob("*.h5")))
-        for folder in model_folders
+    if not trained:
+        raise FileNotFoundError(f'No complete trained model for {iteration_folder} was found next to "{config_path}".')
+
+    dataset = project_root / DLC_TRAINING_DATASET_FOLDER_NAME / iteration_folder / f"UnaugmentedDataSet_{project_name}"
+    metadata_path = dataset / "metadata.yaml"
+    metadata = shuffle_metadata_entries(read_project_yaml(metadata_path)) if metadata_path.is_file() else None
+    choices = {}
+    for trainingsetindex, fraction in enumerate(fractions):
+        for percent, shuffle, engine in trained:
+            if percent != int(100 * fraction):
+                continue
+            if metadata is None:
+                documentation = dataset / f"Documentation_data-{config['Task']}_{percent}shuffle{shuffle}.pickle"
+                matches = engine == "tensorflow" and documentation.is_file()
+            else:
+                matches = (fraction, shuffle, engine) in metadata
+            if matches:
+                # A numbered override uses the first configured fraction that has that trained shuffle.
+                choices.setdefault(shuffle, DlcTrainedModel(config_path, iteration, fraction, trainingsetindex, shuffle))
+
+    if choices:
+        return tuple(choices.values())
+    raise ValueError(
+        f'No trained shuffle in "{config_path}" matches the configured TrainingFraction and training metadata. '
+        f'Select the original DeepLabCut project or restore "{dataset.relative_to(project_root)}".'
     )
-    training_dataset_folder = project_root / DLC_TRAINING_DATASET_FOLDER_NAME
-    has_shuffle_metadata = has_deeplabcut_shuffle_metadata(
-        config_file, training_dataset_folder, allow_pytorch=has_pytorch_model, allow_tensorflow=has_tensorflow_model
-    )
-    validate_project_components(has_pytorch_model, has_tensorflow_model, has_shuffle_metadata)
-    return config_path
 
 
-def has_deeplabcut_shuffle_metadata(config_path, training_dataset_folder, *, allow_pytorch, allow_tensorflow):
-    if not training_dataset_folder.is_dir():
-        return False
+def read_project_yaml(path):
     try:
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        if not isinstance(config, dict):
-            return False
-        identity = training_dataset_identity(config)
-        if identity is None:
-            return False
-        iteration, name, _fraction = identity
-        folder = training_dataset_folder / f"iteration-{iteration}" / name
-        metadata_path = folder / "metadata.yaml"
-        metadata = (
-            (yaml.safe_load(metadata_path.read_text(encoding="utf-8")) or {}) if metadata_path.is_file() else None
-        )
-        if metadata is not None and not isinstance(metadata, dict):
-            return False
-        return shuffle_metadata_matches(
-            config,
-            metadata,
-            any(folder.glob("Documentation_data-*.pickle")),
-            allow_pytorch=allow_pytorch,
-            allow_tensorflow=allow_tensorflow,
-        )
-    except (OSError, TypeError, yaml.YAMLError):
-        return False
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (UnicodeError, yaml.YAMLError) as exc:
+        raise ValueError(f'Could not read DeepLabCut YAML in "{path}".') from exc
+
+
+def trained_shuffles(root, iteration_folder, project_name):
+    pattern = re.compile(rf"{re.escape(project_name)}-trainset(\d+)shuffle(\d+)")
+    for engine, folder, model_config, weight_patterns in MODEL_LAYOUTS:
+        for model in (root / folder / iteration_folder).glob("*"):
+            match = pattern.fullmatch(model.name)
+            train = model / "train"
+            if match and (train / model_config).is_file() and any(
+                weight.is_file() for glob in weight_patterns for weight in train.glob(glob)
+            ):
+                percent, shuffle = map(int, match.groups())
+                yield percent, shuffle, engine
 
 
 class DeepLabCutProjectReader:
-    def validate_project(self, path):
-        return validate_deeplabcut_project(path)
+    select_model = staticmethod(select_deeplabcut_model)

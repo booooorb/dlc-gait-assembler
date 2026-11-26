@@ -27,12 +27,14 @@ def run_deeplabcut_analysis(
     total = len(jobs)
     total_videos = sum(len(job.video_paths) for job in jobs)
     for job in jobs:
-        config_path = ports.projects.validate_project(job.model_path)
+        model = ports.projects.select_model(job.model_path, job.shuffle)
         analysis_folder = ports.artifacts.analysis_folder(destination, job.region)
         request_jobs.append(
             {
                 "region": job.region,
-                "config_path": str(config_path),
+                "config_path": str(model.config_path),
+                "shuffle": model.shuffle,
+                "trainingsetindex": model.trainingsetindex,
                 "video_paths": [str(ports.artifacts.resolve(path)) for path in job.video_paths],
                 "analysis_folder": str(analysis_folder),
             }
@@ -82,12 +84,14 @@ def run_deeplabcut_labeled_video_creation(
         coordinate_folders = {ports.artifacts.resolve(path.parent) for path in coordinate_paths}
         if len(coordinate_folders) != 1:
             raise ValueError(f'Analyzed files for region "{job.region}" are not in one output folder.')
-        config_path = ports.projects.validate_project(job.model_path)
+        model = ports.projects.select_model(job.model_path, job.shuffle)
         labeled_videos_folder = ports.artifacts.labeled_folder(destination, job.region)
         request_jobs.append(
             {
                 "region": job.region,
-                "config_path": str(config_path),
+                "config_path": str(model.config_path),
+                "shuffle": model.shuffle,
+                "trainingsetindex": model.trainingsetindex,
                 "video_paths": [str(path) for path in job.video_paths],
                 "analysis_folder": str(next(iter(coordinate_folders))),
                 "labeled_videos_folder": str(labeled_videos_folder),

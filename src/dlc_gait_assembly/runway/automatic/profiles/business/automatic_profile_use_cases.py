@@ -36,6 +36,7 @@ class AutomaticProfileUseCases:
             workspace_state=source.workspace_state,
             labeled_video_confidence=source.labeled_video_confidence,
             fine_tune_epochs=source.fine_tune_epochs,
+            deeplabcut_shuffles=source.deeplabcut_shuffles,
         )
 
     def delete(self, profile_id):
@@ -50,6 +51,7 @@ class AutomaticProfileUseCases:
             allow_incomplete=True, workspace_state=source.workspace_state,
             labeled_video_confidence=source.labeled_video_confidence,
             fine_tune_epochs=source.fine_tune_epochs,
+            deeplabcut_shuffles=source.deeplabcut_shuffles,
         )
 
     def create_from_manual(self, name, snapshot):
@@ -69,6 +71,9 @@ class AutomaticProfileUseCases:
 
     def processing_regions(self, path):
         return self.asset_reader.regions(path)
+
+    def deeplabcut_model_choices(self, path):
+        return self.asset_reader.deeplabcut_model_choices(path)
 
     def inspect_gait_settings(self, path):
         return self.asset_reader.gait_settings(path)

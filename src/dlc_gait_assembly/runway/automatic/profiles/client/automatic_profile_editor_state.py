@@ -18,4 +18,5 @@ class AutomaticProfileEditorState:
     knee_manifest_source: Path | None = None
     regions: tuple[str, ...] = ()
     model_sources: dict[str, Path | None] = field(default_factory=lambda: {})
+    model_shuffles: dict[str, int] = field(default_factory=dict)
     saved_snapshot: tuple[str, ...] | None = None

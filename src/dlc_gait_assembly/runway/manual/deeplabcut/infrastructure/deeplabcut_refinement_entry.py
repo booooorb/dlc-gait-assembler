@@ -163,7 +163,9 @@ def refine(request):
     root = Path(request["source_config"]).parent
     project_config = root / "config.yaml"
     base = auxiliaryfunctions.read_config(str(used_config))
-    engine = get_shuffle_engine(base, 0, 1)
+    shuffle = request.get("shuffle", 1)
+    trainingsetindex = request.get("trainingsetindex", 0)
+    engine = get_shuffle_engine(base, trainingsetindex, shuffle)
     if engine != deeplabcut.Engine.PYTORCH or base.get("multianimalproject", False):
         raise ValueError("Fine-tuning requires a single-animal DeepLabCut 3 PyTorch project.")
     original = auxiliaryfunctions.read_config(str(project_config))
@@ -173,7 +175,7 @@ def refine(request):
     if not (root / "labeled-data").is_dir():
         raise FileNotFoundError(f"The source DLC training labels are missing in {root}.")
 
-    loader = DLCLoader(str(used_config), shuffle=1)
+    loader = DLCLoader(str(used_config), trainset_index=trainingsetindex, shuffle=shuffle)
     snapshot, detector = snapshot_for_recording(loader, request["scorer"])
     # The completion marker is written only after a new checkpoint can be selected for inference.
     tuned = root / f"config.gait-refinement-{request['id']}.yaml"
@@ -193,7 +195,7 @@ def refine(request):
     old_folder = root / auxiliaryfunctions.get_training_set_folder(old_cfg)
     if (old_folder / f"CollectedData_{base['scorer']}.h5").is_file():
         try:
-            previous_test.update(DLCLoader(old_cfg, shuffle=1).df_test.index)
+            previous_test.update(DLCLoader(old_cfg, trainset_index=trainingsetindex, shuffle=shuffle).df_test.index)
         except (KeyError, OSError, ValueError):
             pass
 
@@ -210,12 +212,12 @@ def refine(request):
     annotations = merge_annotateddatasets(settings, str(dataset_folder))
     if annotations is None or annotations.empty:
         raise ValueError("DeepLabCut could not read the original training annotations.")
-    train, test, fraction = split_frames(annotations, reviewed, base["TrainingFraction"][0], previous_test)
+    train, test, fraction = split_frames(annotations, reviewed, loader.train_fraction, previous_test)
     settings["TrainingFraction"] = [fraction]
     write_config(tuned, settings)
     deeplabcut.create_training_dataset(
         str(tuned),
-        Shuffles=[1],
+        Shuffles=[shuffle],
         userfeedback=False,
         trainIndices=[train],
         testIndices=[test],
@@ -223,7 +225,7 @@ def refine(request):
         engine=deeplabcut.Engine.PYTORCH,
     )
 
-    new_loader = DLCLoader(str(tuned), shuffle=1)
+    new_loader = DLCLoader(str(tuned), shuffle=shuffle)
     model_cfg = loader.model_cfg.copy()
     model_cfg["train_settings"] = {**model_cfg["train_settings"]}
     model_cfg["train_settings"].pop("weight_init", None)
@@ -241,7 +243,7 @@ def refine(request):
     try:
         deeplabcut.train_network(
             str(tuned),
-            shuffle=1,
+            shuffle=shuffle,
             engine=deeplabcut.Engine.PYTORCH,
             epochs=epochs,
             save_epochs=epochs,

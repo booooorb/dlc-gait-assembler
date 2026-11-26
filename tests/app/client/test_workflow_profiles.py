@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QComboBox, QFileDialog, QFrame, QInputDialog, QMessageBox
 
 from dlc_gait_assembly.app.app_bootstrap import build_tool_specs, create_main_menu
 from dlc_gait_assembly.app.client.app_shell_window import MainWindow
@@ -20,6 +20,10 @@ from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_
     alma_settings_from_manifest,
 )
 from dlc_gait_assembly.runway.manual.video_processing.business.video_region_geometry import CropRegion, NormalizedRect
+from dlc_gait_assembly.runway.manual.video_processing.business.video_processing_contracts import ProcessingOptions
+from dlc_gait_assembly.runway.manual.video_processing.infrastructure.video_settings_manifest_store import (
+    write_video_settings_manifest,
+)
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures/gait/rustlab1_r_reference"
 
@@ -406,6 +410,43 @@ def test_existing_automation_updates_and_duplication_keep_workspace_settings(win
     copied = window.workflows.use_cases.duplicate(profile.id, "Copy")
     assert copied.workspace_state == profile.workspace_state
     assert copied.id != profile.id
+
+
+def test_workflow_model_row_saves_and_restores_selected_shuffle(window, tmp_path):
+    project = tmp_path / "project"
+    metadata = project / "training-datasets" / "iteration-0" / "UnaugmentedDataSet_fixtureJan1" / "metadata.yaml"
+    metadata.parent.mkdir(parents=True)
+    (project / "config.yaml").write_text("Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95, 0.8]\n")
+    shuffles = {}
+    for shuffle, fraction in ((1, 0.95), (7, 0.8)):
+        name = f"fixtureJan1-trainset{int(100 * fraction)}shuffle{shuffle}"
+        train = project / "dlc-models-pytorch" / "iteration-0" / name / "train"
+        train.mkdir(parents=True)
+        (train / "pytorch_config.yaml").touch()
+        (train / "snapshot-1.pt").touch()
+        shuffles[name] = {"train_fraction": fraction, "index": shuffle, "engine": "pytorch"}
+    metadata.write_text(json.dumps({"shuffles": shuffles}))
+    manifest = write_video_settings_manifest(tmp_path / "video.json", ProcessingOptions())
+    workflows = window.workflows
+    repository = workflows.use_cases.repository
+    profile = repository.save("Custom shuffle", manifest, None, {"Full frame": project}, gait_analysis_enabled=False)
+    workflows.open_profile(profile.id)
+    window.routes._show_automated_profiles()
+    automatic = window._main_menu.automated_profiles
+
+    def picker():
+        return automatic.models_layout.itemAt(0).widget().findChild(QComboBox, "RegionModelShuffle")
+
+    assert picker().currentText() == "Auto (shuffle 1)"
+    assert [picker().itemData(index) for index in range(picker().count())] == [None, 1, 7]
+    picker().setCurrentIndex(picker().findData(7))
+    assert repository.load(profile.id).deeplabcut_shuffles == {"Full frame": 7}
+    assert workflows.use_cases.duplicate(profile.id, "Copy").deeplabcut_shuffles == {"Full frame": 7}
+    assert workflows.close_profile()
+    workflows.open_profile(profile.id)
+    assert picker().currentData() == 7
+    picker().setCurrentIndex(0)
+    assert repository.load(profile.id).deeplabcut_shuffles == {}
 
 
 def test_standalone_rustlab_settings_do_not_silently_run_alma_in_automation(window):

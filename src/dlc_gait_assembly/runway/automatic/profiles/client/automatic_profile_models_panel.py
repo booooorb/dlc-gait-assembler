@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from dlc_gait_assembly.runway.automatic.runs.business.automatic_recording_pairing import VIEW_ALIASES, view_role
 
@@ -49,7 +49,11 @@ class AutomaticProfileModelsPanel:
 
     def _set_model_sources(self, regions: tuple[str, ...], path: Path) -> None:
         resolved = path.expanduser().resolve()
-        self.view.profile_state.model_sources.update(dict.fromkeys(regions, resolved))
+        state = self.view.profile_state
+        for region in regions:
+            if state.model_sources.get(region) != resolved:
+                state.model_shuffles.pop(region, None)
+            state.model_sources[region] = resolved
         self._render_model_rows()
         self.view.profile_readiness._refresh_profile_readiness()
         selected = sum(path is not None for path in self.view.profile_state.model_sources.values())
@@ -59,6 +63,39 @@ class AutomaticProfileModelsPanel:
         workflow = getattr(self.view, "workflow_controller", None)
         if workflow is not None and not workflow.loading:
             workflow.save()
+
+    def _select_shuffle(self, region: str, shuffle: int | None) -> None:
+        shuffles = self.view.profile_state.model_shuffles
+        if shuffle is None:
+            shuffles.pop(region, None)
+        else:
+            shuffles[region] = shuffle
+        workflow = getattr(self.view, "workflow_controller", None)
+        if workflow is not None and not workflow.loading:
+            workflow.save()
+
+    def _shuffle_picker(self, region, model_path, inspected):
+        combo = QComboBox()
+        combo.setObjectName("RegionModelShuffle")
+        combo.setAccessibleName(f"DeepLabCut shuffle for {region}")
+        if model_path is not None and model_path not in inspected:
+            try:
+                inspected[model_path] = self.view.profile_use_cases.deeplabcut_model_choices(model_path), ""
+            except (OSError, ValueError) as exc:
+                inspected[model_path] = (), str(exc)
+        models, error = inspected.get(model_path, ((), ""))
+        combo.addItem(f"Auto (shuffle {models[0].shuffle})" if models else "Auto shuffle", None)
+        available = {model.shuffle for model in models}
+        selected = self.view.profile_state.model_shuffles.get(region)
+        for shuffle in sorted(available):
+            combo.addItem(f"Shuffle {shuffle}", shuffle)
+        if selected is not None and selected not in available:
+            combo.addItem(f"Shuffle {selected} (unavailable)", selected)
+        combo.setCurrentIndex(combo.findData(selected) if selected is not None else 0)
+        combo.setEnabled(bool(models))
+        combo.setToolTip(error or "Choose the trained shuffle to use for this region.")
+        combo.currentIndexChanged.connect(lambda index: self._select_shuffle(region, combo.itemData(index)))
+        return combo
 
     def _render_model_rows(self) -> None:
         roles = {view_role(region) for region in self.view.profile_state.regions}
@@ -78,6 +115,7 @@ class AutomaticProfileModelsPanel:
             )
             self.view.models_layout.addWidget(placeholder)
             return
+        inspected = {}
         for region in self.view.profile_state.regions:
             row = QFrame()
             row.setObjectName("RegionModelRow")
@@ -100,6 +138,7 @@ class AutomaticProfileModelsPanel:
             path_label.setText(str(model_path) if model_path is not None else "Model required")
             path_label.setToolTip(str(model_path) if model_path is not None else "")
             layout.addWidget(path_label, 1)
+            layout.addWidget(self._shuffle_picker(region, model_path, inspected))
             file_button = QPushButton("Choose config")
             file_button.setToolTip(f"Choose config.yaml from the trained DeepLabCut project for {region}.")
             file_button.clicked.connect(lambda _checked=False, name=region: self._choose_model_file(name))

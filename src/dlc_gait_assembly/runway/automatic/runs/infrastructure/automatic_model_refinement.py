@@ -6,15 +6,14 @@ from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
-import yaml
 from PySide6.QtCore import QLockFile
 
 from dlc_gait_assembly.runway.automatic.review.business.automatic_label_correction import marker_columns
 from dlc_gait_assembly.runway.automatic.review.infrastructure.automatic_label_artifacts import load_label_artifacts
-from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_project_rules import training_dataset_identity
 from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_bridge_client import run_bridge_request
 from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_project_reader import (
     original_deeplabcut_config,
+    select_deeplabcut_model,
     validate_deeplabcut_project,
 )
 from dlc_gait_assembly.shared.business.execution_feedback_contracts import ExecutionProgress
@@ -31,19 +30,18 @@ def fine_tune_models(sources, edits, epochs, revision, progress):
         updates = by_recording.get((source.region, source.video))
         if not updates:
             continue
-        used = validate_deeplabcut_project(source.model)
+        model = select_deeplabcut_model(source.model, source.shuffle)
         _table, raw, offset = load_label_artifacts(source)
         labels = marker_columns(raw)
         updates = [edit for edit in updates if edit.marker in labels]
         if not updates:
             continue
-        origin = original_deeplabcut_config(used)
+        origin = original_deeplabcut_config(model.config_path)
         scorer = str(raw.columns.get_level_values(0)[0])
-        model_identity = training_dataset_identity(yaml.safe_load(used.read_text(encoding="utf-8")))
         # Different region entries may share one original project and snapshot.
         project = projects.setdefault(
-            (origin.parent, model_identity, scorer),
-            {"used": used, "origin": origin, "recordings": [], "regions": set()},
+            (origin.parent, model.training_identity, scorer),
+            {"model": model, "origin": origin, "recordings": [], "regions": set()},
         )
         project["recordings"].append(
             {
@@ -63,6 +61,7 @@ def fine_tune_models(sources, edits, epochs, revision, progress):
         if not lock.tryLock(0):
             raise RuntimeError(f"Another run is fine-tuning {root.name}, or the original project is read-only.")
         try:
+            model = project["model"]
 
             def report(current, total, message, project_index=index, name=root.name):
                 overall = (project_index + current / max(1, total)) / len(projects)
@@ -73,7 +72,9 @@ def fine_tune_models(sources, edits, epochs, revision, progress):
                     "id": f"{revision}-{index + 1}",
                     "epochs": epochs,
                     "scorer": scorer,
-                    "used_config": str(project["used"]),
+                    "used_config": str(model.config_path),
+                    "shuffle": model.shuffle,
+                    "trainingsetindex": model.trainingsetindex,
                     "source_config": str(project["origin"]),
                     "recordings": project["recordings"],
                 },
@@ -90,11 +91,10 @@ def fine_tune_models(sources, edits, epochs, revision, progress):
                 if source.region in models or source.region in project["regions"]:
                     continue
                 try:
-                    used = validate_deeplabcut_project(source.model)
-                    if original_deeplabcut_config(used).parent != root:
+                    other_model = select_deeplabcut_model(source.model, source.shuffle)
+                    if original_deeplabcut_config(other_model.config_path).parent != root:
                         continue
-                    other_model = training_dataset_identity(yaml.safe_load(used.read_text(encoding="utf-8")))
-                    if model_identity != other_model:
+                    if model_identity != other_model.training_identity:
                         continue
                 except (OSError, ValueError):
                     continue

@@ -9,6 +9,7 @@ from pathlib import Path
 from dlc_gait_assembly.runway.automatic.profiles.business.automatic_profile_contracts import (
     DEFAULT_FINE_TUNE_EPOCHS,
     AutomatedPipelineProfile,
+    validate_deeplabcut_shuffles,
     validate_fine_tune_epochs,
 )
 from dlc_gait_assembly.runway.automatic.profiles.infrastructure.automatic_profile_asset_store import (
@@ -32,6 +33,7 @@ def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
     analysis_manifest = resolve_stored_profile_path(profile_dir, analysis_relative) if analysis_relative else None
     knee_relative = data["assets"].get("knee_manifest")
     knee_manifest = resolve_stored_profile_path(profile_dir, knee_relative) if knee_relative else None
+    shuffles = {}
     if format_version == 1:
         legacy_model = resolve_stored_profile_path(profile_dir, data["assets"]["deeplabcut_model"])
         models = {region: legacy_model for region in regions_from_processing_manifest(manifest)}
@@ -40,6 +42,7 @@ def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
             str(item["region"]): resolve_stored_profile_path(profile_dir, item["path"])
             for item in data["deeplabcut_models"]
         }
+        shuffles = {str(item["region"]): item["shuffle"] for item in data["deeplabcut_models"] if "shuffle" in item}
     if (
         manifest is not None
         and (not manifest.exists())
@@ -72,6 +75,7 @@ def read_profile_metadata(metadata_path: Path) -> AutomatedPipelineProfile:
         workspace_state=workspace_state,
         labeled_video_confidence=confidence,
         fine_tune_epochs=validate_fine_tune_epochs(pipeline_options.get("fine_tune_epochs", DEFAULT_FINE_TUNE_EPOCHS)),
+        deeplabcut_shuffles=validate_deeplabcut_shuffles(shuffles, models),
     )
 
 

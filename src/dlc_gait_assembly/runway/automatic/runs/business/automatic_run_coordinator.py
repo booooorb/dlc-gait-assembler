@@ -138,7 +138,8 @@ class AutomatedPipelineRun:
     def build_dlc_jobs(self):
         return [
             DlcAnalysisJob(
-                region, self.profile.deeplabcut_models[region], tuple(paths), self.profile.labeled_video_confidence
+                region, self.profile.deeplabcut_models[region], tuple(paths), self.profile.labeled_video_confidence,
+                shuffle=self.profile.deeplabcut_shuffles.get(region),
             )
             for region, paths in self.processed_by_region.items()
         ]
@@ -212,8 +213,10 @@ class AutomatedPipelineRun:
 
     def label_sources(self):
         return tuple(
-            LabelReviewSource(result.region, pair.video_path, pair.csv_path, pair.h5_path,
-                              self.profile.deeplabcut_models[result.region])
+            LabelReviewSource(
+                result.region, pair.video_path, pair.csv_path, pair.h5_path, self.profile.deeplabcut_models[result.region],
+                shuffle=self.profile.deeplabcut_shuffles.get(result.region),
+            )
             for result in self.dlc_results
             for pair in pair_dlc_result(result)
             if pair.is_paired

@@ -26,6 +26,7 @@ class LabelReviewSource:
     csv: Path
     h5: Path
     model: Path
+    shuffle: int | None = None
 
 
 @dataclass(frozen=True)

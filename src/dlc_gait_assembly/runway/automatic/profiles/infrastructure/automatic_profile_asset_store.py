@@ -26,6 +26,7 @@ from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_projec
     DLC_MODEL_FOLDER_NAMES,
     DLC_TRAINING_DATASET_FOLDER_NAME,
     SOURCE_PROJECT_FILENAME,
+    deeplabcut_model_choices,
     deeplabcut_source_reference,
     validate_deeplabcut_project,
 )
@@ -117,6 +118,7 @@ def normalize_incomplete_profile_draft(draft: ProfileDraft) -> ProfileDraft:
         knee_correction_enabled=bool(draft.knee_correction_enabled),
         labeled_video_confidence=draft.labeled_video_confidence,
         fine_tune_epochs=draft.fine_tune_epochs,
+        deeplabcut_shuffles=draft.deeplabcut_shuffles,
     )
 
 
@@ -136,8 +138,8 @@ def copy_profile_analysis(source: Path, asset_dir: Path) -> Path:
     return write_analysis_manifest(asset_dir / source.name, settings)
 
 
-def copy_profile_deeplabcut_project(source: Path, destination: Path, *, reuse_owned_files=False) -> Path:
-    config_path = windows_filesystem_path(validate_deeplabcut_project(source))
+def copy_profile_deeplabcut_project(source: Path, destination: Path, *, reuse_owned_files=False, shuffle=None) -> Path:
+    config_path = windows_filesystem_path(validate_deeplabcut_project(source, shuffle))
     project_root = config_path.parent
     destination.mkdir(parents=True)
     shutil.copy2(config_path, destination / "config.yaml")
@@ -210,5 +212,6 @@ class AutomaticManualAssetWriter:
 
 class AutomaticProfileAssetReader:
     regions = staticmethod(regions_from_processing_manifest)
+    deeplabcut_model_choices = staticmethod(deeplabcut_model_choices)
     gait_settings = staticmethod(read_analysis_manifest)
     knee_settings = staticmethod(knee_settings_from_manifest)

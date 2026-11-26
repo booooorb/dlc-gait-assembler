@@ -51,6 +51,9 @@ class AutomaticProfileAssetsPanel:
         self.view.profile_state.manifest_source = path
         self.view.profile_state.regions = regions
         self.view.profile_state.model_sources = {region: previous_models.get(region) for region in regions}
+        self.view.profile_state.model_shuffles = {
+            region: shuffle for region, shuffle in self.view.profile_state.model_shuffles.items() if region in regions
+        }
         self._refresh_paths()
         self.view.profile_models._render_model_rows()
         self.view.status_label.setText(f"Detected {len(regions)} region(s). Assign one model per region below.")

@@ -713,9 +713,13 @@ class WorkflowProfileController:
                         raise ValueError("Could not create a usable calibration map.")
                     gait.analysis.settings.calibration_scale(assets.calibration_map)
                 regions = self.use_cases.processing_regions(assets.processing_manifest) if assets.processing_manifest else ()
+                models = {
+                    region: path for region, path in automatic.profile_state.model_sources.items()
+                    if path is not None and region in regions
+                }
                 profile = self.use_cases.save(
                     name or self.active.name, assets.processing_manifest, assets.calibration_map,
-                    {region: path for region, path in automatic.profile_state.model_sources.items() if path is not None and region in regions},
+                    models,
                     profile_id=None if name else self.active.id,
                     analysis_manifest=assets.analysis_manifest, knee_manifest=assets.knee_manifest,
                     gait_analysis_enabled=automatic.include_gait_analysis_button.isChecked(),
@@ -723,6 +727,10 @@ class WorkflowProfileController:
                     allow_incomplete=True, workspace_state=state,
                     labeled_video_confidence=automatic.profiles.labeled_video_confidence(),
                     fine_tune_epochs=automatic.profiles.fine_tune_epochs(),
+                    deeplabcut_shuffles={
+                        region: shuffle for region, shuffle in automatic.profile_state.model_shuffles.items()
+                        if region in models
+                    },
                 )
         except (OSError, ValueError, TypeError) as exc:
             QMessageBox.warning(self.window, "Could not save workflow", str(exc))

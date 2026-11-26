@@ -3,9 +3,11 @@
 from pathlib import Path
 from typing import Protocol
 
+from dlc_gait_assembly.runway.manual.deeplabcut.business.deeplabcut_job_contracts import DlcTrainedModel
+
 
 class DeepLabCutProjectPort(Protocol):
-    def validate_project(self, path: Path) -> Path: ...
+    def select_model(self, path: Path, shuffle: int | None = None) -> DlcTrainedModel: ...
 
 
 class DeepLabCutBridgePort(Protocol):

@@ -89,6 +89,7 @@ def persist_run_manifest(run, result: AutomatedPipelineResult) -> None:
         "labeled_video_confidence": run.profile.labeled_video_confidence,
         "fine_tune_epochs": run.profile.fine_tune_epochs,
         "deeplabcut_models": run.profile.deeplabcut_models,
+        "deeplabcut_shuffles": run.profile.deeplabcut_shuffles,
         "corrected_frame_count": len({edit.key[:3] for edit in run.label_edits}),
         "output_folder": str(run.output_folder),
         "folders": {name: str(path) for (name, path) in folders.items()},

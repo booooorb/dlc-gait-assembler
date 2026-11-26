@@ -35,19 +35,21 @@ def _profile_sources(tmp_path: Path, suffix: str = "") -> dict:
     calibration.write_text(f'''{{"calibration": "{suffix or "first"}"}}''', encoding="utf-8")
     models = {}
     for region in ("Front", "Rear"):
+        shuffle = 1 if region == "Front" else 7
+        shuffle_name = f"fixtureJan1-trainset95shuffle{shuffle}"
         model = tmp_path / f"model_{region.lower()}{suffix}"
         model.mkdir()
         (model / "config.yaml").write_text(
             "Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95]\n", encoding="utf-8"
         )
-        train_folder = model / "dlc-models-pytorch" / "iteration-0" / "fixture-trainset95shuffle1" / "train"
+        train_folder = model / "dlc-models-pytorch" / "iteration-0" / shuffle_name / "train"
         train_folder.mkdir(parents=True)
         (train_folder / "pytorch_config.yaml").write_text("model: fixture\n", encoding="utf-8")
         (train_folder / "snapshot-1.pt").write_text(f"weights-{region.lower()}-{suffix or 'first'}", encoding="utf-8")
         metadata_folder = model / "training-datasets" / "iteration-0" / "UnaugmentedDataSet_fixtureJan1"
         metadata_folder.mkdir(parents=True)
         (metadata_folder / "metadata.yaml").write_text(
-            "shuffles:\n  fixture-trainset95shuffle1:\n    train_fraction: 0.95\n    index: 1\n    engine: pytorch\n",
+            f"shuffles:\n  {shuffle_name}:\n    train_fraction: 0.95\n    index: {shuffle}\n    engine: pytorch\n",
             encoding="utf-8",
         )
         videos_folder = model / "videos"
