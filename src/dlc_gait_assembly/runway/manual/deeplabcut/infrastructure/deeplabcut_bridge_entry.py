@@ -28,6 +28,17 @@ def run_request(request_path: Path) -> None:
     Path(request["result_path"]).write_text(json.dumps({"results": results}), encoding="utf-8")
 
 
+def model_options(job, deeplabcut):
+    options = {key: job[key] for key in ("shuffle", "trainingsetindex") if key in job}
+    override = job.get("engine_override")
+    if override is not None:
+        engine = getattr(deeplabcut, "Engine", None)
+        if engine is None:
+            raise RuntimeError("Recovered PyTorch models require DeepLabCut 3.")
+        options["engine"] = engine(override)
+    return options
+
+
 def run_analysis_jobs(jobs: list[dict], deeplabcut) -> list[dict]:
     results = []
     for job in jobs:
@@ -38,7 +49,7 @@ def run_analysis_jobs(jobs: list[dict], deeplabcut) -> list[dict]:
         before = {path.resolve() for path in analysis_folder.iterdir() if path.is_file()}
         deeplabcut.analyze_videos(
             str(config_path), [str(path) for path in video_paths], destfolder=str(analysis_folder), save_as_csv=True,
-            **{key: job[key] for key in ("shuffle", "trainingsetindex") if key in job},
+            **model_options(job, deeplabcut),
         )
         produced = sorted(
             path.resolve() for path in analysis_folder.iterdir() if path.is_file() and path.resolve() not in before
@@ -96,7 +107,7 @@ def run_labeled_video_jobs(jobs: list[dict], deeplabcut) -> list[dict]:
         before = {path.resolve() for path in analysis_folder.iterdir() if path.is_file()}
         render_labeled_videos(
             deeplabcut.create_labeled_video, config_path, video_paths, analysis_folder, job.get("pcutoff"),
-            **{key: job[key] for key in ("shuffle", "trainingsetindex") if key in job},
+            **model_options(job, deeplabcut),
         )
         produced = sorted(
             path.resolve() for path in analysis_folder.iterdir() if path.is_file() and path.resolve() not in before

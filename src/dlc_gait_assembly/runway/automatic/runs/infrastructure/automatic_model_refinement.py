@@ -75,6 +75,7 @@ def fine_tune_models(sources, edits, epochs, revision, progress):
                     "used_config": str(model.config_path),
                     "shuffle": model.shuffle,
                     "trainingsetindex": model.trainingsetindex,
+                    "engine_override": model.engine_override,
                     "source_config": str(project["origin"]),
                     "recordings": project["recordings"],
                 },

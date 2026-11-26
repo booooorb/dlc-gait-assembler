@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QPushButt
 from dlc_gait_assembly.shared.client.qt_circular_progress import CircularProgressIndicator
 from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 from dlc_gait_assembly.runway.manual.deeplabcut.infrastructure.deeplabcut_project_reader import (
+    select_deeplabcut_model,
     validate_deeplabcut_project,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_settings_manifest_store import (
@@ -132,6 +133,36 @@ def test_profile_store_packages_complete_project_when_config_file_is_selected(tm
         assert next(stored_project.rglob("pytorch_config.yaml")).is_file()
         assert next(stored_project.rglob("snapshot-1.pt")).is_file()
         assert next(stored_project.rglob("metadata.yaml")).is_file()
+
+
+@pytest.mark.parametrize("metadata_text", [
+    None,
+    "shuffles: {}\n",
+    "shuffles: [",
+    "shuffles:\n  obsolete:\n    train_fraction: 0.8\n    index: 2\n    engine: pytorch\n",
+    "shuffles:\n  fixtureJan1-trainset95shuffle1:\n    train_fraction: '0.95'\n    index: 1\n    engine: pytorch\n",
+])
+def test_profile_store_recovers_pytorch_shuffle_from_files(tmp_path, metadata_text):
+    store = AutomatedProfileStore(tmp_path / "profiles")
+    sources = _profile_sources(tmp_path)
+    model = sources["deeplabcut_models"]["Front"]
+    metadata = next(model.rglob("metadata.yaml"))
+    if metadata_text is None:
+        metadata.unlink()
+    else:
+        metadata.write_text(metadata_text, encoding="utf-8")
+    pose = next(model.rglob("pytorch_config.yaml")).parent.parent / "test" / "pose_cfg.yaml"
+    pose.parent.mkdir()
+    pose.write_text("net_type: resnet_50\n", encoding="utf-8")
+
+    profile = _save(store, "Recovered shuffle", sources)
+    stored = profile.deeplabcut_models["Front"]
+    selected = select_deeplabcut_model(stored, 1)
+    assert selected.training_identity == (0, 0.95, 1)
+    assert selected.engine_override == "pytorch"
+    assert select_deeplabcut_model(profile.deeplabcut_models["Rear"]).engine_override is None
+    for path in (metadata, stored / metadata.relative_to(model)):
+        assert (path.read_text(encoding="utf-8") if path.is_file() else None) == metadata_text
 
 
 def test_workflow_folder_can_move_to_another_profile_store(tmp_path):

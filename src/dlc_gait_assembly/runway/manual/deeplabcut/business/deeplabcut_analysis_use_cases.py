@@ -35,6 +35,7 @@ def run_deeplabcut_analysis(
                 "config_path": str(model.config_path),
                 "shuffle": model.shuffle,
                 "trainingsetindex": model.trainingsetindex,
+                "engine_override": model.engine_override,
                 "video_paths": [str(ports.artifacts.resolve(path)) for path in job.video_paths],
                 "analysis_folder": str(analysis_folder),
             }
@@ -92,6 +93,7 @@ def run_deeplabcut_labeled_video_creation(
                 "config_path": str(model.config_path),
                 "shuffle": model.shuffle,
                 "trainingsetindex": model.trainingsetindex,
+                "engine_override": model.engine_override,
                 "video_paths": [str(path) for path in job.video_paths],
                 "analysis_folder": str(next(iter(coordinate_folders))),
                 "labeled_videos_folder": str(labeled_videos_folder),

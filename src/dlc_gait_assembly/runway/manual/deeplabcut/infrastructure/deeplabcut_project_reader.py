@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 import yaml
@@ -89,7 +90,7 @@ def select_deeplabcut_model(model_path: str | Path, shuffle: int | None = None) 
 
 
 def deeplabcut_model_choices(model_path: str | Path) -> tuple[DlcTrainedModel, ...]:
-    """Return trained models in config fraction order, with shuffle 1 preferred at each fraction."""
+    """Prefer registered shuffles and recover unambiguous inference models from disk."""
     config_path = resolve_deeplabcut_config(model_path)
     config_file = windows_filesystem_path(config_path)
     project_root = config_file.parent
@@ -102,35 +103,53 @@ def deeplabcut_model_choices(model_path: str | Path) -> tuple[DlcTrainedModel, .
         raise ValueError(f'Check Task, date, iteration and TrainingFraction in "{config_path}".')
     iteration, project_name, fractions = identity
     iteration_folder = f"iteration-{iteration}"
-    trained = sorted(
-        trained_shuffles(project_root, iteration_folder, project_name),
-        key=lambda item: (item[1] != 1, item[1]),
-    )
+    trained = {}
+    for percent, shuffle, engine, folder in trained_shuffles(project_root, iteration_folder, project_name):
+        trained.setdefault((percent, shuffle), {})[engine] = folder
     if not trained:
         raise FileNotFoundError(f'No complete trained model for {iteration_folder} was found next to "{config_path}".')
 
     dataset = project_root / DLC_TRAINING_DATASET_FOLDER_NAME / iteration_folder / f"UnaugmentedDataSet_{project_name}"
     metadata_path = dataset / "metadata.yaml"
-    metadata = shuffle_metadata_entries(read_project_yaml(metadata_path)) if metadata_path.is_file() else None
+    metadata_exists = metadata_path.is_file()
+    metadata = {}
+    if metadata_exists:
+        try:
+            metadata = shuffle_metadata_entries(read_project_yaml(metadata_path))
+        except (OSError, ValueError):
+            # Inference can still identify the engine from complete model files.
+            pass
+    percent_counts = Counter(int(100 * fraction) for fraction in set(fractions))
+    shuffles = sorted(trained, key=lambda item: (item[1] != 1, item[1]))
     choices = {}
+    recovered = {}
     for trainingsetindex, fraction in enumerate(fractions):
-        for percent, shuffle, engine in trained:
+        for percent, shuffle in shuffles:
             if percent != int(100 * fraction):
                 continue
-            if metadata is None:
+            engines = trained[percent, shuffle]
+            registered = metadata.get((fraction, shuffle))
+            if not metadata_exists and "tensorflow" in engines:
                 documentation = dataset / f"Documentation_data-{config['Task']}_{percent}shuffle{shuffle}.pickle"
-                matches = engine == "tensorflow" and documentation.is_file()
-            else:
-                matches = (fraction, shuffle, engine) in metadata
-            if matches:
-                # A numbered override uses the first configured fraction that has that trained shuffle.
+                if documentation.is_file():
+                    registered = "tensorflow"
+            if registered in engines:
                 choices.setdefault(shuffle, DlcTrainedModel(config_path, iteration, fraction, trainingsetindex, shuffle))
+            elif (
+                engines.keys() == {"pytorch"} and percent_counts[percent] == 1
+                and has_pytorch_inference_files(engines["pytorch"])
+            ):
+                recovered.setdefault(shuffle, DlcTrainedModel(
+                    config_path, iteration, fraction, trainingsetindex, shuffle, engine_override="pytorch",
+                ))
 
+    for shuffle, model in recovered.items():
+        choices.setdefault(shuffle, model)
     if choices:
         return tuple(choices.values())
     raise ValueError(
-        f'No trained shuffle in "{config_path}" matches the configured TrainingFraction and training metadata. '
-        f'Select the original DeepLabCut project or restore "{dataset.relative_to(project_root)}".'
+        f'No trained shuffle in "{config_path}" can be identified for the configured TrainingFraction. '
+        f'Check the model folders for {iteration_folder} or restore "{dataset.relative_to(project_root)}".'
     )
 
 
@@ -151,7 +170,18 @@ def trained_shuffles(root, iteration_folder, project_name):
                 weight.is_file() for glob in weight_patterns for weight in train.glob(glob)
             ):
                 percent, shuffle = map(int, match.groups())
-                yield percent, shuffle, engine
+                yield percent, shuffle, engine, model
+
+
+def has_pytorch_inference_files(folder: Path) -> bool:
+    if not (folder / "test" / "pose_cfg.yaml").is_file():
+        return False
+    train = folder / "train"
+    return any(
+        path.is_file() and path.stat().st_size > 0
+        for pattern in ("snapshot-*.pt", "snapshot-*.pth") for path in train.glob(pattern)
+        if re.fullmatch(r"snapshot-(?:best-)?\d+", path.stem)
+    )
 
 
 class DeepLabCutProjectReader:

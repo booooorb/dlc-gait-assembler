@@ -226,7 +226,8 @@ def test_deeplabcut_config_resolution_requires_one_project(tmp_path):
 
 
 @pytest.mark.parametrize("cutoff", [None, 0.0, 0.83])
-def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, monkeypatch, cutoff):
+@pytest.mark.parametrize("engine_override", [None, "pytorch"])
+def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, monkeypatch, cutoff, engine_override):
     video = tmp_path / "mouse.mp4"
     video.write_bytes(b"video")
     analysis_folder = tmp_path / "run" / "analyzed_videos" / "Bottom"
@@ -243,6 +244,7 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
                         "config_path": str(tmp_path / "config.yaml"),
                         "shuffle": 7,
                         "trainingsetindex": 1,
+                        "engine_override": engine_override,
                         "video_paths": [str(video)],
                         "analysis_folder": str(analysis_folder),
                     }
@@ -253,23 +255,27 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
         encoding="utf-8",
     )
 
-    def fake_analyze(_config, videos, destfolder, save_as_csv, shuffle, trainingsetindex):
+    def fake_analyze(_config, videos, destfolder, save_as_csv, shuffle, trainingsetindex, engine=None):
         assert save_as_csv is True
         assert (shuffle, trainingsetindex) == (7, 1)
+        assert engine == engine_override
         destination = Path(destfolder)
         for source in videos:
             stem = Path(source).stem
             (destination / f"{stem}DLC_fixture.csv").write_text("csv", encoding="utf-8")
             (destination / f"{stem}DLC_fixture.h5").write_bytes(b"h5")
 
-    def fake_create_labeled(_config, videos, destfolder, shuffle, trainingsetindex, pcutoff=None):
+    def fake_create_labeled(_config, videos, destfolder, shuffle, trainingsetindex, pcutoff=None, engine=None):
         assert pcutoff == cutoff
         assert (shuffle, trainingsetindex) == (7, 1)
+        assert engine == engine_override
         destination = Path(destfolder)
         for source in videos:
             (destination / f"{Path(source).stem}DLC_fixture_labeled.mp4").write_bytes(b"labeled")
 
-    fake_deeplabcut = SimpleNamespace(analyze_videos=fake_analyze, create_labeled_video=fake_create_labeled)
+    fake_deeplabcut = SimpleNamespace(
+        analyze_videos=fake_analyze, create_labeled_video=fake_create_labeled, Engine=lambda engine: engine
+    )
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.setitem(sys.modules, "deeplabcut", fake_deeplabcut)
     _run_request(request_path)
@@ -288,6 +294,7 @@ def test_deeplabcut_bridge_separates_analyzed_data_and_labeled_videos(tmp_path, 
                         "config_path": str(tmp_path / "config.yaml"),
                         "shuffle": 7,
                         "trainingsetindex": 1,
+                        "engine_override": engine_override,
                         "video_paths": [str(video)],
                         "analysis_folder": str(analysis_folder),
                         "labeled_videos_folder": str(labeled_folder),
@@ -585,7 +592,7 @@ def test_deeplabcut_project_validation_rejects_config_without_trained_model(tmp_
         raise AssertionError("Expected an incomplete DeepLabCut project to be rejected")
 
 
-def test_deeplabcut_project_validation_rejects_empty_shuffle_metadata(tmp_path):
+def test_deeplabcut_project_validation_rejects_incomplete_model_with_empty_metadata(tmp_path):
     project = tmp_path / "model"
     train = project / "dlc-models-pytorch" / "iteration-0" / "fixtureJan1-trainset95shuffle1" / "train"
     train.mkdir(parents=True)
@@ -596,34 +603,36 @@ def test_deeplabcut_project_validation_rejects_empty_shuffle_metadata(tmp_path):
     metadata = project / "training-datasets" / "iteration-0" / "UnaugmentedDataSet_fixtureJan1" / "metadata.yaml"
     metadata.parent.mkdir(parents=True)
     metadata.write_text("shuffles: {}\n", encoding="utf-8")
-    try:
+    with pytest.raises(ValueError, match="can be identified for the configured TrainingFraction"):
         validate_deeplabcut_project(project)
-    except ValueError as exc:
-        assert "matches the configured TrainingFraction and training metadata" in str(exc)
-    else:
-        raise AssertionError("Expected empty shuffle metadata to be rejected")
 
 
-def test_deeplabcut_project_validation_rejects_wrong_shuffle_metadata(tmp_path):
+@pytest.mark.parametrize("conflict", ["engine", "fraction"])
+def test_deeplabcut_project_validation_rejects_ambiguous_recovery(tmp_path, conflict):
     project = tmp_path / "model"
     train = project / "dlc-models-pytorch" / "iteration-0" / "fixtureJan1-trainset95shuffle1" / "train"
     train.mkdir(parents=True)
     config = project / "config.yaml"
-    config.write_text("Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95]\n", encoding="utf-8")
+    fractions = [0.95, 0.951] if conflict == "fraction" else [0.95]
+    config.write_text(f"Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: {fractions}\n", encoding="utf-8")
     (train / "pytorch_config.yaml").write_text("model: fixture\n", encoding="utf-8")
     (train / "snapshot-10.pt").write_text("weights", encoding="utf-8")
+    test = train.parent / "test"
+    test.mkdir()
+    (test / "pose_cfg.yaml").write_text("net_type: resnet_50\n", encoding="utf-8")
+    if conflict == "engine":
+        tensorflow = project / "dlc-models" / "iteration-0" / train.parent.name / "train"
+        tensorflow.mkdir(parents=True)
+        (tensorflow / "pose_cfg.yaml").write_text("net_type: resnet_50\n", encoding="utf-8")
+        (tensorflow / "snapshot-10.index").write_bytes(b"index")
     metadata = project / "training-datasets" / "iteration-0" / "UnaugmentedDataSet_fixtureJan1" / "metadata.yaml"
     metadata.parent.mkdir(parents=True)
     metadata.write_text(
         "shuffles:\n  fixtureJan1-trainset95shuffle2:\n    train_fraction: 0.95\n    index: 2\n    engine: pytorch\n",
         encoding="utf-8",
     )
-    try:
+    with pytest.raises(ValueError, match="can be identified for the configured TrainingFraction"):
         validate_deeplabcut_project(project)
-    except ValueError as exc:
-        assert "matches the configured TrainingFraction and training metadata" in str(exc)
-    else:
-        raise AssertionError("Expected mismatched shuffle metadata to be rejected")
 
 
 def test_deeplabcut_progress_parser_reports_analysis_and_label_rendering():

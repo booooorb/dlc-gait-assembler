@@ -165,7 +165,8 @@ def refine(request):
     base = auxiliaryfunctions.read_config(str(used_config))
     shuffle = request.get("shuffle", 1)
     trainingsetindex = request.get("trainingsetindex", 0)
-    engine = get_shuffle_engine(base, trainingsetindex, shuffle)
+    override = request.get("engine_override")
+    engine = deeplabcut.Engine(override) if override is not None else get_shuffle_engine(base, trainingsetindex, shuffle)
     if engine != deeplabcut.Engine.PYTORCH or base.get("multianimalproject", False):
         raise ValueError("Fine-tuning requires a single-animal DeepLabCut 3 PyTorch project.")
     original = auxiliaryfunctions.read_config(str(project_config))

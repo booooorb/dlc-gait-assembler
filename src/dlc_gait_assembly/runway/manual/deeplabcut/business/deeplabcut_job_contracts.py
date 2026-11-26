@@ -13,6 +13,7 @@ class DlcTrainedModel:
     training_fraction: float
     trainingsetindex: int
     shuffle: int
+    engine_override: str | None = None
 
     @property
     def training_identity(self) -> tuple[int, float, int]:
