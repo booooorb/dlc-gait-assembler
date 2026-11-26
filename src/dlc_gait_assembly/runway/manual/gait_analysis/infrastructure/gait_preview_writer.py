@@ -13,12 +13,14 @@ from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.figures.gait_s
     GaitStickplotRenderer,
 )
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_result_writer import GaitResultWriter
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 def write_gait_stickplot_previews(inputs, output_folder, settings, progress_callback=None):
     preview = GaitPreviewUseCases(GaitResultWriter(), GaitStickplotRenderer())
     output_folder = Path(output_folder)
-    output_folder.mkdir(parents=True, exist_ok=True)
+    filesystem_folder = windows_filesystem_path(output_folder)
+    filesystem_folder.mkdir(parents=True, exist_ok=True)
     results = []
     for index, item in enumerate(inputs, start=1):
         if isinstance(item, AlmaViewCsvSet):
@@ -35,7 +37,7 @@ def write_gait_stickplot_previews(inputs, output_folder, settings, progress_call
         for label, svg in plots:
             view_name = label.split(" · ", 1)[0].lower()
             destination = output_folder / f"{index:03d}_{Path(name).name}_{view_name}_stickplot.svg"
-            destination.write_bytes(svg)
+            (filesystem_folder / destination.name).write_bytes(svg)
             files.append(destination)
         results.append(AlmaRunResult(source, tuple(files), messages))
     return results

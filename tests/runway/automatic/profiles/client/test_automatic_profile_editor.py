@@ -30,23 +30,24 @@ from dlc_gait_assembly.runway.manual.knee_correction.business.knee_correction_co
 from dlc_gait_assembly.runway.manual.gait_analysis.business.alma.alma_analysis_settings import AlmaSettings
 
 
-def _profile_sources(tmp_path: Path, suffix: str = "") -> dict:
+def _profile_sources(tmp_path: Path, suffix: str = "", *, task: str = "fixture") -> dict:
     calibration = tmp_path / f"conversion_factor_map{suffix}.json"
     calibration.write_text(f'''{{"calibration": "{suffix or "first"}"}}''', encoding="utf-8")
     models = {}
+    project_name = f"{task}Jan1"
     for region in ("Front", "Rear"):
         shuffle = 1 if region == "Front" else 7
-        shuffle_name = f"fixtureJan1-trainset95shuffle{shuffle}"
+        shuffle_name = f"{project_name}-trainset95shuffle{shuffle}"
         model = tmp_path / f"model_{region.lower()}{suffix}"
         model.mkdir()
         (model / "config.yaml").write_text(
-            "Task: fixture\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95]\n", encoding="utf-8"
+            f"Task: {json.dumps(task)}\ndate: Jan1\niteration: 0\nTrainingFraction: [0.95]\n", encoding="utf-8"
         )
         train_folder = model / "dlc-models-pytorch" / "iteration-0" / shuffle_name / "train"
         train_folder.mkdir(parents=True)
         (train_folder / "pytorch_config.yaml").write_text("model: fixture\n", encoding="utf-8")
         (train_folder / "snapshot-1.pt").write_text(f"weights-{region.lower()}-{suffix or 'first'}", encoding="utf-8")
-        metadata_folder = model / "training-datasets" / "iteration-0" / "UnaugmentedDataSet_fixtureJan1"
+        metadata_folder = model / "training-datasets" / "iteration-0" / f"UnaugmentedDataSet_{project_name}"
         metadata_folder.mkdir(parents=True)
         (metadata_folder / "metadata.yaml").write_text(
             f"shuffles:\n  {shuffle_name}:\n    train_fraction: 0.95\n    index: {shuffle}\n    engine: pytorch\n",
@@ -118,15 +119,16 @@ def test_profile_store_copies_replaces_and_deletes_owned_assets(tmp_path):
     assert store.list_profiles() == []
 
 
-def test_profile_store_packages_complete_project_when_config_file_is_selected(tmp_path):
+@pytest.mark.parametrize("task", ["fixture", "singlevideo double "])
+def test_profile_store_packages_complete_project_when_config_file_is_selected(tmp_path, task):
     store = AutomatedProfileStore(tmp_path / "profiles")
-    sources = _profile_sources(tmp_path)
+    sources = _profile_sources(tmp_path, task=task)
     sources["deeplabcut_models"] = {
         region: model / "config.yaml" for (region, model) in sources["deeplabcut_models"].items()
     }
     profile = _save(store, "Config selections", sources)
     for stored_project in profile.deeplabcut_models.values():
-        assert (stored_project / "config.yaml").is_file()
+        assert validate_deeplabcut_project(stored_project) == stored_project / "config.yaml"
         assert next(stored_project.rglob("pytorch_config.yaml")).is_file()
         assert next(stored_project.rglob("snapshot-1.pt")).is_file()
         assert next(stored_project.rglob("metadata.yaml")).is_file()

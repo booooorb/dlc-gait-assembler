@@ -10,6 +10,7 @@ from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_coordinat
 from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.synchronized_result_writer import (
     write_synchronized_recording,
 )
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 class GaitResultWriter:
@@ -29,7 +30,8 @@ class GaitResultWriter:
         return resolve_calibration_settings(settings, allow_unscaled=isinstance(settings, RustLab1StandaloneSettings))
 
     def prepare(self, output_folder):
-        Path(output_folder).mkdir(parents=True, exist_ok=True)
+        output_folder = windows_filesystem_path(Path(output_folder))
+        output_folder.mkdir(parents=True, exist_ok=True)
         # Fail before expensive calculations when the selected folder is unwritable.
         with tempfile.TemporaryFile(dir=output_folder):
             pass
@@ -37,7 +39,7 @@ class GaitResultWriter:
     def read_table(self, path, **options):
         import pandas as pd
 
-        return pd.read_csv(path, **options)
+        return pd.read_csv(windows_filesystem_path(Path(path)), **options)
 
     def read_views(self, view_set, view_mappings=None):
         import pandas as pd
@@ -45,7 +47,7 @@ class GaitResultWriter:
         return merge_multiview_rustlab1_dataframe(view_set, pd, view_mappings)
 
     def write_table(self, table, path, **options):
-        destination = Path(path)
+        destination = windows_filesystem_path(Path(path))
         with tempfile.NamedTemporaryFile(mode="w", dir=destination.parent, suffix=".csv", delete=False) as stream:
             temporary = Path(stream.name)
         try:
@@ -55,7 +57,7 @@ class GaitResultWriter:
             temporary.unlink(missing_ok=True)
 
     def write_text(self, path, text):
-        Path(path).write_text(text, encoding="utf-8")
+        windows_filesystem_path(Path(path)).write_text(text, encoding="utf-8")
 
     def validate_outputs(self, paths, expected_rows=None):
         import xml.etree.ElementTree as ET
@@ -63,7 +65,7 @@ class GaitResultWriter:
         import pandas as pd
 
         for path in paths:
-            path = Path(path)
+            path = windows_filesystem_path(Path(path))
             if not path.is_file() or path.stat().st_size == 0:
                 raise RuntimeError(f"Export did not create a nonempty file: {path}")
             if path.suffix.lower() == ".svg":
@@ -76,16 +78,22 @@ class GaitResultWriter:
                     raise RuntimeError(f"Exported CSV row count does not match the analysis: {path}")
 
     def exists(self, path):
-        return Path(path).exists()
+        return windows_filesystem_path(Path(path)).exists()
 
     def render_alma(self, parameters, destination, name):
-        return self.figures.render_alma(parameters, destination, name)
+        filesystem_folder = windows_filesystem_path(destination)
+        files = self.figures.render_alma(parameters, filesystem_folder, name)
+        return tuple(destination / path.relative_to(filesystem_folder) for path in files)
 
     def render_rustlab1(self, raw, parameters, extracted, destination, settings, filtering, preprocessed):
-        return self.figures.render_rustlab1(raw, parameters, extracted, destination, settings, filtering, preprocessed)
+        filesystem_folder = windows_filesystem_path(destination)
+        files = self.figures.render_rustlab1(
+            raw, parameters, extracted, filesystem_folder, settings, filtering, preprocessed
+        )
+        return tuple(destination / path.relative_to(filesystem_folder) for path in files)
 
     def render_stickplot(self, prepared, destination):
-        return self.figures.render_stickplot(prepared, destination)
+        return self.figures.render_stickplot(prepared, windows_filesystem_path(destination))
 
     def write_synchronized(self, calculation, view_set, destination):
         return write_synchronized_recording(calculation, view_set, destination)

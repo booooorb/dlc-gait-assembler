@@ -4,11 +4,12 @@ import math
 
 
 def training_dataset_identity(config):
-    task, date = str(config.get("Task", "")).strip(), str(config.get("date", "")).strip()
+    # DeepLabCut uses the original Task and date strings in model and dataset folder names.
+    task, date = str(config.get("Task", "")), str(config.get("date", ""))
     try:
         iteration = int(config.get("iteration", 0))
         fractions = config.get("TrainingFraction")
-        if not task or not date or not isinstance(fractions, list) or not fractions:
+        if not task.strip() or not date.strip() or not isinstance(fractions, list) or not fractions:
             return None
         fractions = tuple(float(fraction) for fraction in fractions)
     except (TypeError, ValueError):

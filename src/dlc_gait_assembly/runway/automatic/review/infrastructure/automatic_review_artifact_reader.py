@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dlc_gait_assembly.runway.automatic.review.infrastructure.automatic_label_artifacts import load_label_artifacts
 from dlc_gait_assembly.shared.infrastructure.packaged_resource_reader import resource_path
+from dlc_gait_assembly.shared.infrastructure.windows_filesystem_paths import windows_filesystem_path
 
 
 class AutomaticReviewArtifactReader:
@@ -16,7 +17,7 @@ class AutomaticReviewArtifactReader:
         return resource_path("analysis_previews", "alma", "stickplot.svg")
 
     def exists(self, path: Path) -> bool:
-        return path.is_file()
+        return windows_filesystem_path(path).is_file()
 
     def read_text(self, path: Path) -> str:
         return path.read_text(encoding="utf-8")
@@ -32,5 +33,6 @@ class AutomaticReviewArtifactReader:
     def image_bytes(self, path):
         from dlc_gait_assembly.shared.infrastructure.svg_preview_sanitizer import qt_safe_svg_bytes
 
-        data = Path(path).read_bytes()
-        return qt_safe_svg_bytes(data) if Path(path).suffix.lower() == ".svg" else data
+        path = Path(path)
+        data = windows_filesystem_path(path).read_bytes()
+        return qt_safe_svg_bytes(data) if path.suffix.lower() == ".svg" else data

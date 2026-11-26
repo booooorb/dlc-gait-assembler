@@ -59,7 +59,7 @@ class AutomaticRunStorage:
     write_manifest = staticmethod(persist_run_manifest)
 
     def is_file(self, path):
-        return Path(path).is_file()
+        return windows_filesystem_path(Path(path)).is_file()
 
     def resolve_video_paths(self, paths):
         return tuple(Path(path).expanduser().resolve() for path in paths)
@@ -76,7 +76,10 @@ class AutomaticRunStorage:
             run.gait_analysis_folder,
         )
         run_folder = run.output_folder
-        if stage in (AutomatedStage.DEEPLABCUT_ANALYSIS, AutomatedStage.LABELED_VIDEOS):
+        if stage in (
+            AutomatedStage.DEEPLABCUT_ANALYSIS, AutomatedStage.LABELED_VIDEOS,
+            AutomatedStage.STICKPLOT, AutomatedStage.GAIT_ANALYSIS,
+        ):
             run_folder = windows_filesystem_path(run_folder)
         folder = run_folder / folders[stage].relative_to(run.output_folder)
         partial_paths = list(folder.iterdir())

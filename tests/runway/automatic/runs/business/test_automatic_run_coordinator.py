@@ -415,6 +415,84 @@ def test_run_continues_other_videos_and_reopens_at_the_last_checkpoint(tmp_path,
     assert not complete.can_resume
 
 
+def test_resume_writes_and_reviews_long_stickplot_and_gait_paths(tmp_path, monkeypatch, automatic_adapters, alma_fixtures_dir):
+    import shutil
+
+    from dlc_gait_assembly.runway.automatic.review.infrastructure import automatic_review_artifact_reader
+    from dlc_gait_assembly.runway.automatic.runs.infrastructure import automatic_run_storage
+    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure import gait_preview_writer, gait_result_writer
+    from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_scientific_runtime_executor import (
+        run_alma_gait_analysis_in_process,
+    )
+
+    video = tmp_path / ("mouse_" + "recording_segment-" * 3 + "processed.mp4")
+    video.touch()
+    csv = tmp_path / f"{video.stem}DLC_Resnet50_right (mirror)Sep6shuffle1_snapshot_best-230.csv"
+    shutil.copyfile(alma_fixtures_dir / "alma_edge_cases_filtered.csv", windows_filesystem_path(csv))
+    h5 = csv.with_suffix(".h5")
+    windows_filesystem_path(h5).touch()
+    labeled = tmp_path / "labeled.mp4"
+    labeled.touch()
+    profile = AutomatedPipelineProfile(
+        "pilot", "Right side pilot", write_video_settings_manifest(tmp_path / "video.json", ProcessingOptions()),
+        None, {"Right": tmp_path / "model"},
+        write_analysis_manifest(tmp_path / "gait.json", AlmaSettings(
+            input_mode="Single side view", analysis_type="Spontaneous walking", pixels_per_cm=50.0,
+            likelihood_threshold=0.0, output_format="alma",
+        )),
+    )
+    automatic_adapters.operations.gait = run_alma_gait_analysis_in_process
+    output_root = tmp_path / "runs" / ("x" * 60)
+    run = create_automatic_run(profile, [video], tmp_path, output_root, **vars(automatic_adapters))
+    run.processed_sources[0] = {"Right": [video]}
+    run.dlc_results = [DlcAnalysisResult("Right", (video,), (csv,), (h5,), (labeled,))]
+    run.analysis_csvs_by_region = {"Right": [csv]}
+    run.completed_stages.update(stage for stage in AutomatedStage if stage < AutomatedStage.STICKPLOT)
+    run.approved_reviews.update((AutomatedStage.VIDEO_PROCESSING, AutomatedStage.LABELED_VIDEOS))
+    run.save_status("failed", AutomatedStage.STICKPLOT)
+
+    # Route run artifact I/O to a separate folder to emulate paths that need the Win32 prefix on any host.
+    filesystem_root = tmp_path / "artifacts"
+
+    def filesystem_path(path):
+        if path.is_relative_to(run.output_folder):
+            path = filesystem_root / path.relative_to(run.output_folder)
+        return windows_filesystem_path(path)
+
+    for module in (gait_preview_writer, gait_result_writer, automatic_review_artifact_reader, automatic_run_storage):
+        monkeypatch.setattr(module, "windows_filesystem_path", filesystem_path)
+    for folder in (run.stickplots_folder, run.gait_analysis_folder):
+        filesystem_path(folder).mkdir(parents=True)
+    stickplot = run.stickplots_folder / f"001_{csv.stem}_side_stickplot.svg"
+    assert len(str(stickplot)) >= 260
+    filesystem_path(stickplot).write_bytes(b"partial stickplot")
+
+    control = AutomaticExecutionControl()
+    reader = automatic_review_artifact_reader.AutomaticReviewArtifactReader()
+    reviews = []
+
+    def review(stage, artifacts):
+        reviews.append(stage)
+        item, = artifacts.items
+        assert item.path == stickplot
+        assert reader.exists(item.path)
+        assert b"<svg" in reader.image_bytes(item.path)
+        control.decide_review(AutomaticReviewDecision.APPROVE)
+
+    def ignore(*_args):
+        pass
+
+    resumed = create_automatic_run(None, [], tmp_path, resume_folder=run.output_folder, **vars(automatic_adapters))
+    result = execute_automatic_run(resumed, AutomaticExecutionEvents(ignore, ignore, ignore, ignore, review), control)
+    assert reviews == [AutomatedStage.STICKPLOT]
+    assert result.stickplots == (stickplot,)
+    assert {path.suffix for path in result.analysis_outputs} == {".csv", ".svg"}
+    assert all(path.is_relative_to(run.gait_analysis_folder) for path in result.analysis_outputs)
+    assert all(filesystem_path(path).is_file() for path in result.analysis_outputs)
+    partial, = filesystem_path(run.output_folder).glob(".partial/stickplot_*/04_stickplots/*.svg")
+    assert partial.read_bytes() == b"partial stickplot"
+
+
 def test_retry_restores_raw_coordinates_if_knee_checkpoint_was_interrupted(
     tmp_path, monkeypatch, automatic_adapters
 ):
