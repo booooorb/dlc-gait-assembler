@@ -33,6 +33,7 @@ class KneeCorrectionController:
         self.view.output_folder_button.clicked.connect(self._choose_output_folder)
         self.view.output_folder_edit.textChanged.connect(self._update_run_state)
         self.view.calibration_map_button.clicked.connect(self._choose_calibration_map)
+        self.view.shared_calibration_map_button.clicked.connect(self._choose_shared_calibration_map)
         self.view.previous_frame_button.clicked.connect(lambda: self.view.preview_controller._step_preview_frame(-1))
         self.view.next_frame_button.clicked.connect(lambda: self.view.preview_controller._step_preview_frame(1))
         self.view.preview_slider.valueChanged.connect(self.view.preview_controller._show_preview_frame)
@@ -67,16 +68,6 @@ class KneeCorrectionController:
             self.view.output_folder_edit.setText(folder)
 
     def _choose_calibration_map(self) -> None:
-        if self.gait_calibration_map is not None:
-            path = self.gait_calibration_map()
-            if path is None:
-                QMessageBox.information(
-                    self.view, "Calibration map required",
-                    "Select and import a Shared calibration map in Gait Analysis → Calibration first.",
-                )
-            else:
-                self._set_calibration_map(path)
-            return
         default_folder = self.view.workspace.manual / "calibration"
         (filename, _) = QFileDialog.getOpenFileName(
             self.view,
@@ -87,6 +78,16 @@ class KneeCorrectionController:
         if filename:
             self._set_calibration_map(Path(filename))
 
+    def _choose_shared_calibration_map(self) -> None:
+        path = self.gait_calibration_map() if self.gait_calibration_map is not None else None
+        if path is None:
+            QMessageBox.information(
+                self.view, "Calibration map required",
+                "Select and import a Shared calibration map in Gait Analysis → Calibration first.",
+            )
+        else:
+            self._set_calibration_map(path)
+
     def _set_calibration_map(self, path: Path) -> bool:
         resolved = path.expanduser().resolve()
         try:
@@ -94,14 +95,28 @@ class KneeCorrectionController:
         except Exception as exc:
             QMessageBox.critical(self.view, "Could not import calibration map", str(exc))
             return False
-        self.view.state.calibration_map_path = resolved
+        self.set_calibration_scale(pixels_per_cm, path=resolved, source=source)
+        return True
+
+    def set_calibration_scale(self, pixels_per_cm: float, *, path: Path | None = None, source: str | None = None) -> None:
+        self.view.state.calibration_map_path = path
+        self.view.state.calibration_map_source = source
         self.view.state.pixels_per_cm = pixels_per_cm
-        self.view.calibration_map_label.setText(f"{resolved.name} • {source}: {pixels_per_cm:.3f} px/cm")
-        self.view.calibration_map_label.setToolTip(str(resolved))
+        self.refresh_calibration()
+
+    def refresh_calibration(self) -> None:
+        state = self.view.state
+        if state.pixels_per_cm is None:
+            label = "No calibration map selected"
+        else:
+            name = state.calibration_map_path.name if state.calibration_map_path else "Saved calibration"
+            source = f"{state.calibration_map_source}: " if state.calibration_map_source else ""
+            label = f"{name} • {source}{state.pixels_per_cm:.3f} px/cm"
+        self.view.calibration_map_label.setText(label)
+        self.view.calibration_map_label.setToolTip(str(state.calibration_map_path or ""))
         self.view.preview_controller._invalidate_preview()
         self._update_run_state()
         self.view.preview_controller._maybe_generate_previews()
-        return True
 
     def _update_run_state(self) -> None:
         running = self.view._worker is not None and self.view._worker.isRunning()
@@ -201,6 +216,7 @@ class KneeCorrectionController:
         self.view._worker.completed.connect(self._completed)
         self.view._worker.finished.connect(self._worker_finished)
         self.view._worker.start()
+        self.view.correction_running.emit(True)
         self._update_run_state()
 
     def _progress_updated(self, value: int, message: str) -> None:
@@ -222,5 +238,6 @@ class KneeCorrectionController:
 
     def _worker_finished(self) -> None:
         self.view._worker = None
+        self.view.correction_running.emit(False)
         self.view.progress.set_active(False)
         self._update_run_state()

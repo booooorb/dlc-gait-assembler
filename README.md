@@ -161,7 +161,7 @@ Runway tools follow this sequence:
 | Calibration | Measure scale from images or video. |
 | Video processing | Crop, flip, trim, enhance, and export videos. |
 | DeepLabCut | Run pose estimation and produce coordinate files or labeled videos. |
-| Knee correction | Review and reconstruct knee coordinates. |
+| Knee correction | Review and reconstruct knee coordinates. Import a calibration map for each side in the Left and Right tabs, then save the workflow. Automation uses the Left tab's settings. |
 | Gait analysis | Match camera views, map markers, preview strides, and export measurements. |
 | PCA / Random Forest | Compare recording summaries across animals and groups. |
 

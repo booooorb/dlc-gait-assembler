@@ -149,7 +149,7 @@ class AlmaKinematicsWidget(QWidget):
         self.workflow_combo.setAccessibleName("Gait analysis workflow")
         set_tooltip(
             self.workflow_combo,
-            "ALMA exports native side strides. ALMA side + rust bottom adds 20 underside R measures and "
+            "ALMA exports native side strides. ALMA side + rust bottom adds 20 RustLab underside measures and "
             "session ALMA means and standard deviations in RustLab CSV format. Standalone RustLab1 remains available.",
         )
         header_layout.addWidget(self.workflow_combo)

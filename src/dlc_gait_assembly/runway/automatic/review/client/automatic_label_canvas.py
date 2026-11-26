@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView, QRubberBand
 
 
@@ -19,11 +19,14 @@ class LabelCanvas(QGraphicsView):
         super().__init__(QGraphicsScene(parent), parent)
         self.setMinimumSize(420, 290)
         self.setFocusPolicy(Qt.StrongFocus)
+        self.viewport().setMouseTracking(True)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setBackgroundBrush(QColor("#181b1e"))
         self._image = self.scene().addPixmap(QPixmap())
         self._items = {}
+        self._trail_items = {}
+        self._hovered_marker = None
         self._manual_markers = set()
         self._selected = set()
         self._offset = (0, 0)
@@ -84,6 +87,58 @@ class LabelCanvas(QGraphicsView):
             item.setPen(QPen(QColor("#ffffff" if selected or manual else "#232529"), 2.5 if selected else 1.5))
             item.setZValue(1 + 2 * selected + manual)
 
+    def set_trails(self, trails):
+        for items in self._trail_items.values():
+            for item, _, _ in items:
+                self.scene().removeItem(item)
+        self._trail_items.clear()
+
+        for index, (marker, segments) in enumerate(trails.items()):
+            items = []
+            for future, points in enumerate(segments):
+                path = QPainterPath()
+                connected = False
+                for point in points:
+                    if point is None:
+                        connected = False
+                        continue
+                    x, y = point[0] + self._offset[0], point[1] + self._offset[1]
+                    if connected:
+                        path.lineTo(x, y)
+                    else:
+                        path.moveTo(x, y)
+                    connected = True
+                if not path.isEmpty():
+                    item = self.scene().addPath(path)
+                    item.setZValue(0.5)
+                    item.setAcceptedMouseButtons(Qt.NoButton)
+                    items.append((item, index, future))
+            self._trail_items[marker] = items
+            self._style_trail(marker)
+
+    def _style_trail(self, marker):
+        highlighted = marker == self._hovered_marker
+        for item, index, future in self._trail_items.get(marker, ()):
+            color = marker_color(index)
+            color.setAlpha((255 if highlighted else 180) - 65 * future)
+            pen = QPen(color, 3 if highlighted else 1.5, Qt.DashLine if future else Qt.SolidLine, Qt.RoundCap)
+            pen.setCosmetic(True)
+            item.setPen(pen)
+
+    def _marker_at(self, position):
+        hit = self.itemAt(position)
+        return next((key for key, item in self._items.items() if item == hit), None)
+
+    def _highlight_trail(self, marker):
+        if marker != self._hovered_marker:
+            previous, self._hovered_marker = self._hovered_marker, marker
+            self._style_trail(previous)
+            self._style_trail(marker)
+
+    def leaveEvent(self, event):
+        self._highlight_trail(None)
+        super().leaveEvent(event)
+
     def set_mode(self, mode):
         self._mode = mode
         self._set_cursor()
@@ -122,8 +177,7 @@ class LabelCanvas(QGraphicsView):
                 self.positions_changed.emit({self.active_marker: self._coordinate(position)})
             return
         self._extend = bool(event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier | Qt.MetaModifier))
-        hit = self.itemAt(self._start)
-        marker = next((key for key, item in self._items.items() if item == hit), None)
+        marker = self._marker_at(self._start)
         if marker is None:
             self._gesture = "box"
             self._before_box = self._selected.copy() if self._extend else set()
@@ -166,6 +220,8 @@ class LabelCanvas(QGraphicsView):
             for marker, origin in self._origins.items():
                 self._items[marker].setPos(origin + QPointF(dx, dy))
         else:
+            if self._trail_items:
+                self._highlight_trail(self._marker_at(position))
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):

@@ -3,6 +3,13 @@
 # Usage: Rscript Run_ALMA_Side_Rust_Bottom.R --config=/path/to/config.json
 # Formulas: references/DLC-Gait-Analysis-main/Runway_Analysis.Rmd, sections
 # 5, 6 and 10. No side-view RustLab calculations or comparison calculations.
+packages <- c('dplyr', 'tidyr', 'jsonlite')
+available <- function(package) tryCatch(requireNamespace(package, quietly=TRUE), error=function(e) FALSE)
+missing <- packages[!vapply(packages, available, logical(1))]
+if (length(missing)) {
+  cat('RustLab R dependencies unavailable:', paste(missing, collapse=', '), '\n', file=stderr())
+  quit(save='no', status=78L)
+}
 suppressPackageStartupMessages({library(dplyr); library(tidyr); library(jsonlite)})
 options(dplyr.summarise.inform=FALSE, digits=17)
 args <- commandArgs(trailingOnly=TRUE)

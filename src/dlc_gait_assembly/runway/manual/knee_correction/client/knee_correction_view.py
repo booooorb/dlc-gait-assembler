@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
+import dlc_gait_assembly.shared.client.theme.theme_application_state as theme
 from dlc_gait_assembly.runway.manual.knee_correction.client.knee_correction_controller import KneeCorrectionController
 from dlc_gait_assembly.runway.manual.knee_correction.client.knee_correction_styles import KneeCorrectionStyle
 from dlc_gait_assembly.runway.manual.knee_correction.client.knee_correction_worker import KneeCorrectionThread
@@ -17,6 +19,7 @@ from dlc_gait_assembly.runway.manual.knee_correction.client.knee_preview_control
 from dlc_gait_assembly.runway.manual.knee_correction.client.knee_result_panel import build_knee_outputs
 from dlc_gait_assembly.runway.manual.knee_correction.client.knee_settings_panel import build_knee_settings
 from dlc_gait_assembly.shared.business.media_access_contracts import MediaAccessPort
+from dlc_gait_assembly.shared.client.qt_sliding_tabs import install_sliding_tab_bar
 
 try:
     import cv2
@@ -24,10 +27,50 @@ except ImportError:
     cv2 = None
 
 
-class KneeCorrectionWidget(QWidget):
+class KneeCorrectionWorkspace(QWidget):
     def __init__(self, *, use_cases, media_access: MediaAccessPort, workspace):
         super().__init__()
         self.setProperty("elevateGroupSurfaces", True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        title = QLabel("Knee correction")
+        title.setObjectName("TitleLabel")
+        layout.addWidget(title)
+        self.side_tabs = QTabWidget()
+        self.side_tabs.setAccessibleName("Knee correction side")
+        self.side_tabs.setDocumentMode(True)
+        install_sliding_tab_bar(self.side_tabs, theme.TOOL_3).setExpanding(False)
+        self.editors = {}
+        for side in ("left", "right"):
+            editor = KneeCorrectionWidget(side=side, use_cases=use_cases, media_access=media_access, workspace=workspace)
+            self.editors[side] = editor
+            editor.correction_running.connect(self.side_tabs.tabBar().setDisabled)
+            self.side_tabs.addTab(editor, side.capitalize())
+        layout.addWidget(self.side_tabs, 1)
+
+    @property
+    def active_editor(self) -> KneeCorrectionWidget:
+        return self.side_tabs.currentWidget()
+
+    def can_close(self, parent=None) -> bool:
+        return all(editor.can_close(parent or self) for editor in self.editors.values())
+
+    def release_resources(self) -> None:
+        for editor in self.editors.values():
+            editor.release_resources()
+
+    def apply_theme(self) -> None:
+        for editor in self.editors.values():
+            editor.apply_theme()
+
+
+class KneeCorrectionWidget(QWidget):
+    correction_running = Signal(bool)
+
+    def __init__(self, *, use_cases, media_access: MediaAccessPort, workspace, side: str | None = None):
+        super().__init__()
+        self.setProperty("elevateGroupSurfaces", True)
+        self.side = side
         self.workspace = workspace
         self.state = KneeEditorState()
         self.media_access = media_access
@@ -48,11 +91,14 @@ class KneeCorrectionWidget(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 12, 16, 12)
         root.setSpacing(8)
-        title = QLabel("Knee correction")
-        title.setObjectName("TitleLabel")
-        root.addWidget(title)
+        if self.side is None:
+            root.setContentsMargins(16, 12, 16, 12)
+            title = QLabel("Knee correction")
+            title.setObjectName("TitleLabel")
+            root.addWidget(title)
+        else:
+            root.setContentsMargins(0, 8, 0, 0)
         files_box = build_knee_inputs(self)
         (left_column, right_column, workspace_row) = build_knee_preview(self, files_box)
         build_knee_settings(self, left_column)
@@ -73,9 +119,6 @@ class KneeCorrectionWidget(QWidget):
     def profile_knee_manifest_path(self) -> Path | None:
         """Return the knee manifest most recently exported in this workspace."""
         return self.state.profile_knee_manifest_path
-
-    def profile_calibration_map_path(self) -> Path | None:
-        return self.state.calibration_map_path
 
     def settings_snapshot(self):
         return self.controller._settings() if self.state.pixels_per_cm is not None else None
@@ -101,7 +144,8 @@ class KneeCorrectionWidget(QWidget):
         super().closeEvent(event)
 
     def _default_output_folder(self) -> Path:
-        return self.workspace.manual / "knee_correction"
+        folder = self.workspace.manual / "knee_correction"
+        return folder / self.side if self.side else folder
 
     def apply_theme(self) -> None:
         """Refresh this page's feature styling after the application theme changes."""

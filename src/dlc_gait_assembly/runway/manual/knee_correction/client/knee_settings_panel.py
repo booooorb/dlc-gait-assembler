@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -41,16 +42,23 @@ def build_knee_settings(self, left_column):
     self.calibration_map_button = QPushButton("Import calibration map")
     self.calibration_map_label = QLabel("No calibration map selected")
     self.calibration_map_label.setObjectName("MutedLabel")
-    calibration_layout.addWidget(self.calibration_map_button, 0, 0)
-    calibration_layout.addWidget(self.calibration_map_label, 0, 1)
+    calibration_actions = QHBoxLayout()
+    calibration_actions.addWidget(self.calibration_map_button)
+    self.shared_calibration_map_button = QPushButton("Use shared map")
+    set_tooltip(self.shared_calibration_map_button, "Use the Shared calibration map from Gait Analysis → Calibration.")
+    self.shared_calibration_map_button.hide()
+    calibration_actions.addWidget(self.shared_calibration_map_button)
+    calibration_actions.addStretch(1)
+    calibration_layout.addLayout(calibration_actions, 0, 0, 1, 2)
+    calibration_layout.addWidget(self.calibration_map_label, 1, 0, 1, 2)
     self.hip_knee_length = length_spin()
     set_tooltip(self.hip_knee_length, 'Length from hip to knee in centimeters, used with the hip and ankle positions to reconstruct the knee.')
     self.knee_ankle_length = length_spin()
     set_tooltip(self.knee_ankle_length, 'Length from knee to ankle in centimeters, used to constrain the reconstructed knee position.')
-    calibration_layout.addWidget(QLabel("Hip–knee length (femur)"), 1, 0)
-    calibration_layout.addWidget(self.hip_knee_length, 1, 1)
-    calibration_layout.addWidget(QLabel("Knee–ankle length (tibia/fibula)"), 2, 0)
-    calibration_layout.addWidget(self.knee_ankle_length, 2, 1)
+    calibration_layout.addWidget(QLabel("Hip–knee length (femur)"), 2, 0)
+    calibration_layout.addWidget(self.hip_knee_length, 2, 1)
+    calibration_layout.addWidget(QLabel("Knee–ankle length (tibia/fibula)"), 3, 0)
+    calibration_layout.addWidget(self.knee_ankle_length, 3, 1)
     self.settings_tabs.addTab(calibration_page, "Calibration")
     labels_page = QWidget()
     labels_layout = QGridLayout(labels_page)

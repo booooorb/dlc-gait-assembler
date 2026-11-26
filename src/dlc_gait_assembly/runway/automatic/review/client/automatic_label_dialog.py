@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import numpy as np
 from PySide6.QtCore import QAbstractListModel, QEvent, QItemSelectionModel, QSignalBlocker, Qt
@@ -10,6 +10,7 @@ from PySide6.QtGui import QIcon, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -43,6 +44,8 @@ class ReviewFrames(QAbstractListModel):
         super().__init__(parent)
         self.frames = ()
         self.rows = {}
+        self.edited = set()
+        self.checked = set()
 
     def replace(self, frames):
         self.beginResetModel()
@@ -55,12 +58,25 @@ class ReviewFrames(QAbstractListModel):
 
     def data(self, index, role=Qt.DisplayRole):
         if index.isValid() and role == Qt.DisplayRole:
-            return f"Frame {self.frames[index.row()] + 1}"
+            frame = self.frames[index.row()]
+            status = " · Checked" if frame in self.checked else " · Edited" if frame in self.edited else ""
+            return f"Frame {frame + 1:,}{status}"
         return None
+
+    def set_edit_status(self, edited, checked):
+        changed = (self.edited ^ edited) | (self.checked ^ checked)
+        self.edited = edited
+        self.checked = checked.copy()
+        for frame in changed & self.rows.keys():
+            index = self.index(self.rows[frame], 0)
+            self.dataChanged.emit(index, index, [Qt.DisplayRole])
 
 
 class LabelCorrectionDialog(QDialog):
-    FILTERS = ("Low confidence", "Knee distance outliers", "Either issue", "All frames")
+    FILTERS = ("Low confidence", "Knee distance outliers", "Either issue", "All frames", "Edited frames")
+    ALL_FRAMES = 3
+    EDITED_FRAMES = 4
+    TRAIL_FRAMES = 12
 
     def __init__(self, parent, review, artifacts, media_access, preferred=None):
         super().__init__(parent)
@@ -71,7 +87,11 @@ class LabelCorrectionDialog(QDialog):
         self.artifacts = artifacts
         self.media_access = media_access
         self.edits = {edit.key: edit for edit in review.label_draft}
+        self.edited_frames = self._index_edited_frames(self.edits)
         self.saved_edit_keys = {edit.key for edit in review.saved_label_edits}
+        self.applied_frames = self._index_edited_frames(self.saved_edit_keys)
+        self.checked_frames = defaultdict(set)
+        self.checking = False
         self.undo_stack = []
         self.clipboard = {}
         self.clipboard_source = None
@@ -95,9 +115,11 @@ class LabelCorrectionDialog(QDialog):
         self.installEventFilter(self)
         for widget in self.findChildren(QWidget):
             widget.installEventFilter(self)
-        initial_index = next(
-            (index for index, source in enumerate(self.review.label_sources) if source == preferred), 0
+        first_edited = next(
+            (index for index, source in enumerate(review.label_sources) if (source.region, source.video) in self.edited_frames),
+            0,
         )
+        initial_index = next((index for index, source in enumerate(review.label_sources) if source == preferred), first_edited)
         self.recording.setCurrentIndex(initial_index)
         if initial_index == 0:
             self._load_recording(0)
@@ -121,6 +143,8 @@ class LabelCorrectionDialog(QDialog):
         side.addWidget(QLabel("Frames"))
         self.filter = QComboBox()
         self.filter.addItems(self.FILTERS)
+        if self.edits:
+            self.filter.setCurrentIndex(self.EDITED_FRAMES)
         self.filter.setAccessibleName("Frame filter")
         side.addWidget(self.filter)
         self.confidence_row, self.confidence = self._percentage("Confidence below", 80, side)
@@ -138,12 +162,8 @@ class LabelCorrectionDialog(QDialog):
         self.frame_model = ReviewFrames(self)
         self.frame_list.setModel(self.frame_model)
         side.addWidget(self.frame_list, 1)
-        self.show_all = self._button(side, "Show all frames", lambda: self.filter.setCurrentIndex(3))
+        self.show_all = self._button(side, "Show all frames", lambda: self.filter.setCurrentIndex(self.ALL_FRAMES))
         self.show_all.hide()
-        navigation = QHBoxLayout()
-        self.previous = self._button(navigation, "Previous", lambda: self._navigate(-1))
-        self.next = self._button(navigation, "Next", lambda: self._navigate(1))
-        side.addLayout(navigation)
         body.addLayout(side)
 
         center = QVBoxLayout()
@@ -160,6 +180,13 @@ class LabelCorrectionDialog(QDialog):
             self.mode_buttons[ord(key)] = button
         self.mode_buttons[Qt.Key_4] = self.mode_buttons[Qt.Key_1]
         tools.addStretch()
+        self.trails_toggle = QCheckBox("Show trails")
+        self.trails_toggle.setToolTip(
+            f"Show each marker’s path {self.TRAIL_FRAMES} frames before and after the current frame. "
+            "Dashed lines lead to later frames. Hover over a marker to highlight its trail."
+        )
+        self.trails_toggle.toggled.connect(self._update_trails)
+        tools.addWidget(self.trails_toggle)
         self.fit_button = self._button(tools, "Fit", self.canvas.fit_frame)
         center.addLayout(tools)
         self.preview = QStackedWidget()
@@ -169,8 +196,15 @@ class LabelCorrectionDialog(QDialog):
         self.empty_preview.setWordWrap(True)
         self.preview.addWidget(self.empty_preview)
         center.addWidget(self.preview, 1)
+        navigation = QHBoxLayout()
+        self.previous = self._button(navigation, "← Previous frame", lambda: self._navigate(-1))
+        self.next = self._button(navigation, "Next frame →", lambda: self._navigate(1))
+        self.previous.setToolTip("Go back one video frame (Left arrow).")
+        self.next.setToolTip("Go forward one video frame (Right arrow).")
+        navigation.addStretch()
+        center.addLayout(navigation)
         timeline_row = QHBoxLayout()
-        timeline_label = QLabel("Confidence over time")
+        timeline_label = QLabel("Scrub frames · Confidence")
         self.confidence_mode = QComboBox()
         self.confidence_mode.addItems(("Mean", "Min"))
         self.confidence_mode.setAccessibleName("Timeline confidence metric")
@@ -209,6 +243,11 @@ class LabelCorrectionDialog(QDialog):
         self.copy_button = self._button(clipboard_actions, "Copy", self._copy)
         self.paste_button = self._button(clipboard_actions, "Paste", self._paste)
         markers.addLayout(clipboard_actions)
+        self.copy_previous_button = self._button(markers, "Use previous labels (P)", self._copy_previous)
+        self.copy_previous_button.setToolTip(
+            "Overwrite the selected markers with their positions from the previous video frame. "
+            "Use Undo to restore their current positions."
+        )
         edit_actions = QHBoxLayout()
         self.remove_button = self._button(edit_actions, "Remove", self._delete)
         self.undo_button = self._button(edit_actions, "Undo", self._undo)
@@ -226,14 +265,25 @@ class LabelCorrectionDialog(QDialog):
         if self.review.label_error:
             self._show_error(self.review.label_error)
 
+        self.check_panel = QWidget()
+        check_layout = QHBoxLayout(self.check_panel)
+        check_layout.setContentsMargins(0, 0, 0, 0)
+        self.check_status = QLabel()
+        self.check_status.setWordWrap(True)
+        check_layout.addWidget(self.check_status, 1)
+        self.go_unchecked = self._button(check_layout, "Go to unchecked frame", self._go_to_unchecked)
+        self.check_frame = self._button(check_layout, "Check frame and advance", self._check_current_frame)
+        self.check_panel.hide()
+        layout.addWidget(self.check_panel)
+
         footer = QHBoxLayout()
         self.saved_status = QLabel()
         footer.addWidget(self.saved_status)
         footer.addStretch()
         self._button(footer, "Cancel", self.reject)
         self.frame_save = self._button(footer, "Save corrections", lambda: self._save(False))
-        self.frame_save.setToolTip("Update this batch’s coordinates and regenerate its previews.")
-        self.tune_save = self._button(footer, "Save and fine-tune", lambda: self._save(True))
+        self.frame_save.setToolTip("Save the edits in this run so you can reopen them later.")
+        self.tune_save = self._button(footer, "Review and fine-tune", self._review_or_fine_tune)
         self.tune_save.setObjectName("PrimaryButton")
         self.tune_save.setToolTip(
             f"Add reviewed frames to the original DLC project, train for {self.review.fine_tune_epochs} epochs, "
@@ -315,26 +365,48 @@ class LabelCorrectionDialog(QDialog):
         self._filter_frames(preferred_frame=self.recording_frames.get(self.source))
         self._update_save()
 
+    @property
+    def recording_key(self):
+        return (self.source.region, self.source.video) if self.source is not None else None
+
+    @staticmethod
+    def _index_edited_frames(edit_keys):
+        frames_by_recording = defaultdict(set)
+        for region, video, frame, _marker in edit_keys:
+            frames_by_recording[region, video].add(frame)
+        return dict(frames_by_recording)
+
+    def _edited_frames_for_recording(self):
+        draft = self.edited_frames.get(self.recording_key, set())
+        return draft if self.checking else draft | self.applied_frames.get(self.recording_key, set())
+
     def _filter_frames(self, *_, preferred_frame=None):
         old_frame = self.frame
+        mode = self.filter.currentIndex()
+        edited = self._edited_frames_for_recording()
         with QSignalBlocker(self.frame_list.selectionModel()):
+            self.frame_model.set_edit_status(edited, self.checked_frames[self.recording_key])
             if self.table is None:
                 self.frame_model.replace(())
+            elif mode == self.EDITED_FRAMES:
+                self.frame_model.replace(sorted(frame for frame in edited if 0 <= frame < len(self.table)))
+            elif mode == self.ALL_FRAMES:
+                self.frame_model.replace(range(len(self.table)))
             else:
-                mode = self.filter.currentIndex()
                 minimum = self.frame_confidence.minimum
                 low = minimum < self.confidence.value() / 100
                 knee = self.knee_errors >= self.distance.value() / 100
-                matches = (low, knee, low | knee, np.ones(len(low), dtype=bool))[mode]
-                order = (minimum, -self.knee_errors, np.arange(len(low)), np.arange(len(low)))[mode]
+                matches = (low, knee, low | knee)[mode]
+                order = (minimum, -self.knee_errors, np.arange(len(low)))[mode]
                 indices = np.argsort(order, kind="stable")
                 self.frame_model.replace(indices[matches[indices]])
-        self.confidence_row.setVisible(self.filter.currentIndex() in (0, 2))
-        self.distance_row.setVisible(self.filter.currentIndex() in (1, 2))
+        self.confidence_row.setVisible(mode in (0, 2))
+        self.distance_row.setVisible(mode in (1, 2))
         frames = self.frame_model.frames
         count = len(frames)
-        self.frame_summary.setText(f"{count:,} matching frame{'s' if count != 1 else ''}")
-        self.show_all.setVisible(not count and self.table is not None and self.filter.currentIndex() != 3)
+        category = "edited" if mode == self.EDITED_FRAMES else "matching"
+        self.frame_summary.setText(f"{count:,} {category} frame{'s' if count != 1 else ''}")
+        self.show_all.setVisible(not count and self.table is not None and mode != self.ALL_FRAMES)
         if preferred_frame is not None and self.table is not None:
             self._seek_frame(preferred_frame)
         elif frames:
@@ -343,12 +415,15 @@ class LabelCorrectionDialog(QDialog):
             message = "No frames match this filter."
             if self.table is None:
                 message = "This recording could not be opened."
-            elif self.filter.currentIndex() == 1 and not np.isfinite(self.knee_errors).any():
+            elif mode == self.EDITED_FRAMES:
+                message = "No edited frames in this recording."
+            elif mode == 1 and not np.isfinite(self.knee_errors).any():
                 message = "Knee distances are unavailable for this recording."
             self._show_empty_frame(message)
             self.timeline.set_current_frame(None)
             self._update_timeline_value()
             self._update_navigation()
+            self._update_check_controls()
 
     def _show_empty_frame(self, message):
         self.frame = None
@@ -356,20 +431,21 @@ class LabelCorrectionDialog(QDialog):
         self.manual_markers = set()
         self.frame_status.clear()
         self.canvas.set_frame(QPixmap(), {}, (), self.offset)
+        self.canvas.set_trails({})
         self.empty_preview.setText(message)
         self.preview.setCurrentWidget(self.empty_preview)
         self._update_marker_actions()
 
     def _navigate(self, step):
-        row = self.frame_list.currentIndex().row() + step
-        if 0 <= row < len(self.frame_model.frames):
-            self.frame_list.setCurrentIndex(self.frame_model.index(row, 0))
+        frame = self.timeline.value() + step
+        if self.table is not None and 0 <= frame < len(self.table):
+            self._seek_frame(frame)
             self.canvas.setFocus()
 
     def _update_navigation(self):
-        row = self.frame_list.currentIndex().row()
-        self.previous.setEnabled(row > 0)
-        self.next.setEnabled(row < len(self.frame_model.frames) - 1)
+        frame = self.timeline.value()
+        self.previous.setEnabled(self.table is not None and frame > 0)
+        self.next.setEnabled(self.table is not None and frame + 1 < len(self.table))
 
     def _frame_selected(self, current, _previous):
         if current.isValid():
@@ -393,6 +469,7 @@ class LabelCorrectionDialog(QDialog):
         if self.frame != frame:
             self._show_frame(frame)
         self._update_timeline_value()
+        self._update_check_controls()
 
     def _show_frame(self, frame):
         pixmap = self._frame_image(frame)
@@ -407,6 +484,7 @@ class LabelCorrectionDialog(QDialog):
         self.canvas.set_frame(
             pixmap, self.points, self.columns, self.offset, manual_markers=self.manual_markers, fit=fit
         )
+        self._update_trails()
         knee = self.knee_errors[frame]
         details = f"Frame {frame + 1:,} / {len(self.table):,}"
         if self.fps > 0:
@@ -506,33 +584,67 @@ class LabelCorrectionDialog(QDialog):
         self.tool_hint.setText(f"{guidance}  Scroll to zoom · Hold Space to pan")
 
     def _update_marker_actions(self, message=None):
-        selected = len(self._selected() & self.points.keys())
+        selected = self._selected()
+        visible_selected = selected & self.points.keys()
         showing_frame = self.frame is not None
         for button in self.mode_group.buttons():
             button.setEnabled(showing_frame)
         self.fit_button.setEnabled(showing_frame)
-        self.copy_button.setEnabled(selected > 0)
-        self.remove_button.setEnabled(selected > 0)
+        self.copy_button.setEnabled(bool(visible_selected))
+        self.remove_button.setEnabled(bool(visible_selected))
         self.paste_button.setEnabled(showing_frame and self.source == self.clipboard_source and bool(self.clipboard))
+        self.copy_previous_button.setEnabled(showing_frame and self.frame > 0 and bool(selected))
         self.undo_button.setEnabled(bool(self.undo_stack))
         self.keep_button.setEnabled(bool(self.points))
-        status = f"{selected} selected" if selected else "Select a marker"
+        status = f"{len(selected)} selected" if selected else "Select a marker"
         self.marker_status.setText(message or (status if showing_frame else ""))
         self._update_tool_hint()
 
-    def _refresh_points(self):
-        self.points = frame_positions(self.table, self.columns, self.frame)
-        self.manual_markers = set()
+    def _positions_at(self, frame):
+        points = frame_positions(self.table, self.columns, frame)
         for marker in self.columns:
-            key = self.source.region, self.source.video, self.frame, marker
-            edit = self.edits.get(key)
+            edit = self.edits.get((*self.recording_key, frame, marker))
             if edit is not None:
                 if edit.point is None:
-                    self.points.pop(marker, None)
+                    points.pop(marker, None)
                 else:
-                    self.points[marker] = edit.point
-            if marker in self.points and (edit is not None or key in self.saved_edit_keys):
-                self.manual_markers.add(marker)
+                    points[marker] = edit.point
+        return points
+
+    def _refresh_points(self):
+        self.points = self._positions_at(self.frame)
+        self.manual_markers = {
+            marker for marker in self.points
+            if (key := (*self.recording_key, self.frame, marker)) in self.edits or key in self.saved_edit_keys
+        }
+
+    def _update_trails(self):
+        if self.frame is None or not self.trails_toggle.isChecked():
+            self.canvas.set_trails({})
+            return
+        start = max(0, self.frame - self.TRAIL_FRAMES)
+        stop = min(len(self.table), self.frame + self.TRAIL_FRAMES + 1)
+        middle = self.frame - start
+        window = self.table.iloc[start:stop]
+        trails = {}
+        for marker, columns in self.columns.items():
+            positions = window.loc[:, [columns["x"], columns["y"]]].to_numpy(dtype=float)
+            points = []
+            for frame, point in enumerate(positions, start):
+                edit = self.edits.get((*self.recording_key, frame, marker))
+                points.append(edit.point if edit is not None else tuple(point) if np.isfinite(point).all() else None)
+            trails[marker] = points[:middle + 1], points[middle:]
+        self.canvas.set_trails(trails)
+
+    def _edits_changed(self, key, frame):
+        self.checked_frames[key].discard(frame)
+        previous = self._edited_frames_for_recording()
+        self.edited_frames = self._index_edited_frames(self.edits)
+        edited = self._edited_frames_for_recording()
+        if self.filter.currentIndex() == self.EDITED_FRAMES and previous != edited:
+            self._filter_frames(preferred_frame=self.frame)
+        self.frame_model.set_edit_status(edited, self.checked_frames[self.recording_key])
+        self._update_save()
 
     def _edit(self, updates):
         if self.frame is None or not updates:
@@ -545,7 +657,8 @@ class LabelCorrectionDialog(QDialog):
         self.undo_stack.append(old_values)
         self._refresh_points()
         self.canvas.set_points(self.points, self.columns, self.manual_markers)
-        self._update_save()
+        self._update_trails()
+        self._edits_changed(self.recording_key, self.frame)
         self._update_marker_actions()
 
     def _undo(self):
@@ -560,11 +673,12 @@ class LabelCorrectionDialog(QDialog):
         if self.frame is not None:
             self._refresh_points()
             self.canvas.set_points(self.points, self.columns, self.manual_markers)
-        self._update_save()
-        _, video, frame, _ = next(iter(previous))
+            self._update_trails()
+        region, video, frame, _ = next(iter(previous))
+        self._edits_changed((region, video), frame)
         location = f"frame {frame + 1:,}"
-        if self.source is not None and video != self.source.video:
-            location += f" of {video.name}"
+        if self.recording_key != (region, video):
+            location += f" of {region} · {video.name}"
         self._update_marker_actions(f"Undid change on {location}")
 
     def _select_all_visible(self):
@@ -587,6 +701,17 @@ class LabelCorrectionDialog(QDialog):
             self._edit(matching)
             self._update_marker_actions(f"{len(matching)} pasted")
 
+    def _copy_previous(self):
+        if self.frame is None or self.frame == 0:
+            return
+        previous = self._positions_at(self.frame - 1)
+        updates = {marker: previous[marker] for marker in self._selected() & previous.keys()}
+        if updates:
+            self._edit(updates)
+            self._update_marker_actions(f"{len(updates)} copied from frame {self.frame:,}")
+        else:
+            self._update_marker_actions("No selected labels on the previous frame")
+
     def _delete(self):
         self._edit(dict.fromkeys(self._selected() & self.points.keys()))
 
@@ -594,20 +719,64 @@ class LabelCorrectionDialog(QDialog):
         self._edit(self.points)
 
     def _update_save(self):
-        count = len({edit.key[:3] for edit in self.edits.values()})
+        count = sum(map(len, self.edited_frames.values()))
         self.saved_status.setText(
             f"{count} frame{'s' if count != 1 else ''} ready to save"
             if count
             else "Edit a marker or keep the visible labels."
         )
         self.frame_save.setEnabled(count > 0)
-        self.tune_save.setEnabled(
-            any(
-                edit.point is not None
-                and (edit.key[:2] not in self.model_markers or edit.marker in self.model_markers[edit.key[:2]])
-                for edit in self.edits.values()
-            )
+        self.can_fine_tune = any(
+            edit.point is not None
+            and (edit.key[:2] not in self.model_markers or edit.marker in self.model_markers[edit.key[:2]])
+            for edit in self.edits.values()
         )
+        self._update_check_controls()
+
+    def _update_check_controls(self):
+        if not self.checking:
+            self.tune_save.setEnabled(self.can_fine_tune)
+            return
+        total = sum(map(len, self.edited_frames.values()))
+        checked = sum(map(len, self.checked_frames.values()))
+        message = "Inspect each frame before training." if checked < total else "Review complete."
+        self.check_status.setText(f"{checked:,} of {total:,} edited frames checked. {message}")
+        unchecked = self.frame in self.edited_frames.get(self.recording_key, ()) and (
+            self.frame not in self.checked_frames[self.recording_key]
+        )
+        self.check_frame.setEnabled(unchecked)
+        self.go_unchecked.setEnabled(checked < total and not unchecked)
+        self.tune_save.setEnabled(self.can_fine_tune and checked == total)
+
+    def _review_or_fine_tune(self):
+        if self.checking:
+            self._save(True)
+            return
+        self.checking = True
+        self.check_panel.show()
+        self.tune_save.setText("Start fine-tuning")
+        if self.filter.currentIndex() == self.EDITED_FRAMES:
+            self._filter_frames()
+        self._go_to_unchecked()
+        self._update_check_controls()
+
+    def _go_to_unchecked(self):
+        self.filter.setCurrentIndex(self.EDITED_FRAMES)
+        for index, source in enumerate(self.review.label_sources):
+            key = source.region, source.video
+            if key not in self.edited_frames:
+                continue
+            frame = min(self.edited_frames[key] - self.checked_frames[key], default=None)
+            if frame is not None:
+                self.recording.setCurrentIndex(index)
+                self._seek_frame(frame)
+                return
+
+    def _check_current_frame(self):
+        self.checked_frames[self.recording_key].add(self.frame)
+        self.frame_model.set_edit_status(self.edited_frames[self.recording_key], self.checked_frames[self.recording_key])
+        self._go_to_unchecked()
+        self._update_check_controls()
 
     def _show_error(self, message):
         lines = message.strip().splitlines()
@@ -631,14 +800,25 @@ class LabelCorrectionDialog(QDialog):
             self.canvas.hold_pan(False)
         if kind in (QEvent.ShortcutOverride, QEvent.KeyPress, QEvent.KeyRelease):
             on_canvas = watched is self.canvas or self.canvas.isAncestorOf(watched)
-            if on_canvas or watched in (self.frame_list, self.marker_list):
+            editor_focus = on_canvas or watched in (self.frame_list, self.marker_list)
+            navigation_focus = editor_focus or watched is self or isinstance(watched, (QPushButton, QCheckBox))
+            modifiers = event.modifiers() & ~Qt.KeypadModifier
+            if (
+                navigation_focus and kind != QEvent.KeyRelease
+                and event.key() in (Qt.Key_Left, Qt.Key_Right) and modifiers in (Qt.NoModifier, Qt.AltModifier)
+            ):
+                if kind == QEvent.KeyPress:
+                    self._navigate(-1 if event.key() == Qt.Key_Left else 1)
+                event.accept()
+                return True
+            if editor_focus or watched is self.timeline:
                 if event.key() == Qt.Key_Space:
                     if kind != QEvent.ShortcutOverride and not event.isAutoRepeat():
                         self.canvas.hold_pan(kind == QEvent.KeyPress)
                     event.accept()
                     return True
                 if kind != QEvent.KeyRelease:
-                    action = self._editor_key_action(event, on_canvas)
+                    action = self._editor_key_action(event)
                     if action is not None:
                         if kind == QEvent.KeyPress:
                             action()
@@ -646,7 +826,7 @@ class LabelCorrectionDialog(QDialog):
                         return True
         return super().eventFilter(watched, event)
 
-    def _editor_key_action(self, event, on_canvas):
+    def _editor_key_action(self, event):
         for shortcut, action in (
             (QKeySequence.StandardKey.Copy, self._copy),
             (QKeySequence.StandardKey.Paste, self._paste),
@@ -655,10 +835,6 @@ class LabelCorrectionDialog(QDialog):
             if event.matches(shortcut):
                 return action
         key, modifiers = event.key(), event.modifiers()
-        if key in (Qt.Key_Left, Qt.Key_Right) and (
-            modifiers == Qt.AltModifier or (on_canvas and modifiers == Qt.NoModifier)
-        ):
-            return self.previous.click if key == Qt.Key_Left else self.next.click
         if modifiers not in (Qt.NoModifier, Qt.KeypadModifier):
             return None
         if key in self.mode_buttons:
@@ -667,6 +843,8 @@ class LabelCorrectionDialog(QDialog):
             return self._delete
         if key == Qt.Key_A:
             return self._select_all_visible
+        if key == Qt.Key_P:
+            return self._copy_previous
         return None
 
     def showEvent(self, event):

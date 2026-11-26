@@ -122,7 +122,7 @@ def build_tool_specs():
     from dlc_gait_assembly.runway.manual.calibration.client.calibration_view import ManualCalibrationWidget
     from dlc_gait_assembly.runway.manual.deeplabcut.client.deeplabcut_view import DeepLabCutWidget
     from dlc_gait_assembly.runway.manual.gait_analysis.client.gait_analysis_view import GaitAnalysisWidget
-    from dlc_gait_assembly.runway.manual.knee_correction.client.knee_correction_view import KneeCorrectionWidget
+    from dlc_gait_assembly.runway.manual.knee_correction.client.knee_correction_view import KneeCorrectionWorkspace
     from dlc_gait_assembly.runway.manual.pca_random_forest.client.cohort_analysis_view import PcaRandomForestWidget
     from dlc_gait_assembly.runway.manual.video_processing.client.video_processing_view import VideoEditorWidget
 
@@ -136,7 +136,7 @@ def build_tool_specs():
             workspace=resolve_workspace(),
         ),
         "deeplabcut": lambda: DeepLabCutWidget(environment=create_deeplabcut_environment()),
-        "knee_correction": lambda: KneeCorrectionWidget(
+        "knee_correction": lambda: KneeCorrectionWorkspace(
             use_cases=create_knee_correction_use_cases(),
             media_access=create_media_access(),
             workspace=resolve_workspace(),
@@ -178,9 +178,8 @@ def build_tool_specs():
             calibration_map=page.profile_calibration_map_path(),
         ),
         "knee_correction": lambda page: ManualProfileSnapshot(
-            knee=page.settings_snapshot(),
-            knee_manifest=page.profile_knee_manifest_path(),
-            calibration_map=page.profile_calibration_map_path(),
+            knee=page.editors["left"].settings_snapshot(),
+            knee_manifest=page.editors["left"].profile_knee_manifest_path(),
         ),
     }
     TOOL_SPECS = [replace(spec, snapshot_provider=snapshot_providers.get(spec.id)) for spec in TOOL_SPECS]

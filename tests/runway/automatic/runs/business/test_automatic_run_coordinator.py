@@ -991,6 +991,7 @@ from dlc_gait_assembly.app.app_bootstrap import create_deeplabcut_analysis
     "review_at,fine_tune,fail_first_training",
     [
         (AutomatedStage.LABELED_VIDEOS, False, False),
+        (AutomatedStage.STICKPLOT, False, False),
         (AutomatedStage.STICKPLOT, True, False),
         (AutomatedStage.STICKPLOT, True, True),
     ],
@@ -1081,18 +1082,20 @@ def test_label_correction_replays_the_right_batch_stages(
         )
 
     run = make_run()
-    reviews = []
     control = AutomaticExecutionControl()
+    edits = ()
+    resumed_draft = False
+    paused_after_application = False
 
     def review(stage, request):
-        reviews.append(stage)
+        nonlocal edits, paused_after_application
         if request.label_error:
             assert request.label_error == "Temporary training failure"
             assert request.label_draft == calls["train"][0][1]
             control.decide_review(
                 AutomaticReviewDecision.CORRECT_LABELS, LabelCorrection(request.label_draft, True)
             )
-        elif stage == review_at and reviews.count(stage) == 1:
+        elif stage == review_at and not edits:
             first, second = request.label_sources
             assert first.video != second.video
             assert request.fine_tune_epochs == 4
@@ -1100,8 +1103,22 @@ def test_label_correction_replays_the_right_batch_stages(
                 LabelEdit(first.region, first.video, 0, ("knee",), (18.0, 12.0)),
                 LabelEdit(first.region, first.video, 0, ("ankle",), None),
             )
-            control.decide_review(AutomaticReviewDecision.CORRECT_LABELS, LabelCorrection(edits, fine_tune))
-        elif stage == AutomatedStage.LABELED_VIDEOS and reviews.count(stage) == 2:
+            control.decide_review(AutomaticReviewDecision.CORRECT_LABELS, LabelCorrection(edits, False))
+        elif request.label_draft:
+            assert stage == review_at and request.label_draft == edits
+            assert run.status == "review" and not run.label_edits
+            assert len(calls["analyze"]) == len(calls["label"]) == 1
+            assert len(calls["plot"]) == int(review_at == AutomatedStage.STICKPLOT)
+            assert not calls["train"]
+            assert read_dlc_h5(request.label_sources[0].h5)[0].iloc[0, 3] == 15.0
+            if not resumed_draft:
+                control.request_cancel()
+            elif fine_tune:
+                control.decide_review(AutomaticReviewDecision.CORRECT_LABELS, LabelCorrection(request.label_draft, True))
+            else:
+                control.decide_review(AutomaticReviewDecision.APPROVE)
+        elif stage == AutomatedStage.LABELED_VIDEOS and run.label_edits and not paused_after_application:
+            paused_after_application = True
             control.request_cancel()
         else:
             control.decide_review(AutomaticReviewDecision.APPROVE)
@@ -1111,6 +1128,14 @@ def test_label_correction_replays_the_right_batch_stages(
     events = AutomaticExecutionEvents(quiet, quiet, quiet, quiet, review)
     with pytest.raises(AutomaticRunCancelled):
         execute_automatic_run(run, events, control)
+    assert not paused_after_application
+    run = make_run(run.output_folder)
+    assert run.pending_label_edits == edits
+    resumed_draft = True
+    control = AutomaticExecutionControl()
+    with pytest.raises(AutomaticRunCancelled):
+        execute_automatic_run(run, events, control)
+    assert paused_after_application
 
     assert len(calls["process"]) == 2
     assert len(calls["analyze"]) == int(fine_tune) + 1
@@ -1125,13 +1150,14 @@ def test_label_correction_replays_the_right_batch_stages(
     assert calls["label"][-1][3:6] == [18.0, 12.0, 1.0]
     assert pd.isna(calls["label"][-1][6])
 
-    resumed = make_run(run.output_folder)
-    first, second = resumed.label_sources()
+    run = make_run(run.output_folder)
+    assert not run.pending_label_edits
+    first, second = run.label_sources()
     edited, raw, _ = load_label_artifacts(first)
     pd.testing.assert_frame_equal(read_dlc_csv(first.csv), edited)
     assert edited.iloc[0, 3] == 18.0 and raw.iloc[0, 3] == 15.0
     assert load_label_artifacts(second)[0].iloc[0, 3] == 15.0
     control = AutomaticExecutionControl()
-    result = execute_automatic_run(resumed, events, control)
+    result = execute_automatic_run(run, events, control)
     assert len(result.stickplots) == 2
     assert len(calls["label"]) == 2

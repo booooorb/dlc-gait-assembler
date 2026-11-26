@@ -1,5 +1,6 @@
 """Exercise marker manipulation and frame filters through the Qt label editor."""
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -178,6 +179,11 @@ def test_edit_move_copy_remove_and_restore_markers_with_filtered_frames(labels):
         QTest.keyClick(canvas, Qt.Key_1)
         assert canvas._mode == "pan"
         dialog.tune_save.click()
+        assert dialog.correction is None and not dialog.tune_save.isEnabled()
+        assert dialog.frame_model.frames == (0, 1)
+        dialog.check_frame.click()
+        dialog.check_frame.click()
+        dialog.tune_save.click()
         assert dialog.correction.fine_tune
         assert len(dialog.correction.edits) == 4
         assert capture.closed
@@ -226,6 +232,10 @@ def test_timeline_shows_context_with_original_confidence_and_saved_manual_marker
         assert isinstance(dialog.canvas._items[("knee",)], QGraphicsPolygonItem)
         assert isinstance(dialog.canvas._items[("hip",)], QGraphicsEllipseItem)
         assert not dialog.frame_save.isEnabled()
+        dialog.filter.setCurrentText("Edited frames")
+        assert dialog.frame_model.frames == (0,)
+        assert dialog.frame_model.index(0, 0).data() == "Frame 1 · Edited"
+        dialog.filter.setCurrentText("Low confidence")
 
         dialog.confidence_mode.setCurrentText("Min")
         assert dialog.timeline_value.text() == "43%"
@@ -303,6 +313,116 @@ def test_switching_recordings_keeps_edits_and_loads_the_right_video(labels):
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
+def test_adjacent_navigation_copy_and_trails_use_saved_frame_edits(labels):
+    app = QApplication.instance() or QApplication([])
+    source = LabelReviewSource("Side", Path("video.mp4"), Path("video.csv"), Path("video.h5"), Path("model"))
+    draft = LabelEdit(source.region, source.video, 0, ("knee",), (32, 31))
+    review = StageReview(AutomatedStage.LABELED_VIDEOS, "videos", label_sources=(source,), label_draft=(draft,))
+    capture = Capture()
+    dialog = LabelCorrectionDialog(
+        None, review, SimpleNamespace(label_artifacts=lambda _: (labels, labels, (4, 5))),
+        SimpleNamespace(open_video=lambda _: capture),
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.filter.currentText() == "Edited frames"
+        assert dialog.frame == 0 and dialog.points[("knee",)] == (32, 31)
+        assert not dialog.previous.isEnabled() and not dialog.copy_previous_button.isEnabled()
+
+        dialog.filter.setCurrentText("Low confidence")
+        assert dialog.frame_model.frames == (2, 0)
+        assert dialog.frame_model.index(1, 0).data() == "Frame 1 · Edited"
+        QTest.keyClick(dialog.frame_list, Qt.Key_Right, Qt.KeypadModifier)
+        assert dialog.frame == 1 and not dialog.frame_list.currentIndex().isValid()
+        dialog.next.click()
+        assert dialog.frame == 2 and not dialog.next.isEnabled()
+        dialog.previous.click()
+        assert dialog.frame == 1
+
+        dialog._select_from_canvas({("knee",), ("ankle",)})
+        assert capture.read_calls == [0, 1, 2]
+        dialog.trails_toggle.setChecked(True)
+        (line, _, future), = dialog.canvas._trail_items[("knee",)]
+        assert not future and line.pen().style() == Qt.SolidLine
+        assert line.path().elementAt(0).x == 36
+        assert line.path().currentPosition() == QPointF(39, 50)
+        QTest.mouseMove(dialog.canvas.viewport(), dialog.canvas.mapFromScene(QPointF(39, 50)))
+        assert line.pen().widthF() == 3
+
+        QTest.keyClick(dialog.timeline, Qt.Key_P)
+        assert dialog.points[("knee",)] == (32, 31)
+        assert dialog.points[("hip",)] == (21, 30)
+        assert {edit[3] for edit in dialog.undo_stack[-1]} == {("knee",), ("ankle",)}
+        dialog.undo_button.click()
+        assert dialog.points[("knee",)] == (35, 45)
+        assert dialog.canvas._trail_items[("knee",)][0][0].path().currentPosition() == QPointF(39, 50)
+        dialog.next.click()
+        assert ("knee",) not in dialog.points
+        dialog.copy_previous_button.click()
+        assert dialog.points[("knee",)] == (35, 45)
+        dialog.undo_button.click()
+        assert ("knee",) not in dialog.points
+        dialog.previous.click()
+        dialog.previous.click()
+        assert dialog.canvas._trail_items[("knee",)][0][0].pen().style() == Qt.DashLine
+        dialog.trails_toggle.setChecked(False)
+        assert not dialog.canvas._trail_items and capture.read_calls == [0, 1, 2]
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
+def test_fine_tuning_requires_rechecking_changed_frames_across_recordings(labels):
+    app = QApplication.instance() or QApplication([])
+    sources = tuple(
+        LabelReviewSource(region, Path("video.mp4"), Path("video.csv"), Path("video.h5"), Path("model"))
+        for region in ("Left", "Right")
+    )
+    draft = tuple(LabelEdit(source.region, source.video, 0, ("knee",), (32, 31)) for source in sources)
+    review = StageReview(AutomatedStage.LABELED_VIDEOS, "videos", label_sources=sources, label_draft=draft)
+    dialog = LabelCorrectionDialog(
+        None, review, SimpleNamespace(label_artifacts=lambda _: (labels, labels, (0, 0))),
+        SimpleNamespace(open_video=lambda _: Capture()),
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.filter.setCurrentText("All frames")
+        dialog.tune_save.click()
+        assert dialog.filter.currentText() == "Edited frames"
+        assert dialog.check_status.text().startswith("0 of 2")
+        assert dialog.source == sources[0] and dialog.frame == 0
+        dialog.check_frame.click()
+        assert dialog.source == sources[1] and dialog.frame == 0
+        assert dialog.check_status.text().startswith("1 of 2")
+        assert not dialog.tune_save.isEnabled()
+        dialog.check_frame.click()
+        assert dialog.frame_model.index(0, 0).data() == "Frame 1 · Checked"
+        assert dialog.tune_save.isEnabled()
+
+        dialog.recording.setCurrentIndex(0)
+        dialog._edit({("knee",): (34, 33)})
+        assert dialog.frame_model.index(0, 0).data() == "Frame 1 · Edited"
+        assert not dialog.tune_save.isEnabled()
+        dialog.check_frame.click()
+        dialog.next.click()
+        dialog.keep_button.click()
+        assert dialog.frame_model.frames == (0, 1)
+        assert not dialog.tune_save.isEnabled()
+        dialog.undo_button.click()
+        assert dialog.frame_model.frames == (0,)
+        assert dialog.tune_save.isEnabled()
+        dialog.tune_save.click()
+        assert dialog.correction.fine_tune
+        assert dialog.correction.edits == (LabelEdit("Left", sources[0].video, 0, ("knee",), (34, 33)), draft[1])
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
 @pytest.mark.parametrize("stage", [AutomatedStage.LABELED_VIDEOS, AutomatedStage.STICKPLOT])
 def test_batch_review_correct_labels_opens_and_returns_to_the_same_review(tmp_path, stage, labels):
     app = QApplication.instance() or QApplication([])
@@ -362,6 +482,11 @@ def test_batch_review_correct_labels_opens_and_returns_to_the_same_review(tmp_pa
         assert observations == [True, True]
         assert not correction.fine_tune and len(correction.edits) == 2
         assert workspace._pipeline_real_waiting_for_review is None and not button.isVisible()
+
+        workspace.runs._pipeline_review_requested(stage, replace(review, label_draft=correction.edits))
+        assert workspace._pipeline_real_waiting_for_review == stage and button.isVisible()
+        assert workspace.run_pipeline_button.isEnabled()
+        assert workspace.pipeline_approve_button.text() == "Apply corrections and refresh previews"
     finally:
         workspace.close()
         workspace.deleteLater()

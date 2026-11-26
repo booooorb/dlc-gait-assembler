@@ -16,6 +16,7 @@ from dlc_gait_assembly.runway.manual.gait_analysis.business.gait_coordinate_cont
     AlmaViewCsvSet,
     StrokeStudyMetadata,
 )
+from dlc_gait_assembly.runway.manual.knee_correction.business.knee_correction_contracts import CoordinateFilePair
 from dlc_gait_assembly.runway.manual.video_processing.business.video_enhancement_settings import EnhancementSettings
 from dlc_gait_assembly.runway.manual.video_processing.business.video_processing_contracts import ProcessingOptions
 from dlc_gait_assembly.runway.manual.video_processing.business.video_region_geometry import CropRegion, NormalizedRect
@@ -23,14 +24,14 @@ from dlc_gait_assembly.runway.manual.video_processing.business.video_trim_ranges
 
 VALUE_TYPES = {cls.__name__: cls for cls in (
     CalibrationPoint, CalibrationStick, AlmaViewCsvSet, StrokeStudyMetadata, EnhancementSettings, ProcessingOptions,
-    CropRegion, NormalizedRect, TrimRange,
+    CropRegion, NormalizedRect, TrimRange, CoordinateFilePair,
 )}
 STATE_SETTINGS = {
     "gait_parameter_analysis": (
         "calibration_map_path", "calibration_map_source", "calibration_map_pixels_per_cm",
         "raw_bodyparts", "view_label_mappings",
     ),
-    "knee_correction": ("calibration_map_path", "pixels_per_cm"),
+    "knee_correction": ("calibration_map_path", "calibration_map_source", "pixels_per_cm"),
     "manual_calibration": ("calibration_sticks_by_media", "timeline_ms_by_media"),
     "video_processing": ("trim_ranges_by_video", "active_trim_range_by_video"),
 }
@@ -113,6 +114,12 @@ def _list_paths(widget):
 
 
 def capture_page(tool_id, page):
+    if tool_id == "knee_correction":
+        return {"sides": {side: _capture_page(tool_id, editor) for side, editor in page.editors.items()}}
+    return _capture_page(tool_id, page)
+
+
+def _capture_page(tool_id, page):
     view = page_view(page)
     result = {"controls": {name: _control_value(control) for name, control in _controls(view)}}
     state = getattr(view, "state", None)
@@ -132,7 +139,7 @@ def capture_page(tool_id, page):
         result["data"] = encode_value({name: getattr(state, name) for name in STATE_SETTINGS[tool_id]})
         inputs = {"paths": _list_paths(view.media_list), "current": state.current_media}
     elif tool_id == "knee_correction":
-        inputs = {"paths": state.selected_paths}
+        inputs = {"paths": state.selected_paths, "pairings": state.custom_pairs}
     elif tool_id == "pca_random_forest":
         inputs = {"paths": view._files}
     elif tool_id == "ladder_analysis":
@@ -170,6 +177,17 @@ def _apply_controls(view, saved):
 
 
 def apply_page(tool_id, page, saved, *, restore_files):
+    if tool_id == "knee_correction":
+        sides = saved.get("sides", {"left": saved})
+        for side, editor in page.editors.items():
+            if side in sides:
+                _apply_page(tool_id, editor, sides[side], restore_files=restore_files)
+                editor.controller.refresh_calibration()
+        return
+    _apply_page(tool_id, page, saved, restore_files=restore_files)
+
+
+def _apply_page(tool_id, page, saved, *, restore_files):
     view = page_view(page)
     data = decode_value(saved.get("data", {}))
     for name in STATE_SETTINGS.get(tool_id, ()):
@@ -241,6 +259,7 @@ def _restore_inputs(tool_id, view, inputs, saved):
     elif tool_id == "manual_calibration":
         view.media_panel._add_media_paths(paths)
     elif tool_id == "knee_correction":
+        view.state.custom_pairs = inputs.get("pairings", [])
         view.inputs._add_paths(paths)
     elif tool_id == "pca_random_forest":
         view._files = paths
@@ -286,7 +305,9 @@ def _restore_ladder(view, inputs, saved):
 def has_previous_inputs(workspace_state):
     if workspace_state.get("automation_videos"):
         return True
+    pages = workspace_state.get("pages", {})
+    knee_sides = pages.get("knee_correction", {}).get("sides", {})
     return any(bool(decode_value(page.get("inputs", {})).get("paths")) or any(
         decode_value(page.get("inputs", {})).get(name)
         for name in ("csv_path", "right_csv_path", "video_path", "right_video_path")
-    ) for page in workspace_state.get("pages", {}).values())
+    ) for page in (*pages.values(), *knee_sides.values()))

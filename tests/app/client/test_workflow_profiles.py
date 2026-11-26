@@ -179,7 +179,7 @@ def test_run_history_can_resume_from_the_picker_without_opening_a_profile(window
         dialog.runs.setCurrentRow(1)
         dialog_states.append((dialog.open_button.isEnabled(), dialog.resume_button.isEnabled()))
         dialog.runs.setCurrentRow(0)
-        dialog_states.append(dialog.details.text())
+        dialog_states.append(dialog.details.toPlainText())
         dialog.resume_button.click()
 
     QTimer.singleShot(0, choose_run)
@@ -234,7 +234,7 @@ def test_video_regions_and_incomplete_knee_settings_survive_reopening(window):
     video.preview.set_crop_regions((CropRegion("Left", NormalizedRect(0, 0, 0.4, 1)),))
     video.crf_spin.setValue(23)
     window.routes._open_tool("knee_correction")
-    knee = window._tool_widgets["knee_correction"]
+    knee = window._tool_widgets["knee_correction"].editors["left"]
     knee.hip_knee_length.setValue(2.25)
     knee.hip_label_combo.addItem("custom_hip", "custom_hip")
     knee.hip_label_combo.setCurrentText("custom_hip")
@@ -248,8 +248,70 @@ def test_video_regions_and_incomplete_knee_settings_survive_reopening(window):
     assert video.crf_spin.value() == 23
     assert video.controller._current_processing_options().crop_regions[0].name == "Left"
     window.routes._open_tool("knee_correction")
-    assert window._tool_widgets["knee_correction"].hip_knee_length.value() == 2.25
-    assert window._tool_widgets["knee_correction"].hip_label_combo.currentData() == "custom_hip"
+    knee = window._tool_widgets["knee_correction"].editors["left"]
+    assert knee.hip_knee_length.value() == 2.25
+    assert knee.hip_label_combo.currentData() == "custom_hip"
+
+
+def test_knee_sides_restore_distinct_calibrations_settings_and_inputs(window, tmp_path, monkeypatch):
+    assert window.workflows.new(name="Two cameras")
+    window.routes._open_tool("knee_correction")
+    knee = window._tool_widgets["knee_correction"]
+    assert [knee.side_tabs.tabText(index) for index in range(knee.side_tabs.count())] == ["Left", "Right"]
+    left, right = knee.editors.values()
+    assert left.output_folder_edit.text() != right.output_folder_edit.text()
+    knee.side_tabs.setCurrentWidget(right)
+    assert not window.workflows.has_unsaved_changes()
+    maps = {}
+    for editor, scale, length in ((left, 26, 1.25), (right, 42, 2.4)):
+        knee.side_tabs.setCurrentWidget(editor)
+        path = tmp_path / f"{editor.side}_map.json"
+        path.write_text(json.dumps({"overall": {"pixels_per_centimeter": scale}}), encoding="utf-8")
+        maps[editor.side] = path.resolve()
+        monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, path=path: (str(path), ""))
+        knee.active_editor.calibration_map_button.click()
+        editor.hip_knee_length.setValue(length)
+        editor.generated_knee_label_edit.setText(f"{editor.side}_knee")
+        assert editor.settings_snapshot().pixels_per_cm == scale
+    right.inputs._add_paths([FIXTURES / "right.csv"])
+    assert window.workflows.has_unsaved_changes()
+    assert window.workflows.save()
+    profile = window.workflows.active
+    assert profile.calibration_map is None
+    assert window.workflows.use_cases.inspect_knee_settings(profile.knee_manifest).pixels_per_cm == 26
+    assert window.workflows.close_profile()
+    assert window.workflows.open_profile(profile.id, restore_files=True)
+    knee = window._tool_widgets["knee_correction"]
+    for editor, scale, length in zip(knee.editors.values(), (26, 42), (1.25, 2.4)):
+        knee.side_tabs.setCurrentWidget(editor)
+        assert knee.active_editor is editor
+        assert editor.state.calibration_map_path == maps[editor.side]
+        assert f"{scale:.3f} px/cm" in editor.calibration_map_label.text()
+        assert editor.settings_snapshot().hip_knee_length_cm == length
+        assert editor.settings_snapshot().output_knee_bodypart == f"{editor.side}_knee"
+    assert knee.editors["left"].state.selected_paths == []
+    assert knee.editors["right"].state.selected_paths == [(FIXTURES / "right.csv").resolve()]
+    assert not window.workflows.has_unsaved_changes()
+
+
+def test_legacy_knee_workspace_restores_to_left(window):
+    profile = window.workflows.use_cases.save(
+        "Previous knee settings", None, None, {}, allow_incomplete=True,
+        workspace_state={"version": 1, "pages": {"knee_correction": {
+            "controls": {"hip_knee_length": 2.4}, "data": {"pixels_per_cm": 48},
+        }}},
+    )
+    assert window.workflows.open_profile(profile.id, restore_files=False)
+    window.routes._open_tool("knee_correction")
+    knee = window._tool_widgets["knee_correction"]
+    left, right = knee.editors.values()
+    assert knee.active_editor is left
+    assert left.settings_snapshot().pixels_per_cm == 48
+    assert left.settings_snapshot().hip_knee_length_cm == 2.4
+    assert "48.000 px/cm" in left.calibration_map_label.text()
+    assert right.settings_snapshot() is None
+    assert right.hip_knee_length.value() == 1.5
+    assert not window.workflows.has_unsaved_changes()
 
 
 def test_switching_to_a_new_profile_clears_other_workflow_state(window):
@@ -535,8 +597,9 @@ def test_save_to_gait_analysis_applies_the_workflow_calibration_to_both_stages(w
     assert gait.calibration_method_combo.currentData() == "map"
     assert gait.state.calibration_map_path == profile.calibration_map
     assert gait.state.calibration_map_pixels_per_cm == pytest.approx(42)
-    knee = window._tool_widgets["knee_correction"]
-    assert knee.state.calibration_map_path == profile.calibration_map
+    knee_workspace = window._tool_widgets["knee_correction"]
+    knee = knee_workspace.editors["left"]
+    assert knee_workspace.editors["right"].state.pixels_per_cm is None
     assert knee.state.pixels_per_cm == pytest.approx(42)
     assert window.workflows.use_cases.inspect_knee_settings(profile.knee_manifest).pixels_per_cm == pytest.approx(42)
     saved_gait = alma_settings_from_manifest(profile.analysis_manifest, profile.calibration_map)
@@ -549,7 +612,19 @@ def test_save_to_gait_analysis_applies_the_workflow_calibration_to_both_stages(w
     assert gait.state.calibration_map_path == profile.calibration_map
     assert gait.frame_rate_spin.value() == 240
     window.routes._open_tool("knee_correction")
-    assert window._tool_widgets["knee_correction"].state.pixels_per_cm == pytest.approx(42)
+    knee_workspace = window._tool_widgets["knee_correction"]
+    assert knee_workspace.editors["left"].state.pixels_per_cm == pytest.approx(42)
+    assert knee_workspace.editors["right"].state.pixels_per_cm is None
+    knee_workspace.side_tabs.setCurrentWidget(knee_workspace.editors["right"])
+    window.routes._open_tool("manual_calibration")
+    calibration = window._tool_widgets["manual_calibration"]
+    calibration.state.calibration_sticks_by_media["example.png"] = (
+        CalibrationStick("x", 1, CalibrationPoint(0, 0), CalibrationPoint(55, 0)),
+    )
+    calibration.controller._update_calibration_results()
+    calibration.save_to_gait_button.click()
+    assert knee_workspace.editors["left"].state.pixels_per_cm == pytest.approx(42)
+    assert knee_workspace.editors["right"].state.pixels_per_cm == pytest.approx(55)
 
 
 def test_knee_import_uses_the_map_selected_in_gait_calibration(window, tmp_path, monkeypatch):
@@ -572,9 +647,9 @@ def test_knee_import_uses_the_map_selected_in_gait_calibration(window, tmp_path,
     monkeypatch.setattr(QFileDialog, "getOpenFileName", select_file)
     gait.import_calibration_map_button.click()
     window.routes._open_tool("knee_correction")
-    knee = window._tool_widgets["knee_correction"]
+    knee = window._tool_widgets["knee_correction"].editors["left"]
     assert knee.state.pixels_per_cm == pytest.approx(42)
-    knee.calibration_map_button.click()
+    knee.shared_calibration_map_button.click()
     assert dialogs == [gait]
     assert window.navigation.tool_id == "knee_correction"
     assert knee.state.calibration_map_path == map_path
@@ -585,8 +660,9 @@ def test_knee_import_uses_the_map_selected_in_gait_calibration(window, tmp_path,
     assert window.workflows.close_profile()
     assert window.workflows.open_profile(profile_id, restore_files=False)
     assert "gait_parameter_analysis" not in window._tool_widgets
-    knee = window._tool_widgets["knee_correction"]
-    knee.calibration_map_button.click()
+    knee = window._tool_widgets["knee_correction"].editors["left"]
+    assert knee.state.calibration_map_path == map_path
+    knee.shared_calibration_map_button.click()
     assert dialogs == [gait]
     assert window.navigation.tool_id == "knee_correction"
     assert knee.state.calibration_map_path == window.workflows.active.calibration_map

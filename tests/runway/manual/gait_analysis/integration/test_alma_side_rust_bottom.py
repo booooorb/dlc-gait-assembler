@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -26,7 +27,10 @@ from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.gait_scientifi
     settings_from_json,
     settings_to_json,
 )
-from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab_bottom_executor import RustLabBottomExecutor
+from dlc_gait_assembly.runway.manual.gait_analysis.infrastructure.rustlab_bottom_executor import (
+    R_DEPENDENCIES_UNAVAILABLE,
+    RustLabBottomExecutor,
+)
 from dlc_gait_assembly.shared.business.external_command_contracts import ExternalCommandResult
 
 FIXTURE = Path(__file__).parents[4] / "fixtures" / "gait"
@@ -47,6 +51,21 @@ def r_runtime():
     return executable
 
 
+@pytest.fixture(scope="module", params=["R", "Python"])
+def bottom_backend(request):
+    if request.param == "R":
+        request.getfixturevalue("r_runtime")
+        yield request.param
+    else:
+        which = shutil.which
+        with pytest.MonkeyPatch.context() as patch:
+            patch.delenv("DLC_GAIT_RSCRIPT", raising=False)
+            patch.setattr(shutil, "which", lambda command, *args, **kwargs: (
+                None if command == "Rscript" else which(command, *args, **kwargs)
+            ))
+            yield request.param
+
+
 def reference_inputs():
     folder = FIXTURE / "rustlab1_r_reference"
     return AlmaViewCsvSet(
@@ -64,9 +83,11 @@ def native_settings(**options):
 
 
 @pytest.fixture(scope="module")
-def native_run(r_runtime, tmp_path_factory):
+def native_run(bottom_backend, tmp_path_factory):
     item, settings = reference_inputs(), native_settings()
     result = run_alma_gait_analysis_in_process([item], tmp_path_factory.mktemp("native_gait"), settings)[0]
+    log = next(path for path in result.output_files if path.suffix == ".log")
+    assert log.read_text().startswith(f"Backend: {bottom_backend}")
     return item, settings, result
 
 
@@ -141,7 +162,7 @@ def synthetic_bottom(path):
     return path
 
 
-def test_all_twenty_bottom_values_match_original_rustlab_r_notebook(r_runtime, tmp_path):
+def test_all_twenty_bottom_values_match_original_rustlab_r_notebook(bottom_backend, tmp_path):
     bottom = synthetic_bottom(tmp_path / "bottom.csv")
     item = AlmaViewCsvSet("7days_Mouse_M1", bottom, bottom, bottom, StrokeStudyMetadata(animal_id="M1", timepoint="7days"))
     sides = {}
@@ -166,13 +187,48 @@ def test_r_failure_is_reported_without_python_substitution(tmp_path):
             return ExternalCommandResult(1, "missing R dependency")
 
     item = reference_inputs()
-    executor = RustLabBottomExecutor(rscript=shutil.which("python"), session_factory=FailedSession)
+    executor = RustLabBottomExecutor(rscript=sys.executable, session_factory=FailedSession)
+    sides = {side: getattr(item, f"{side}_csv") for side in ("left", "right")}
     with pytest.raises(RuntimeError, match="missing R dependency"):
-        executor.run(item, tmp_path, native_settings(), {"left": tmp_path / "left.csv", "right": tmp_path / "right.csv"})
+        executor.run(item, tmp_path, native_settings(), sides)
     assert not (tmp_path / "all_raw_data.csv").exists()
 
 
-def test_missing_markers_calibration_and_empty_stride_statistics_remain_na(r_runtime, tmp_path):
+def test_missing_r_packages_use_python_backend(tmp_path):
+    class MissingPackages:
+        def run(self, command):
+            assert Path(command.arguments[1]).name == "Run_ALMA_Side_Rust_Bottom.R"
+            return ExternalCommandResult(R_DEPENDENCIES_UNAVAILABLE, "RustLab R dependencies unavailable: tidyr\n")
+
+    item = reference_inputs()
+    sides = {side: tmp_path / f"{side}.csv" for side in ("left", "right")}
+    for path in sides.values():
+        pd.DataFrame({name: [1.0, 2.0] for name in ALMA_PARAMETER_NAMES}).to_csv(path)
+    executor = RustLabBottomExecutor(rscript=sys.executable, session_factory=MissingPackages)
+    (raw, summary, log), _notes = executor.run(item, tmp_path, native_settings(), sides)
+    assert len(pd.read_csv(raw)) == len(pd.read_csv(summary)) == 20 + 4 * len(ALMA_PARAMETER_NAMES)
+    assert ",NA\n" in summary.read_text()
+    assert log.read_text().startswith("Backend: Python") and "dependencies unavailable: tidyr" in log.read_text()
+
+
+def test_python_fallback_matches_r_with_tracking_gaps_and_outliers(r_runtime, tmp_path):
+    bottom = synthetic_bottom(tmp_path / "bottom.csv")
+    frame = pd.read_csv(bottom, header=[0, 1, 2], index_col=0).drop(index=[23, 24])
+    frame.loc[43:46, ("scorer", "d-front-right", "likelihood")] = 0.1
+    frame.loc[62, ("scorer", "d-back-left", "x")] += 500
+    frame.to_csv(bottom)
+    item = replace(reference_inputs(), bottom_csv=bottom)
+    sides = {side: tmp_path / f"{side}.csv" for side in ("left", "right")}
+    for path in sides.values():
+        pd.DataFrame({name: [1.0, np.nan, 3.0] for name in ALMA_PARAMETER_NAMES}).to_csv(path)
+    settings = native_settings(frame_rate=60, likelihood_threshold=0.5)
+    r_paths, _ = RustLabBottomExecutor(rscript=r_runtime).run(item, tmp_path / "r", settings, sides)
+    py_paths, _ = RustLabBottomExecutor(rscript=tmp_path / "missing-r").run(item, tmp_path / "python", settings, sides)
+    for reference, actual in zip(r_paths[:2], py_paths[:2], strict=True):
+        pd.testing.assert_frame_equal(pd.read_csv(reference), pd.read_csv(actual), atol=1e-10, rtol=1e-10)
+
+
+def test_missing_markers_calibration_and_empty_stride_statistics_remain_na(bottom_backend, tmp_path):
     bottom = synthetic_bottom(tmp_path / "bottom.csv")
     frame = pd.read_csv(bottom, header=[0, 1, 2], index_col=0)
     frame.loc[:, frame.columns.get_level_values(1).isin(("d-back-left", "d-back-right"))].to_csv(bottom)
@@ -194,7 +250,7 @@ def test_missing_markers_calibration_and_empty_stride_statistics_remain_na(r_run
     assert any("calibration is unset" in note for note in notes)
 
 
-def test_bottom_timing_and_distance_use_its_own_camera_settings(r_runtime, tmp_path):
+def test_bottom_timing_and_distance_use_its_own_camera_settings(bottom_backend, tmp_path):
     bottom = synthetic_bottom(tmp_path / "bottom.csv")
     item = replace(reference_inputs(), bottom_csv=bottom)
     sides = {side: tmp_path / f"{side}.csv" for side in ("left", "right")}
@@ -230,7 +286,7 @@ def test_combined_mode_requires_both_sides_and_survives_runtime_serialization(tm
         run_alma_gait_analysis_in_process([reference_inputs().left_csv], tmp_path, settings)
 
 
-def test_singleton_phase_does_not_erase_other_phase_variability(r_runtime, tmp_path):
+def test_singleton_phase_does_not_erase_other_phase_variability(bottom_backend, tmp_path):
     frames = np.arange(360)
     steps = np.where(frames % 40 < 20, 1.0, 11.0)
     steps[1:20] = 11.0  # Only the first observed frame belongs to the initial stance.

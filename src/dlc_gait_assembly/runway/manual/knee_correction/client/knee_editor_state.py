@@ -15,6 +15,7 @@ class KneeEditorState:
     pairs: list[CoordinateFilePair] = field(default_factory=lambda: [])
     custom_pairs: list[CoordinateFilePair] = field(default_factory=list)
     calibration_map_path: Path | None = None
+    calibration_map_source: str | None = None
     pixels_per_cm: float | None = None
     preview_original: object | None = None
     preview_corrected: object | None = None

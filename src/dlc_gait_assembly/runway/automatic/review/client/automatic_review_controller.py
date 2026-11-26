@@ -32,11 +32,21 @@ class AutomaticReviewController:
         description = str(gate["description"])
         if artifacts is not None and artifacts.label_error:
             description = "Fine-tuning stopped. Open Correct labels to view the error, retry, or save frame corrections."
+        elif artifacts is not None and artifacts.label_draft:
+            count = len({edit.key[:3] for edit in artifacts.label_draft})
+            frames = "frame" if count == 1 else "frames"
+            description = f"Corrections to {count:,} {frames} saved. Reopen Correct labels to edit or fine-tune."
         self.view.pipeline_review_description.setText(description)
         self._populate_pipeline_review_preview(stage_index, artifacts)
         self.view.pipeline_correct_labels_button.setVisible(bool(artifacts and artifacts.label_sources))
         self.view.pipeline_change_settings_button.hide()
         self.view.pipeline_needs_changes_button.show()
+        if artifacts is not None and artifacts.label_draft:
+            self.view.pipeline_approve_button.setText("Apply corrections and refresh previews")
+            self.view.pipeline_approve_button.setToolTip("Apply the saved labels and regenerate previews for review.")
+        else:
+            self.view.pipeline_approve_button.setText("Confirm and continue")
+            self.view.pipeline_approve_button.setToolTip("Accept this preview and continue to the next pipeline stage.")
         self.view.pipeline_approve_button.show()
         self.view.pipeline_activity_panel.hide()
         self.view.pipeline_review_panel.show()
@@ -232,7 +242,11 @@ class AutomaticReviewController:
             self.view._pipeline_demo_waiting_for_review = None
             self.view.pipeline_review_panel.hide()
             self.view.pipeline_activity_panel.show()
-            self.view.runs._set_run_readiness("Saving corrected labels", "running")
+            if dialog.correction.fine_tune:
+                self.view.runs._set_run_readiness("Starting fine-tuning", "running")
+            else:
+                self.view.run_pipeline_button.setEnabled(False)
+                self.view.runs._set_run_readiness("Saving corrected labels", "running")
             worker.correct_labels(dialog.correction)
         dialog.deleteLater()
 
@@ -248,8 +262,12 @@ class AutomaticReviewController:
         if real_review and self.view._pipeline_worker is not None:
             self.view.run_pipeline_button.setText("Pause run")
             self.view.run_pipeline_button.setToolTip("Pause at the next safe point and save progress for later.")
-            self.view.runs._set_run_readiness("Continuing", "running")
-            self.view.run_log._append_console(f"[Confirmed] {PIPELINE_STAGES[stage_index]}.")
+            review = self.view._pipeline_review_artifacts
+            if review is not None and review.label_draft:
+                self.view.runs._set_run_readiness("Applying corrected labels", "running")
+            else:
+                self.view.runs._set_run_readiness("Continuing", "running")
+                self.view.run_log._append_console(f"[Confirmed] {PIPELINE_STAGES[stage_index]}.")
             self.view._pipeline_worker.approve_review()
             return
         self.view.run_pipeline_button.setText("Stop preview")
